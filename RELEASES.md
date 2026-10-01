@@ -1,0 +1,953 @@
+# RELEASES.md - what each release shipped and how it was verified
+
+The per-release records moved out of `AGENTS.md` (which had grown past the
+workspace instruction budget and was being truncated). `AGENTS.md` keeps the
+release PROCESS; this file keeps the RESULT of each release: tag, staged
+artifact hashes, gate results, what was deployed and how it was verified live.
+
+Newest first.
+
+## UNRELEASED - 2026-10-01 selected-session calibration actions
+
+- Fixed inactive calibration actions for legacy `Object/lights` archives and
+  previously indexed flat layouts. Darks, Flats and Bias now open the exposure
+  picker with a recorded image anchor identifying the selected object and logical
+  session. Recent-import actions use the corresponding recorded session too.
+  The import pane shows the target and chosen frame type. Unavailable sessions
+  explain why the action cannot proceed.
+- Added validated, nullable `images.session_date_obs` through an additive
+  migration. Automatic imports use the original capture date; explicit dated or
+  undated calibration attachments carry a separate logical grouping date. Original
+  `date_obs` and file bytes remain unchanged. Sessions publish exact image IDs;
+  attached calibration no longer disappears from the inspector because its actual
+  capture date is outside the selected light exposure's range. UTC comparisons
+  preserve fractional timestamps and the exact 12-hour boundary. Existing folder
+  naming conventions are retained.
+- The server derives object/path/session from the existing anchor, validates
+  positive SQLite-range IDs and calibration types before staging, and revalidates
+  the target before publication. Existing modern folders are reused; legacy
+  folders gain a canonical calibration subfolder without moving light exposures.
+  Global whole-byte duplicate skips retain their existing association. Setup
+  backup/restore carries and validates the association, rejecting malformed
+  metadata before writes. This resolves UIB-033.
+- Verified Open folder launches Windows Explorer in the current native app;
+  added clear success/error feedback. Renamed the toolbar action to Import and
+  replaced format jargon in labels, help and empty states with exposures. The
+  supported `.fit`/`.fits` input filters remain unchanged.
+
+Validation: **811 full-suite tests passed** (one upstream Starlette/httpx
+deprecation warning); focused backend and grouping checks passed, and four source
+browser checks passed, including genuine chooser events for all three calibration
+types in both desktop shells and preserved membership for out-of-date metadata.
+The native inspection ended when the user pressed Escape; no subsequent computer
+input was issued. Compilation and final JavaScript, DOM, encoding, cache and core
+guards passed. Development integrity passed with zero errors and the expected
+dirty/off-tag warning. Candidate: `dist/session-actions-candidate/NightSeam.exe`,
+version `0.6.34-10-gf5bb0c5-dirty`, SHA-256
+`ceac0303b20551fc33b573ff4e4867fbf743aa34915b5127e1f594f1b101e143`.
+The packaged/web browser gate passed **55/55 checks**. After the user closed the
+app, installed the verified candidate atomically as `dist/NightSeam.exe`; its
+hash matches the tested build. Library data remains intact. Previous executable:
+`dist/NightSeam.before-session-actions-20261001-212434.exe`.
+Changes are staged for review; no commit, tag or deployment was created.
+
+## UNRELEASED - 2026-10-01 open Library header and faster indexing
+
+- Removed the contextual object-export and format strip from both desktop
+  Library workspaces. Angular-size symbols are inline, keyboard-accessible unit
+  switches that persist the preference and stay synchronized with the planner.
+  Sessions, images and light integration now use open text without framed cards.
+  The packaged toolbar omits its logo and fits its controls in about 45 pixels;
+  the source planner retains its existing masthead. Global Export library remains
+  available as CSV, and existing API JSON/scoped export support remains intact.
+- Map names prefer the closest clear placement. Crowded or displaced names have
+  quiet leader lines back to their own marker. Session-count sizing, coordinates,
+  selection, hit testing and high-DPI geometry are preserved.
+- Reindex now builds one catalog matcher for all new files instead of rebuilding
+  it for every frame; unchanged-file scans do not load it. Duplicate candidates
+  prioritize the matching stored digest while still verifying the complete file.
+  Spooled uploads copy and hash in one worker call, preserving size limits and
+  waiting for an active copy to finish before cancellation cleanup.
+
+Isolated profiling used 48 distinct 4-MiB FITS files (192 MiB total), the full
+seeded catalog and temporary archives. The initial reindex baseline was 31.701 s,
+including 29.937 s rebuilding the matcher 48 times; the updated run took 2.295 s
+with one matcher. New imports measured 1.784 s before and 1.635 s after; identical
+imports measured 2.555 s before and 1.258 s after. A separate baseline repeat
+measured 38.636/1.821/2.366 s respectively, illustrating machine/load variability.
+These are local workload measurements, not promised throughput for other disks.
+The UI sends eight files per request; archive publication remains ordered.
+
+Validation: **765 full-suite tests passed** (one upstream Starlette/httpx
+deprecation warning), **168 focused ingest/API tests passed**, six source-browser
+checks passed, and final JavaScript, DOM, encoding, cache and shared-core guards
+passed, and **53/53 packaged/web browser checks passed**. The compiled candidate is
+`dist/open-design-candidate/NightSeam.exe`,
+version `0.6.34-10-gf5bb0c5-dirty`, SHA-256
+`61390814c97a70377a461252379dd3350f92a6fdd878eff390967f2c63385521`.
+After confirming the canonical app had closed, installed the verified candidate
+atomically as `dist/NightSeam.exe`, preserving the library data and the old build
+as `dist/NightSeam.before-open-design-20261001-204004.exe`. The installed hash
+matches the tested candidate. Development integrity passed with zero errors and
+the expected dirty/off-tag warning. Changes are staged for review; no commit,
+tag, public release, merge or deployment was created.
+
+## UNRELEASED - 2026-10-01 active-object Library and session-sized map
+
+- Archive map marker radius now depends only on capture-session count, using
+  validated `n_sessions` or the session-list length. The bounded 3-12 CSS-pixel
+  square-root scale is independent of image count and exposure; unknown counts
+  retain the minimum marker and display unavailable text. Names, selection,
+  coordinate geometry, hit testing, and DPR-aware drawing remain consistent.
+- Moved useful archive facts and controls into the top Library workspace header.
+  They show the active object's name, type, angular size, sessions, images, and
+  light-frame integration. Removed the duplicate all-object table/disclosures;
+  object sorting remains labelled in the Objects rail.
+- Added contextual CSV/JSON Export object with exact displayed-name filtering,
+  scoped JSON totals, and 404 for unmatched names. The top Export library action
+  remains global. Existing serializers and private-fingerprint exclusions remain
+  shared rather than duplicated in the client.
+- Removed obsolete dock grid rows and fixed the source planner's height chain.
+  Both desktop Library workspaces fill the remaining client height, with bounded
+  rail/table/detail scrolling and compact reflow. More window height reveals more
+  session rows; rows retain their normal density. Standard bottom gutters replace
+  the old unused region.
+
+Validation: **761 full-suite tests passed** (one upstream Starlette/httpx
+deprecation warning), **53/53 browser checks passed**, and the final JavaScript,
+DOM, encoding, cache-token, and shared-core guards passed. Focused checks covered
+API export scope/Unicode names, object switching, both desktop layouts, and map
+counts at DPR 1 and 2. The folder regression now verifies painted clipping through
+scrolling ancestors and unobstructed action hit targets, avoiding false overlap
+reports from invisible content.
+
+Rebuilt `dist/NightSeam.exe` in its existing folder, preserving library data and
+`dist/NightSeam.before-active-library-20261001-195459.exe` as the previous-build
+backup. Version: `0.6.34-10-gf5bb0c5-dirty`. SHA-256:
+`0c1c040fd64fb2e47ffd23f67475c328a8b2e6ad0681e3b395d32aa23a995ef9`.
+Development integrity (`check_release.py --allow-dirty --no-stage`) passed with
+zero errors and the expected dirty/off-tag warning. Changes are staged for
+review; no new commit, tag, merge, release bundle, or deployment was created.
+
+## UNRELEASED - 2026-10-01 Library, reindex, and map corrections
+
+- Removed the redundant bottom Library import panel from both desktop shells.
+  The top import action and dedicated Import Exposures workflow remain available.
+- Reindex preflights every FITS path before updating any index record or
+  fingerprint. It accepts `<object>/<session>/{lights,darks,flats,bias}/file`
+  and supported legacy `<object>/<frame-type>/file` layouts, including arbitrary
+  supported session names and case-insensitive frame folders. Unexpected flat,
+  unknown-frame, or excessively nested layouts return actionable HTTP 400.
+  Empty folders and non-FITS files are ignored. Rejection preserves the entire
+  existing index and archive bytes; it does not move or remove source files.
+- Archive folder links use unique containing directories rather than treating
+  filenames as folders. Long lists and detail content have bounded scrolling,
+  leaving totals and actions reachable. Root-folder actions work, and calibration
+  actions require a unique managed session. Reindex errors remain visible until
+  dismissed or retried.
+- Removed the map's dot-integration control text while retaining exposure-sized
+  markers. Object names are on by default, avoid overlapping labels, stay within
+  the plot, and remain visible for selected/hovered objects when general labels
+  are off. Desktop and narrow screenshots were visually checked.
+
+Validation: **160 focused ingest/API tests**, **757 full-suite tests** (one
+upstream Starlette/httpx deprecation warning), and **50/50 browser checks passed**.
+JavaScript, DOM, encoding, cache-token, and shared-core guards passed. The browser
+gate used the newly built `dist/catalog-ui-fix/NightSeam.exe` development candidate
+in isolated installs, including folder-error and crowded-map label regressions.
+The version matches authoritative Git describe: `0.6.34-10-gf5bb0c5-dirty`.
+The running installed executable and user library were left untouched while
+building and validating this candidate. After NightSeam closed, the validated
+candidate replaced `dist/NightSeam.exe` atomically; the previous executable is
+retained as `dist/NightSeam.before-folder-map-fixes-20261001-185934.exe`.
+Installed SHA-256: `b9a8ad4ae099191bb5ea6a41161271a58ba5fbb09fac34d99cf1bd657dd748b9`.
+Library data was not changed by installation.
+No new commit, tag, merge, or deployment was created.
+
+## UNRELEASED - 2026-10-01 full-review implementation pass
+
+The dated review is [REVIEW-FULL-0.6.34-10.md](reviews/current-pass/REVIEW-FULL-0.6.34-10.md).
+This entry describes the subsequent implementation; it is not a tagged release
+or deployment. Final integration validation passed on October 1.
+
+- PY-02: duplicate candidates use indexed metadata, and blocking file hashing
+  runs outside the event loop and long database critical sections. Final
+  duplicate detection and publication retain concurrency protection. Rename,
+  restore, archive configuration, panorama payload mutations and import history
+  share that serialization boundary; no archive RLock spans an await. Restore
+  journaling copies existing payloads so original paths remain available until
+  commit, preserving the three-phase restore contract.
+- PY-01/PY-04/PY-05: native placement uses physical monitor work areas, converts
+  older saved logical positions, and applies final geometry before WinForms
+  shows the window. Optional placement errors preserve the native frame and
+  downloads. Tests centrally isolate placement files from the user profile.
+- PY-06: one lazy Condition/deadline worker replaces per-event timer threads.
+  It reads coherent native geometry/state after the event burst, rejects stale
+  generations, and terminates on closing without blocking the GUI thread.
+- FE-01/FE-02: the source planner has the shared Sky Map selection target, and
+  the DOM guard no longer exempts that missing target.
+- FE-03: source-planner archive picking uses the available native bridge; the
+  native host publishes folder-picker capability for both desktop shells.
+- PY-07/PY-08/PY-09: stale owned PID-bearing stages are swept conservatively,
+  publication retries external filename collisions without overwriting files,
+  fingerprint bookkeeping is excluded from library/setup exports, and repaired
+  originals have their own status/count rather than inflating import history.
+- FE-04/FE-05/FE-06/FE-08: DOM coverage follows transitive module edges, browser
+  synchronization waits for observable state, native-chrome assertions inspect
+  actual affordances, and map keyboard instructions/role and Workbench tokens
+  replace the identified accessibility/styling inconsistencies.
+- Integration found a panorama crop/save race: a pending old calibration save
+  could overwrite the newly cropped field of view. Crop now completes pending
+  and in-flight saves before publishing, holds the editor stable, and awaits
+  refresh/reselection. Failed saves retain edits, and Undo/Redo availability is
+  reconciled afterward. API tests cover three crop calibrations; a browser
+  regression forces both an in-flight save and a newer queued edit, then checks
+  that the crop and the newer edit remain stored after leaving the editor.
+- Documentation now separates unresolved findings from dated implementation
+  evidence and future release prerequisites. Current guidance is Workbench-only.
+
+Focused native-window/main, ingest/API/backup/race checks and **4 source-browser
+checks** passed, as did **83 release-integrity/pre-tag regressions**. A disposable
+hidden WinForms form passed
+physical bounds restoration/snapshot on the actual 100% display. Regression
+tests simulate 125%, 150%, 200%, and mixed-monitor positions; real mixed-DPI
+hardware acceptance remains open.
+
+Final validation: **743 tests passed** (one upstream Starlette/httpx deprecation
+warning), and **48/48 browser checks passed** across the web planner, packaged
+planner, and catalog shells. JavaScript, DOM, encoding, cache-token, and shared
+core guards passed. The rebuilt `dist/NightSeam.exe` is a 20.5 MB development
+snapshot, version `0.6.34-10-gf5bb0c5-dirty`, built at 15:21:48 local time. The
+previous executable was backed up, and library data was preserved. Development
+integrity (`check_release.py --allow-dirty --no-stage`) reports zero errors and
+the expected dirty/off-tag warning; the older staged release ZIP was excluded.
+Repository integrity and whitespace checks passed. The implementation is staged
+for review, with no new commit, tag, merge, or deployment.
+
+The earlier stale-executable failure is superseded for the catalog by the
+previous rebuilt executable's seven passing packaged catalog checks below.
+That subset must not be described as a new full `--all` gate. Duplicate override
+behavior follows the requested global no-duplication rule. Issue-ID searches
+alone do not establish missing regression coverage: dedup behavior has backend
+and browser pins.
+
+Commit-integrity preparation includes the new runtime modules, tests and durable
+guides together with their importers; the release guard rejects missing or
+untracked runtime modules. The curated 0.6.35 entry is prepared and its pre-tag
+check passes, without creating a tag. The broken Codex scratch ref was backed up
+and removed while preserving its object; repository-wide history works again.
+Requested dated captures are retained locally and ignored, provenance copies
+remain intact, and historical commits/tags were not rewritten or garbage-collected.
+AGENTS.md was shortened from 67,165 to under 48,000 UTF-8 bytes, with supporting
+architecture/storage/web details moved to DEVELOPMENT.md.
+
+Future release prerequisites remain separate: create the clean release
+commit/tag when releasing, then refresh staging and version manifests through
+the documented process. The existing staged ZIP is the older September
+snapshot, not the current executable. Deployed cached-core compatibility needs
+verification when publishing the documented retirement exception. No current
+release-ready or live-compatibility claim is made.
+
+## UNRELEASED - 2026-10-01 catalog duplicate prevention
+
+UIB-034: full-content SHA-256 identity prevents repeated and renamed imports
+from creating another archive copy or library row. Skips appear as Already
+imported and do not increase exposure totals or import history. Different bytes
+with the same filename remain distinct. Existing duplicate records are not
+deleted. Legacy rows acquire measured fingerprints lazily; reindex shares the
+identity rule while retaining files already present on disk.
+
+This completed snapshot passed **703 pytest tests**, with one upstream
+Starlette/httpx deprecation warning, and JS/DOM/encoding/core guards after the
+suite restored its mutation fixtures. A rebuilt dirty development executable
+at `dist/NightSeam.exe` passed **7/7 isolated packaged catalog checks**, covering
+duplicate counters, import progress, exports, and responsive layout. The
+previous executable was backed up, the user's data folder was preserved, and
+the browser checks used a separate test library. These results precede the
+full-review implementation pass above.
+
+## UNRELEASED - 2026-10-01 catalog progress, export, and visual refinements
+
+UIB-031/UIB-032: import activity shows confirmed processed files/selected total,
+elapsed time, and conditional failure counts. Completed activity remains
+reviewable; interrupted requests distinguish unconfirmed outcomes from the
+unattempted remainder. Archive actions are locked during an operation. Native
+downloads are enabled before window creation, CSV/JSON downloads preserve the
+page, and fetch failures display an error. Export format remains accessible
+even when the library is empty. UIB-033 calibration attachment remains open
+in `BUGS.md`.
+
+The progress/export snapshot passed **132 focused tests**, **680 full-suite
+tests**, sequential JS/DOM/encoding/core guards, and **6/6 packaged catalog
+checks** against a separate development build. After the user closed the app,
+the verified executable replaced `dist/NightSeam.exe` with matching SHA-256;
+the prior executable was backed up and `dist/data` was preserved. Native Save As
+configuration was unit-tested and checked against the installed WebView2
+handler; a physical Save As interaction was not performed.
+
+Earlier same-day visual snapshots implemented centered checkbox ticks and
+Working status (UIB-029/UIB-030), stable catalog density and responsive Library
+composition (UIB-027), and aligned 2:1 RA/Dec canvas axes with coalesced drawing
+(UIB-028). The activity snapshot passed **18 layout cases**, keyboard toggles,
+the **680-test** suite, guards, and **4/4 packaged catalog checks**. Responsive
+checks included **22 viewport pairs**, breakpoint edges, populated sessions,
+long labels, actions, and DPR2 geometry; its **680-test** suite and **4/4
+packaged catalog checks** also passed. These are historical snapshots, not
+additional claims about the subsequent review-fix tree.
+
+## UNRELEASED - 2026-09-30 catalog Windows shell
+
+UIB-026 replaced the earlier custom frameless repair (UIB-025) with the standard
+Windows frame, native move/resize/caption behavior, and local placement
+persistence. Historical evidence: **33 focused tests**, JS guards, **3/3
+packaged catalog checks**, and **680 full-suite tests** passed. A later isolated
+source WebView2 launch rendered Library and exposed an inspectable native
+window; invoking Restore changed its caption state. System menu, Snap, taskbar,
+full keyboard moving/resizing, and physical multi-monitor acceptance were not
+established by those runs. The October review pass above repairs DPI coordinate
+handling and persistence scheduling; it does not turn those hardware acceptance
+gaps into completed checks.
+
+## UNRELEASED - 2026-09-26/27 Direction B UI implementation
+
+The shared layouts gained the Tonight brief/chart/ranked workspace, wide docked
+inspector and compact dialog behavior, catalog navigation, local Sky View
+scrub, container-driven canvases, focus behavior, and import/library retry flows.
+Follow-up fixes addressed inspector bounds, chart legend and compact metadata,
+shortcut scope, scroll-aware detail positioning, image-error fallback, and
+wrapping long labels (UIB-006/UIB-008 through UIB-021).
+
+The dated final snapshot passed **647 pytest tests**, JS/encoding guards, and
+**38/38 complete browser checks** against a fresh dirty development build
+(`0.6.34-8-g3c12daf-dirty`). Its screenshot matrix contained 42 desktop and 40
+web captures. The theme matrix described at that time included Glass; current
+presentation is Workbench-only. UIB-022's Glass-specific Horizon issue is
+superseded, while UIB-023/024's older visual claims are no longer supported by
+the current Tonight/Library structures and Horizon aspect/min-height code.
+Fresh evidence is required before reopening them. Screenshot and implementation
+detail remains in the Direction B records and Git history.
+
+The older `BUGS.md` statements of a current zero-error release guard and literal
+web cache tokens were historical evidence recorded before later changes.
+Release-ready results belong to their dated entries below; current tokens are
+validated by the guards, and a dirty development build does not establish a
+current staged release.
+
+## UNRELEASED - 2026-09-27 packaged Image Catalog shell
+
+Not staged, tagged, or deployed. The standard packaged desktop now launches a
+dedicated Image Catalog shell with Library, Import Exposures, and the fixed
+archive Sky Map. The legacy desktop planner remains available from source and
+with `--planner`; the web planner and shared `core/` were unchanged. Catalog
+startup skips planner image prefetch, and catalog-only mode does not serve the
+planner shell at `/index.html` or expose the planner's object-image and update
+check routes. Those optional remote routes return 404 before network work. A
+planner request handed to an active catalog-only instance shows a
+close-and-relaunch notice instead of a blank route.
+
+Validation of this working-tree snapshot:
+
+- `python -m pytest tests/ -q --tb=no` -> **658 passed, 1 warning** in 274.59s.
+- `python -m pytest tests/test_desktop_catalog_mode.py tests/test_main.py -q`
+  -> **18 passed, 1 warning**.
+- `python scripts/check_js.py` -> **OK**; its 25 heuristic undefined-call
+  candidates are non-failing diagnostics.
+- `python scripts/check_encoding.py` and `git diff --check` -> **OK**.
+- `python scripts/check_browser.py --desktop` against the final executable
+  -> **16/16 passed** (15 legacy planner checks and the catalog-only flow).
+- `python scripts/check_browser.py --desktop --only desktop-catalog-only-launch`
+  -> **1/1 passed**.
+- `build.ps1 -AllowDirty` produced `dist\NightSeam.exe` (20.5 MB), version
+  `0.6.34-9-gd9f4f3a-dirty`. `app/_version_baked.py` remained unchanged.
+
+No release archive was created and no clean-tag or deployment claim is made.
+
+## UNRELEASED - 2026-09-20 review implementation pass (final validation)
+
+Not tagged or deployed. This pass covered planner invalidation, panorama
+editing/persistence, backup restore safety, weather retry, theme module
+tracking, target explainability/transit data, richer horizon metadata, and
+catalog provenance/reproducible exports. The separate environmental tool was
+intentionally outside its scope.
+
+Validation of the final dirty working-tree snapshot:
+
+- `python -m pytest tests/ -q --tb=no` -> **641 passed, 1 warning**.
+- `python scripts/check_core.py` and `python scripts/check_js.py` -> **OK**.
+- Browser gate -> **32/32 passed**, covering both shells, Workbench/Glass,
+  horizon metadata, catalog provenance, and accessibility smoke checks.
+- `build.ps1 -AllowDirty` produced `0.6.34-5-gd6e115c-dirty`.
+- `python scripts/make_release.py --allow-dirty` produced
+  `dist/release/NightSeam-0.6.34-5-gd6e115c-dirty.zip` (23.4 MB), SHA-256
+  `a80fb785c1c0d491f1cdd9f3f64c45bcac8faf6d1f5636c361a77852db0dda47`.
+- `python scripts/check_release.py --allow-dirty` -> zero errors and one
+  expected dirty/off-tag warning.
+
+The accessibility foundation adds semantic tab state, chart text alternatives,
+visible focus styling, high-contrast/reduced-motion rules, and Escape dismissal
+for the web dialog. Horizon metadata is carried through both shells, backup,
+SQLite, shared history, and the profile comparison UI. Catalog provenance is a
+deterministic 12,176-row sidecar with source hashes, aliases, designation
+history, mapping notes, and complete JSON export actions. A full manual
+screen-reader/focus-restoration audit remains open; no clean tag or deployment
+was made.
+
+Elevation semantics and the solar-system ephemeris policy remain explicit
+maintainer decisions before their decision-dependent features are implemented.
+
+> **Post-release audit note (2026-09-17).** Six unresolved findings discovered
+> after 0.6.33 are tracked in `BUGS.md`. In particular, the live HTML document
+> still lacks CSP even though `version.json` carries the policy, and the relaxed
+> production smoke does not establish document protection. This note does not
+> rewrite what the 0.6.33 release ran or observed; fixes belong in the next
+> release entry when they ship. **All six shipped in 0.6.34 (below).**
+
+## UNRELEASED - 0.6.35 working tree (2026-09-19)
+
+**Not tagged.** The four items `BUGS.md` had been carrying since the 0.6.20/0.6.24
+reviews (`CR2`, `DS4`, `DS5`, `WB7`) were reassessed and closed. All four were
+severity S4 ("migration") originally; the reassessment CONFIRMED two and REFINED
+two, and in both refined cases the original note was imprecise in a way that
+mattered.
+
+**Workbench theme redesign.** The new `workbench` theme is now the default for
+the desktop app and web planner, with the landing page following the same
+graphite/brass visual language. The existing `dome` Glass theme remains
+selectable from Appearance. Legacy `classic`, empty, and unknown values migrate
+to Workbench; desktop settings and web backups preserve the canonical `dome` or
+`workbench` value. The Tonight surfaces gained the shared session brief,
+booked-night track, chart-first target layout, and side inspector treatment.
+The implementation is scoped to `app/theme.py`, the two theme stylesheets,
+`landing/style.css`, and the existing shell controls; astronomy, planning, and
+catalog behavior did not change.
+
+**Workbench verification.** `python scripts/check_js.py` -> OK.
+`python -m pytest tests/ -q --tb=no` -> **626 passed, 0 failed**. Manual live
+smoke checks covered the desktop and browser planner shells in both the default
+Workbench presentation and the selectable Glass presentation.
+
+**Beta deployment.** The current `web/` tree was uploaded to the isolated
+`/beta/` remote directory and is live at
+`https://www.nightseam.de/beta/`. The live page reports the catalog ready with
+12,176 objects and `data-theme="workbench"`; production `/astro/` and the
+landing page were not changed for that theme deployment. The repository Playwright gate could not start in
+this Windows sandbox (`WinError 5` while creating its browser subprocess), so
+the deployed page was verified through the in-app browser instead.
+
+**Weather CSP fix and deployment (2026-09-19).** The public web document CSP
+now allowlists `https://api.open-meteo.com` in `connect-src`, matching the
+browser-side weather fetch. The source-level policy test covers both the HTML
+meta carrier and `.htaccess` header carrier. `web/index.html` and
+`web/.htaccess` were uploaded to both `/beta` and `/astro`. Live in-app browser
+checks confirmed that both deployed sites load current conditions and the
+four-day forecast. The repository Playwright gate still cannot start in this
+Windows sandbox (`WinError 5`); no version bump or tag was made.
+
+**Hourly observing weather.** Both shells now normalize Open-Meteo hourly
+forecast data into a site-local selected-night timeline with cloud cover,
+precipitation probability and amount, a plain-language sky-clarity/haze
+proxy, temperature/dew-point spread, and derived dew-risk labels. It now
+shows dark hours only and puts a 0–100 night rating plus a green/yellow/red
+aggregate status in the top bar; daylight/current-noon and raw kilometre
+visibility values are not presented. Responses are generation-guarded so
+changing site or date cannot paint stale data. A direct browser-side 7Timer
+seeing/transparency feed is intentionally deferred until it can be served
+through a safe HTTPS/CORS-aware provider boundary; the normalized hourly
+contract leaves that extension open.
+
+**Theme-owned visualizations.** Sky View, the catalog sky map, and altitude
+graphs now consume semantic `--viz-*` roles through `viztheme.js` in both
+shells. Switching Appearance emits `theme:changed` and repaints the active
+canvas, so Workbench and Glass differ inside the charts as well as around them.
+The invariant test was updated to protect the semantic contract rather than a
+single hard-coded red palette.
+
+**Altitude graph legibility.** The detail-chart legend is now grouped into
+Target state and Chart guides, with plain-language descriptions for the target
+states, minimum threshold, moon track, twilight shading, best window, and
+obstruction ceiling. The Moon track has its own blue/cyan palette role instead
+of sharing the warning colour, and both shells clip the track at the chart's
+-10° floor so it cannot overlap the time labels.
+
+**Menu stacking.** Workbench now follows the shared chrome ladder in both
+shells: the top bar sits above the tab strip and page content, while its menu
+popover remains above the bar. This prevents the hamburger menu from opening
+behind Horizon cards or other view panels.
+
+**Independent EOG zenith sky brightness.** Added a shared, pure EOG/VIIRS
+estimate based on the published neighborhood sky-glow model, an offline builder
+for reduced Annual VNL radiance/coverage packs, a lazy optional chip in both
+shells, and a separate Lorenz comparison validator. Lorenz is not a runtime
+dependency or shipped asset; the estimate remains display-only and does not
+replace Bortle or ranking. The raw EOG source rasters were not bundled because
+the current download endpoint requires operator access. Focused verification:
+`python scripts/check_js.py`, `python scripts/check_core.py`, pack-builder and
+validator syntax checks, and `python -m pytest tests/test_skybrightness.py -q`
+(5 passed). The full suite remains the final release gate.
+
+No tag or package was made.
+
+**CR2 - malformed-horizon guards (confirmed, and larger than noted).**
+`visibleSkyBands` had already been fixed (CO-04), but an empirical probe of the
+whole family found three live gaps: `skyBandPolygons` and `profileSegments` threw
+on 7 malformed shapes (the desktop editor passes `profileTop`, so a sky record
+with no top array crashed a render), and `ceilFor` validated the profile's LENGTH
+but not its ELEMENTS - returning `ceil: NaN` for a 720-long array holding NaN,
+which is the exact hazard its own guard exists to prevent (`alt > NaN` is false,
+so every object at that azimuth reads as blocked). All three now return the empty
+sentinel their siblings use. **Pin:** `tests/js/horizon_degrade.mjs`, 14 malformed
+shapes x 7 entry points, plus a positive case so the degrade cannot become
+"always empty"; mutation-proven for both guards added.
+
+**DS4 - the worker/detail peak disagreement (refined; the note was wrong).**
+The note said "one-sample/0.05 deg difference near ties". The two payloads sample
+DIFFERENT grids (night 6 min noon-anchored, detail 4 min dusk-anchored), so their
+peaks legitimately differ and that is not the defect. The defect was that the
+detail payload disagreed with ITSELF: it took the argmax over the 2-dp-ROUNDED
+array while the night path used the raw argmax, so `max_time` and `max_alt` could
+name different samples. Fixed to the raw argmax. **Measured, and it limits the
+pin:** since `round2(max(raw)) >= round2(raw[j])`, the rounded argmax can only
+land at or before the raw one, so the reported peak VALUE is unchanged either way;
+the difference is which of two equal-valued samples `max_time` names. The shipped
+ic434 row holds a single sample at its detail maximum over four dates, so no live
+fixture separates the two. The engine therefore asserts the user-visible contract
+(the two fields describe one sample; the peak is not below the grid's own maximum)
+and records this limit in a comment rather than inventing a fixture. **Pin:**
+`tests/js/worker_failure.mjs`.
+
+**DS5 - worker revive (confirmed).** `_worker.onerror` set the broken flag but
+left the DEAD Worker in `_worker`; `__NS_REVIVE_WORKER` clears the flag, so the
+next build handed the corpse back to `postMessage` - the recovery hook could not
+recover. The kill hook was already correct, which is exactly why the existing
+`desktop-worker-kill-sync-fallback` check passed while this path was broken. The
+handler now terminates and nulls the worker like the timeout path and the kill
+hook; it was extracted into `onWorkerError` so a browser check can drive it with a
+genuine `ErrorEvent` through the new `__NS_FAIL_WORKER` dev hook. **Pins:**
+`tests/js/worker_failure.mjs` (mutation-proven) and the new browser check
+`desktop-worker-error-disposal`.
+
+**WB7 - web bundle version (confirmed).** `version` was written at export and
+IGNORED on import, so a bundle from a future format was accepted and its fields
+read under this build's rules - a silent misreading reported as a successful
+restore. `stageBackup` now refuses a version above `BUNDLE_VERSION` with a
+message that says to update; v1 (no stamp) and v2 still restore, and an unusable
+stamp is refused rather than crashing. **Pin:** `tests/js/web_backup.mjs`
+(mutation-proven).
+
+**Verification.** `python -m pytest tests/ -q` -> **626 passed, 0 failed**.
+`python scripts/check_js.py` -> OK (core re-baked: token 33 -> 35, every importer
+and its cache token moved in the same change). Browser gate: `--web` 18/18,
+`--desktop` **9/9** against a freshly built exe (the new check included). The exe
+was rebuilt for that gate and is a local build, not a release artifact.
+
+**Not done, deliberately.** No version bump and no tag: this is the working tree
+for the next release, and the four closures ride with it. CR3 (FOV-edge half-bin)
+remains a deliberate, documented non-change - it alters user-visible scoring and
+needs its own release decision.
+
+## 0.6.34 - 2026-09-17
+
+**RELEASED as 0.6.34** - tag `v0.6.34` on the release commit `a279513`, with the
+curated `scripts/build_changelog.py` entry living IN that commit. Follow-up
+`3d4eb54` regenerated the tracked `landing/changelog.json` (**never moved the
+tag**); HEAD is now `v0.6.34-1-g3d4eb54`.
+
+**What shipped.** The BUGS.md fix pass - all six findings:
+
+- **BUG-001** - a restore now validates the whole bundle, stages payloads with a
+  `payload.journal`, and swaps them in only after the database transaction
+  commits. A refused restore leaves both the database and the payload tree
+  byte-identical.
+- **BUG-002** - imported ids need `u_` AND `safe_token()`, imported `imagetyp` is
+  normalized, every desktop attribute sink escapes, the two inline `onerror=`
+  handlers became listeners, and the desktop CSP dropped `script-src
+  'unsafe-inline'` for the SHA-256 of the one inline theme bootstrap.
+- **BUG-003** - the production document enforces a policy. `/astro/` answers
+  `server: nginx` + `content-type: text/html` with no header and the Plesk console
+  exposes no nginx directive field (measured 2026-09-17), so the policy ships as
+  `<meta http-equiv="Content-Security-Policy">` in `web/index.html`; the header
+  form stays in `web/.htaccess` for a host that offers the directive field.
+- **BUG-004** - malformed bundle shapes (scalar top level, non-object records) are
+  a controlled 400 raised before the safety copy, not a 500.
+- **BUG-005** - the Today view publishes `#view[data-ns-gen]`/`[data-ns-sel]` on
+  the scrubber's own grid and the browser check waits for the REQUESTED instant.
+  The new check found three real stale-selection defects (see below).
+- **BUG-006** - deleting the active panorama clears `active_pano_id` in the same
+  transaction; activating an unknown id is refused with a 400.
+
+**Found while fixing (all fixed before the tag).**
+
+1. BUG-005's new check failed three times, each a real divergence:
+   `renderTonight` captured the selection at call time while its compute runs
+   ~30 ms later; `clampSkyTime()` announced `sky:time` only when it CHANGED the
+   time, so at boot the announcement arrived before the scrub listener existed;
+   and `#tb-scrub` is `step="15"`, so the browser snapped what `syncScrub()`
+   wrote (write 204, DOM 210) - a marker publishing raw milliseconds could never
+   match.
+2. `style-src 'self'` in the (then-unused) header policy **silently blocked the
+   shell's inline `style=` attributes**: measured 2026-09-17, the range inputs and
+   theme swatches lost their styling while the page booted normally and Chrome
+   logged NO "Refused to" message. Both carriers now say
+   `style-src 'self' 'unsafe-inline'` (inline STYLE cannot execute), and the
+   production smoke MEASURES a computed background so it cannot fail silently.
+
+**Verification.**
+
+- `python -m pytest tests/ -q` -> **623 passed, 0 failed** (baseline 598).
+- `python scripts/check_js.py` -> OK.
+- `python scripts/pre_tag_check.py 0.6.34` -> OK (curated entry present, every
+  module and the catalog match their cache token).
+- `python scripts/check_browser.py --all` on the staged build -> **26/26 passed**
+  (web 18, desktop 8), including the new `web-tonight-render-marker-converges`.
+- `python scripts/check_release.py` -> 0 errors, 1 warning (the changelog
+  regeneration that step 7 performs; done and committed as `3d4eb54`).
+- Staged artifacts: `dist/release/NightSeam-0.6.34.zip` (20,510,625 bytes, sha256
+  `285e8927b00632c214fd37e302719bcdc49d2eefa99f7c422eea07f485e7c876`), plus
+  `NightSeam-latest.zip`, `version.json` and `ns-version.js`.
+- Deployed and verified LIVE: `/downloads/` (zip + latest + version.json +
+  ns-version.js + changelog.json) and the `/astro` tree (`app.js`, `version.json`,
+  `.htaccess`, **`index.html` last**), then
+  `check_browser.py --prod-url https://nightseam.de/astro/` -> **PASS**, with the
+  page's own footer version matching the deployed `version.json`.
+
+**Not done, deliberately.** The desktop app's update notice points at
+`ns-version.js`, which is uploaded; the exe itself is a local build (the `/downloads`
+zip is the distributable). The nginx header remains a possible upgrade if the host
+ever exposes the directive field - no change would be needed beyond adding the
+documented `add_header` line.
+
+## UNRELEASED - BUGS.md fix pass (2026-09-17)
+
+**Not tagged, not deployed, no version bump.** This is the working-tree fix pass
+for the six findings in `BUGS.md`, recorded here because the repository's rule is
+that evidence lives with the change. It becomes a release entry only when it is
+tagged; nothing below was verified against a deployed host.
+
+**What changed (one line per finding).**
+
+- **BUG-001** - `app/backup.py::apply_import_zip` now validates the WHOLE bundle
+  (new side-effect-free `database.prepare_import_bundle`) before a payload byte is
+  staged, stages payloads into `<target>.import-<n>.part` on the DESTINATION
+  filesystem with a `payload.journal` holding any file they would replace, runs
+  the database transaction, and only then swaps the staged files in. Every
+  failure path rolls the journal back, so a refused restore leaves the database
+  and the payload tree byte-identical. `_PayloadStage` is the sole
+  payload-writing mechanism.
+- **BUG-002** - the import boundary requires `u_` **and** `paths.safe_token()` for
+  a custom id (`database.custom_id_problem`, the one rule shared with the insert
+  loop) and normalizes `imagetyp` through `ingest.classify_frame`; the desktop
+  attribute sinks that rendered those values unescaped (`setup.js` custom list -
+  the id that reproduced the finding - plus `targets.js`, `tonight.js`, `pano.js`
+  and the site/rig buttons) now escape them; the two inline `onerror=` thumbnail
+  handlers became listeners; and `app/server.py::CSP_HEADER` dropped
+  `'unsafe-inline'` from `script-src` in favour of the SHA-256 of the one inline
+  theme bootstrap.
+- **BUG-003** - `tests/browser/harness.py::_csp_problems(..., document=True)` and
+  `_prod_smoke` read the policy from the `page.goto()` DOCUMENT response only (the
+  `version.json`/`catalog.manifest.json` fallback is gone) and a missing document
+  CSP is now a hard failure. `web/.htaccess` documents the required nginx
+  directive; **applying it at the host layer is still outstanding** (see BUGS.md).
+- **BUG-004** - `database.import_bundle_shape()` runs immediately after
+  `json.loads`: a non-object top level, a non-list collection and a non-object
+  entry in any collection are ValueError -> controlled 400, before the safety copy.
+- **BUG-005** - `web/app.js` publishes `#view[data-ns-gen]`/`[data-ns-sel]` after
+  each Tonight paint (and clears the selection the moment the scrub moves);
+  `tests/browser/harness.py::wait_tonight_after` polls it and
+  `web-tonight-pool-includes-unmagnituded-standard-rows` asserts the painted
+  instant equals the scrubber's own (`window.__ns_scrub_sel`), replacing the
+  120 ms sleep. New check `web-tonight-render-marker-converges`.
+- **BUG-006** - `Database.delete_panorama` clears `active_pano_id` in the same
+  transaction when it deletes the row the pointer names (and only then);
+  `set_active_panorama` refuses an id that names no row, and
+  `POST /api/settings` maps that to a 400.
+
+**Verification run.**
+
+- `python -m pytest tests/ -q --tb=no` -> **620 passed, 0 failed** (baseline in
+  `BUGS.md` was 598).
+- New regression modules: `tests/test_prod_document_csp.py` (6),
+  `tests/test_tonight_marker.py` (5), `tests/js/dom_escape.mjs` +
+  `tests/test_js_behaviour.py::test_desktop_attribute_sinks_escape_imported_data`,
+  and the BUG-001/002/004/006 cases added to `tests/test_backup.py` and
+  `tests/test_api.py`. The escape engine was mutation-proven (removing one `esc()`
+  fails it).
+- `python scripts/check_js.py` -> **OK** after repeated
+  `scripts/bump_web_tokens.py` + `scripts/check_js_tokens.py --update` runs
+  (`app.js` 87 -> 97 across the pass, in `web/index.html` + `web/app.js`).
+- **Browser gate:** `--web` **18/18 passed** and `--desktop` **8/8 passed**
+  (rebuilt exe). Escalated once per run: Playwright cannot create its Chrome pipes
+  under the confined sandbox - see `ENVIRONMENT.md`.
+- **BUG-003 closed on the LIVE origin.** `/astro/` was measured through Chrome on
+  2026-09-17: `server: nginx`, `content-type: text/html`, NO policy header and no
+  meta policy - i.e. nginx serves the document itself, so `web/.htaccess` can never
+  reach it and this host exposes no nginx directive field. The enforced policy now
+  ships as a `<meta http-equiv="Content-Security-Policy">` in `web/index.html`;
+  `web/index.html` was deployed individually and
+  `check_browser.py --prod-url https://nightseam.de/astro/` -> **PASS** (policy
+  present on the document, inline-styled swatches still render).
+- **A silent-breakage bug found by measuring instead of assuming.** The header
+  policy carried `style-src 'self'`, which blocks the shell's inline `style=`
+  attributes with NO console message: the sliders and theme swatches lost their
+  styling while the page booted normally (negative control: `style-src 'self'`
+  alone -> `edgeSpace`/`bortle` widths and the swatch background all
+  `<blocked>`, `Refused to` messages = 0). Both carriers now say
+  `style-src 'self' 'unsafe-inline'`, and the production smoke measures a computed
+  background on an inline-styled element so it can never fail silently again.
+- Desktop: the exe was REBUILT from this tree (PyInstaller onefile, ~47 s,
+  20.8 MB, `v0.6.33-8-gfa6ef5c`) and `python scripts/check_browser.py --desktop`
+  -> **8/8 passed** (boot, worker date change, worker kill/sync fallback, pref
+  rescore, advanced mode, catalog tier/minvis, scrub window, pano crop FOV).
+- Guard dry run: `python scripts/pre_tag_check.py 0.6.34` -> the expected FAIL
+  ("no CURATED entry for 0.6.34"), with the token guard's self-test OK and no
+  missed-bump finding - i.e. the release machinery is armed and waiting for the
+  changelog entry, nothing else.
+- **NOT run:** the header carrier on the live host (it cannot be applied there).
+  The meta carrier is the live protection; `web/.htaccess` keeps the stronger
+  header form ready for a host that exposes the directive field.
+
+**Discovered while verifying (fixed in the same pass).** The browser gate earned
+its keep: the new BUG-005 check failed three times in a row and each failure was a
+REAL divergence, not test flakiness. (1) `renderTonight` captured
+`S.skyTime` at CALL time while its compute runs ~30 ms later, so a selection
+clamped in between painted cards for the old instant. (2) `clampSkyTime()` only
+announced `sky:time` when it CHANGED the time, so at boot the announcement arrived
+before the scrub listener existed and the slider + Tonight view kept the
+pre-clamp selection. (3) `#tb-scrub` is `step="15"`, so the browser snaps what
+`syncScrub()` writes (write 204, DOM 210) and a scrub writes that back into
+`S.skyTime` - a marker publishing raw milliseconds could never equal the
+scrubber's own instant. All three are fixed at the source and pinned by
+`web-tonight-render-marker-converges`.
+
+## 0.6.33 - 2026-09-15
+
+**RELEASED as 0.6.33** - tag `v0.6.33` on the release commit `3c2f98a`, with the
+curated `scripts/build_changelog.py` entry living IN that commit. Follow-up
+`b390575` regenerated the tracked `landing/changelog.json` (**never moved the
+tag**).
+
+**What shipped.** The 0.6.32-review fix batch plus the shell-unification pass:
+the web "tonight" pool gained the 45 standard-mode objects whose catalogue
+magnitude is empty (the inline `o.vmag != null` filter - IC 1396, the Running
+Man, NGC 281, the Flame, the Tulip, Simeis 147, the Double Cluster, the Pipe
+Nebula and 38 more could never appear there), both shells now score through ONE
+`core/scoring.js::scoreNightTracks` with the span as a parameter, the panorama
+editor's snapshot/undo/redo/dirty model is ONE `core/panohistory.js` (the
+desktop gained `#btnRedo`), the popularity source is no longer contacted anywhere (the
+`--live` refresh flag is GONE, not disabled), the web shell ships a
+Content-Security-Policy, and 74 review findings plus 6 investigated non-finding
+items are closed or documented.
+
+**Staged artifacts** (`dist/release/`): `NightSeam-0.6.33.zip` and
+`NightSeam-latest.zip` (20,505,657 B, sha256
+`c947dcd37af9c66688712284107eb574a3e0b2c1a102abd8c290c4050ba583ad`),
+`version.json` (version 0.6.33, url `/downloads/NightSeam-0.6.33.zip`, size +
+sha256 above), `ns-version.js` (`{"version": "0.6.33"}`), `NightSeam.exe`
+(19.8 MB, rebuilt AT the tag with `build.ps1` - the release check correctly
+refused to stage the earlier `0.6.32-3-g3277846-dirty` snapshot).
+
+**Gates.**
+
+* `python -m pytest tests/ -q` -> **598 passed** (0 failures).
+* `python scripts/check_js.py` -> OK (imports, DOM ids, syntax on 81 modules,
+  encoding, catalog token, the VERIFIED token baseline, core drift/purity).
+* `python scripts/check_release.py` -> 0 errors at the tag, before staging.
+* `python scripts/check_browser.py --all` -> **25/25** on the STAGED build
+  (17 web checks incl. the new `web-tonight-pool-includes-unmagnituded-standard-rows`,
+  and 8 desktop checks against the freshly built exe).
+* `python scripts/check_browser.py --web --prod-url https://nightseam.de/astro/`
+  -> **18/18** after upload.
+
+**Deployed and verified live** (FTPS, Plesk):
+
+* `/downloads/` - `NightSeam-0.6.33.zip` + `NightSeam-latest.zip` +
+  `version.json` + `ns-version.js`; the LIVE zip was downloaded back and its
+  sha256 equals the staged value byte-for-byte.
+* `/astro/` - the whole web tree via `uploadtree` (index.html last, as the
+  uploader orders it) plus `web/.htaccess` uploaded by hand (the uploader skips
+  dotfiles). Live `/astro/version.json` = 0.6.33 / describe v0.6.33.
+* `/` - the landing tree, so `/changelog.json` now carries the 0.6.33 entry
+  (verified: newest entry 0.6.33).
+
+**CSP caveat (measured, and the reason the check was relaxed).** The host
+fronts static files with **nginx**, which serves `.html`/`.js`/`.css` itself and
+never reaches Apache for them, so the `web/.htaccess` directives arrive only on
+the paths nginx proxies: measured 2026-09-15, `/astro/version.json` carries the
+policy and `/astro/`, `/astro/app.js`, `/astro/app.css` do not. `mod_headers` is
+therefore working; the policy simply cannot cover the HTML without an nginx-layer
+rule (Plesk > domain > Apache & nginx Settings > Additional nginx directives).
+The production check now probes every path under the URL for the policy, treats
+"the host serves it nowhere" as a printed NOTE rather than a hard failure (a
+platform property this repo does not control), and still FAILS on a policy it
+does find if that policy is unusable. The policy's CONTENT and its inline-script
+hash are pinned offline by `tests/test_prod_csp.py`.
+
+**Test-count and token register at this release:** 598 tests collected; web
+tokens `app.js?v=87` / `CATALOG_TOKEN='10'` / astro 21 / horizon 54 / format 28 /
+nightrank 20 / webstore 31 / dragwin 1 / style 24 / themes 5; core stub
+`web/core.js?v=33` (current hash `7d2e90d5de153c46`, retained N-1
+`21df8e451f20a165`, 10 core modules).
+
+**Post-tag commits (never move the tag):** `b390575` (regenerated
+`landing/changelog.json`) and the harness fix that relaxed the CSP probe
+described above.
+
+  **RELEASED as 0.6.25** - tag `v0.6.25` on the release commit (the curated entry
+  and the build fix live in it), staged artifacts in `dist/release/`
+  (`NightSeam-0.6.25.zip` + `NightSeam-latest.zip` + `version.json` +
+  `ns-version.js`), `check_release.py` 0 errors, the FULL browser gate **19/19 on
+  the staged build** (12 web + 7 desktop against the fresh exe), and after the
+  upload the live site passes the read-only production smoke (**13/13**,
+  `check_browser.py --web --prod-url https://nightseam.de/astro/`). Deployed:
+  `/downloads/` (zip, latest, version.json, ns-version.js), `/astro` (whole tree,
+  index.html last) and the landing (with the regenerated changelog.json). The gate
+  needs ONE unsandboxed command (Chromium's mojo named pipes); sandboxed, `TO-02`
+  makes it report exit 2 honestly instead of a fake "failed check(s)".
+- **RELEASED as 0.6.26** - tag `v0.6.26` on the release commit (`d412998` catalog
+  rebuild + `ea86a3a` the curated entry), staged `dist/release/`
+  (`NightSeam-0.6.26.zip` sha256 `cd0d2bc5...` + `NightSeam-latest.zip` +
+  `version.json` + `ns-version.js`), `check_release.py` **0 errors at the tag**,
+  the FULL browser gate **19/19 on the staged build** and **13/13 including the
+  read-only production smoke** after the upload. Deployed `/downloads/` (zip,
+  latest, exe, version.json, ns-version.js), `/astro` (whole tree, index.html
+  last) and the landing. Verified live, not assumed: `/astro/version.json` +
+  `/downloads/version.json` + `/downloads/ns-version.js` all read 0.6.26, the
+  deployed `catalog.json` sha256 equals the local payload, the published zip
+  equals the staged artifact, the live tokens are `app.js?v=70` /
+  `CATALOG_TOKEN = 5`, and the live copy reads 12,160 with no stale "197".
+  Follow-up commit `408dab5` regenerated the tracked `landing/changelog.json`
+  (**never moved the tag**).
+- **RELEASED as 0.6.27** - tag `v0.6.27` on the release commit (`348b015` the
+  popularity/label/migration work + `b7cf4de` the curated entry), staged
+  `dist/release/` (`NightSeam-0.6.27.zip` sha256 `383faa68...` + latest +
+  `version.json` + `ns-version.js`), `check_release.py` **0 errors at the tag**,
+  the FULL browser gate **19/19 on the staged build** and **13/13 including the
+  read-only production smoke** after the upload. Deployed `/downloads/`,
+  `/astro` (index.html last) and the landing; verified live (`/astro/version.json`
+  + `/downloads/version.json` + `ns-version.js` = 0.6.27, the deployed
+  `catalog.json` sha256 equals the local payload, the published zip equals the
+  staged artifact). Follow-up commit `f816a00` regenerated the tracked
+  `landing/changelog.json` (**never moved the tag**).
+- **RELEASED as 0.6.28** - tag `v0.6.28` on the release commit (`4bcbcd9` the
+  7-object supplement + the CATALOG.md/DECISIONS.md docs, `e3bcb38` the curated
+  entry), staged `dist/release/` (`NightSeam-0.6.28.zip` sha256 `57b47519...` +
+  latest + `version.json` + `ns-version.js`), `check_release.py` **0 errors at the
+  tag**, the FULL browser gate **19/19 on the staged build** and **13/13 including
+  the read-only production smoke** after the upload. Deployed `/downloads/`,
+  `/astro` (index.html last) and the landing; verified live (`/astro/version.json`
+  + `/downloads/version.json` + `ns-version.js` = 0.6.28, the deployed
+  `catalog.json` equals the local payload AND carries all seven supplement ids,
+  the published zip equals the staged artifact). Follow-up commit `f45b1d0`
+  regenerated the tracked `landing/changelog.json` (**never moved the tag**).
+  **Gate note:** the first `--all` run on the freshly built onefile exe failed
+  `desktop-pano-crop-fov` with a 30 s wait timeout (32.5 s) because PyInstaller
+  unpacks the ~20 MB exe to %TEMP% on first launch; the immediate re-run passed
+  7/7 (3.1 s). A cold-start timeout right after a build is that, not a regression -
+  re-run the gate before investigating.
+- **RELEASED as 0.6.29** - tag `v0.6.29` on the release commit (`365dc0e`: the
+  nine-object supplement batch 2 + the copy/doc updates; the curated entry is in
+  the same commit). Catalogue **12,167 -> 12,176** (supplement 7 -> 16), staged
+  `dist/release/` (`NightSeam-0.6.29.zip` sha256 `c43e85a41f4f87015a7cb1e0ef308f59dc1385a02662f634ddbc2bcc6a6744dc`,
+  20,483,677 bytes, + latest + `NightSeam.exe` + `version.json` + `ns-version.js`),
+  `check_release.py` **0 errors at the tag**, the FULL browser gate **19/19 on the
+  staged build** (12 web + 7 desktop against the fresh exe - no cold-start timeout
+  this time) and **13/13 including the read-only production smoke** after the
+  upload. Deployed `/downloads/` (zip, latest, exe, version.json, ns-version.js),
+  `/astro` (whole tree, index.html last) and the landing. Verified live, not
+  assumed: `/astro/version.json` + `/downloads/version.json` +
+  `/downloads/ns-version.js` all read 0.6.29, the deployed `catalog.json` sha256
+  **equals the local payload** (`c44fd26a...`, 12,176 rows / 200 standard) AND
+  carries all nine new ids with the `Squid` alias intact, and the published zip
+  sha256 equals the staged artifact. Tokens: `app.js?v=74` (index.html) /
+  `CATALOG_TOKEN = 8` + manifest, baseline refreshed for the one moved token.
+  Popularity 7,645 -> **7,654** (the nine new rows; no existing score touched).
+  All nine entered Standard mode on their own scores (29,490 / 25,230 / 22,630 /
+  14,110 / 9,790 / 8,230 / 6,780 / 5,200 / 2,188, cut 1,751), displacing nine
+  members: `ngc6526`, `ngc3992` (M109), `ngc6121` (M4), `ic63`, `ic1871`,
+  `ngc2246`, `ngc6905`, `ngc2362`, `ngc6231` - the documented consequence of
+  `STANDARD_TOP_N = 200`, accepted deliberately (see `DECISIONS.md`).
+  Follow-up commit `809de12` regenerated the tracked `landing/changelog.json`
+  (**never moved the tag**); `RELEASES.md` record in the next commit.
+- **RELEASED as 0.6.30** - tag `v0.6.30` on the release commit (`d47d019`: the popularity
+  TIER column + frame-coverage colours + Min-visibility slider in BOTH apps, plus the
+  curated entry in the same commit). Staged `dist/release/`
+  (`NightSeam-0.6.30.zip` sha256
+  `4204eda2668057e73093c8312a0cc2cb1f5778e74c710fcf52ab6c2b0c60d576`, 20.5 MB, + latest +
+  `NightSeam.exe` + `version.json` + `ns-version.js`), `check_release.py` **0 errors at the
+  tag**, the FULL browser gate **21/21 on the staged build** (13 web + 8 desktop - the
+  desktop suite gained `desktop-catalog-tier-minvis`, and the web check now drives the
+  slider too) and **14/14 including the read-only production smoke** after the upload.
+  Deployed `/downloads/` (zip, latest, exe, version.json, ns-version.js), `/astro` (whole
+  tree, index.html last) and the landing. Verified live, not assumed:
+  `/astro/version.json` + `/downloads/version.json` + `/downloads/ns-version.js` all read
+  0.6.30, `landing/changelog.json`'s newest entry is 0.6.30, the deployed `catalog.json`
+  sha256 equals the local payload (`c44fd26a...`, 12,176 rows / 200 standard - the payload
+  itself did not change in this release), the live `index.html` carries `app.js?v=76`, the
+  live `app.js` carries `CATALOG_TOKEN = '8'` plus the new `cat-minvis` control, `style.css`
+  the `.tier-badge`/`.over` rules and `nightrank.js` the `nightStatsBatch` re-export, and the
+  published zip sha256 equals the staged artifact.
+  The core was re-baked twice (stub 21 -> 23, the tier helpers), so the token cascade touched
+  every web module - final register: app 76 / astro 15 / horizon 47 / format 22 / nightrank 13
+  / webstore 25 / style 18 / core 23. **503 tests.** Follow-up commit `c16e54f` regenerated
+  the tracked `landing/changelog.json` (**never moved the tag**).
+  **Gate note:** `dist/NightSeam.exe` was rebuilt with `-AllowDirty` mid-work to verify the
+  desktop UI in a real browser before the release (it reported `0.6.29-2-ge4e92c1-dirty`), and
+  the first `--all` run on that build hit the documented PyInstaller cold-start timeout on
+  `desktop-pano-crop-fov`; the immediate re-run passed (2.9 s). The released exe was then
+  rebuilt CLEAN at the tag (`0.6.30`) and the staged gate passed 21/21 first time.
+- **RELEASED as 0.6.31** - tag `v0.6.31` on the release commit (`93dccde`: the
+  ranking-alignment + progress/layout-stability work plus the curated entry).
+  Staged `dist/release/` (`NightSeam-0.6.31.zip` sha256
+  `5a0fa461571800e78ab8600fa66ba616c59c17124f3de62600d37d335f37b633`, 20.5 MB, +
+  latest + `NightSeam.exe` + `version.json` + `ns-version.js`), `check_release.py`
+  **0 errors at the tag**, the FULL browser gate **22/22 on the staged build** (14
+  web + 8 desktop, first run - no cold-start timeout) and **15/15 including the
+  read-only production smoke** after the upload. Deployed `/downloads/` (zip,
+  latest, exe, version.json, ns-version.js), `/astro` (whole tree, index.html
+  last) and the landing. Verified live: `/astro/version.json` +
+  `/downloads/version.json` + `ns-version.js` all read 0.6.31, the newest
+  `changelog.json` entry is 0.6.31, the deployed `catalog.json` sha256 equals the
+  local payload (`c44fd26a...`, 12,176 / 200 - unchanged again this release), the
+  live `index.html` names `app.js?v=78` and `style.css?v=21`, the live `app.js`
+  carries `cat-minvis`/`cat-stats`, `style.css` carries `.busy-slot` and
+  `table-layout: fixed`, `nightrank.js` re-exports `nightStatsBatch`, and the
+  published zip sha256 equals the staged artifact.
+  What it fixes, all MEASURED in a real browser before/after: the catalog table
+  used to widen the PAGE on a narrow viewport (page 721 px at a 360 px viewport ->
+  now 360, scrolling inside its card); progress text ("computing visibility…") and
+  the busy chip used to move the layout (the desktop topbar grew 93 -> 111 px and
+  pushed the app down -> now constant via a reserved `.busy-slot` whose HEIGHT is
+  reserved too, because at 1366 px the topbar already wraps); the catalog's
+  percentage columns used to resize as cells filled in (`table-layout: fixed`).
+  Also aligned: both shells now rank the tier over the set the current mode shows
+  (`activeCatalog()` / `S.catalog`), proven on the real payload by
+  `test_tier_letters_are_mode_independent_on_the_real_catalog`. **507 tests.**
+  No core re-bake in this release (stub stays 23), so `/astro/core` gained no new
+  dir; the four stale dirs from <= 0.6.26 are still unpruned. Follow-up commit
+  `80f362f` regenerated the tracked `landing/changelog.json` (**never moved the
+  tag**).
+- **RELEASED as 0.6.32** - tag `v0.6.32` on the release commit (`2966a3c`: the
+  `distance` removal + the designation-based Wikipedia lookup, with the curated
+  entry). Staged `dist/release/` (`NightSeam-0.6.32.zip` sha256
+  `41882ffc82b5c109bee1ca790ec828d4e4a9e248e29fe279585a06143b508e00`, 20.5 MB, +
+  latest + `NightSeam.exe` + `version.json` + `ns-version.js`), `check_release.py`
+  **0 errors at the tag**, the browser gate **22/22 on the staged build** and
+  **15/15 including the read-only production smoke** after the upload. Deployed
+  `/downloads/`, `/astro` and the landing; verified live: the version endpoints and
+  `changelog.json` all read 0.6.32, the live `index.html` names `app.js?v=80`, the
+  live `app.js` carries `CATALOG_TOKEN = '9'` AND `wikiTitles`, the deployed
+  `catalog.json` sha256 equals the local payload (`ae002a9a...`, 12,176 rows, **no
+  `distance` field**), and the published zips equal the staged ones.
+  **A real deploy defect was caught here:** the first `/astro` tree upload stalled
+  mid-way (the documented ProFTPD reuse behaviour) and left `core.js` pointing at
+  the PREVIOUS baked tree, so a returning visitor would have loaded a core without
+  `wikiTitles` and the app would have died on the missing named export. The verify
+  pass found it, `core.js` + `catalog.json` were re-uploaded on fresh connections,
+  and a new check (`logs/verify_tokens_live.py`) now compares EVERY live module and
+  the whole baked core tree byte-for-byte against the repo - it passes with
+  `STALE: none`.
+  Also noted: `desktop-pano-crop-fov` timed out at 30 s on two consecutive full gate
+  runs (31.9 s) and then passed in 2.9 s on the next one with the SAME preceding
+  checks, and in 2.9 s standalone - the upload/decode budget is flaky, so its wait
+  is 90 s now (`d6ace7a`, a post-tag test-only commit; the staged artifacts were
+  built at the clean tag and are unaffected). Follow-up `4d8ce4d` regenerated the
+  tracked `landing/changelog.json` (**never moved the tag**).

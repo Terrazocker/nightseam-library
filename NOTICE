@@ -1,0 +1,68 @@
+NightSeam — Third-party notices & credits
+=========================================
+
+NightSeam itself is released under the MIT License (see LICENSE).
+
+The following components, data sets and services are used and come with
+their own terms:
+
+Catalog data — OpenNGC (CC BY-SA 4.0)
+-------------------------------------
+The deep-sky catalog (Messier + NGC/IC, ~12,000 objects) is derived from
+OpenNGC:
+
+    OpenNGC — a dataset of NGC and IC objects
+    https://github.com/mattiaverga/OpenNGC
+    © (see the OpenNGC repository for authors), licensed under the
+    Creative Commons Attribution-ShareAlike 4.0 International License
+    (CC BY-SA 4.0). To view a copy of this license, visit
+    https://creativecommons.org/licenses/by-sa/4.0/
+
+The Messier designations themselves are public-domain (Charles Messier's
+original catalog, 18th century).
+
+Changes made to the OpenNGC-derived data: field selection and light
+normalization to the application's data model; no object data was invented.
+
+Astronomy algorithms
+--------------------
+Sun/moon positions, twilight, refraction and precession are implemented
+after published algorithms in:
+
+    J. Meeus, "Astronomical Algorithms", 2nd ed., Willmann-Bell, 1998
+
+(the algorithms themselves are mathematical facts and not copyrightable;
+this implementation is original code.)
+
+
+Object example images — Wikimedia
+---------------------------------
+Example photos of objects are fetched at runtime from Wikipedia /
+Wikimedia Commons, and a subset is bundled with the web version. Each image
+is the work of its individual author and remains under its own license
+(typically CC BY-SA, CC BY, or public domain). Per-image credit and license
+details are available on the file pages:
+
+    https://commons.wikimedia.org/
+    (search for the object's name, e.g. "Messier 42")
+
+Weather — Open-Meteo
+--------------------
+Weather data for observing sites is fetched from the Open-Meteo API:
+
+    https://open-meteo.com/
+    Weather data © Open-Meteo.com, free for non-commercial use.
+    https://open-meteo.com/en/terms
+
+Browser & OS runtime components
+-------------------------------
+The Windows executable embeds a Python 3.12 runtime plus:
+FastAPI, uvicorn, Starlette, Pydantic, pywebview, PyInstaller bootloader —
+all under permissive (BSD/MIT/Apache-2.0) licenses. Their license texts are
+distributed in the package source tree (.venv-build site-packages) and are
+available on request.
+
+Meteor shower display data — public domain/general reference sources.
+
+If you believe a credit is missing or incorrect, please open an issue on the
+project's repository.

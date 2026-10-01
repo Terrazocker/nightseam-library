@@ -1,0 +1,782 @@
+"""Image archive ingest: parse FITS headers, resolve objects, store files.
+
+Files are streamed to the archive (only the header is buffered in memory)
+and capped at MAX_INGEST_BYTES so an oversized upload cannot exhaust RAM
+or disk.
+"""
+
+from __future__ import annotations
+
+import logging
+import asyncio
+import hashlib
+import os
+import re
+import shutil
+import tempfile
+import threading
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+
+from . import fits as fitsio
+from . import imglib
+from . import paths
+from .database import Database, normalize_session_date_obs
+
+log = logging.getLogger(__name__)
+
+MAX_INGEST_BYTES = 1 << 30          # 1 GiB per file
+HEADER_READ = 1_500_000             # fits._MAX_BLOCKS blocks ~= 1.47 MB
+_COPY_CHUNK = 1 << 20               # 1 MB streaming buffer
+_STAGE_LOCK = threading.RLock()
+_ACTIVE_STAGES: set[Path] = set()
+_STAGE_NAME = re.compile(r"^\.nightseam-import-(\d+)-[A-Za-z0-9_]+\.part$")
+_STALE_STAGE_SECONDS = 3600
+
+
+async def _archive_io(function, *args, on_cancel=None):
+    """Finish in-flight filesystem work before cancellation can clean it up."""
+    task = asyncio.create_task(asyncio.to_thread(function, *args))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # Repeated disconnect/shutdown cancellation must not leave a worker
+        # using a stage after its cleanup has removed it.
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except BaseException:
+                break
+        try:
+            result = task.result()
+            if on_cancel is not None:
+                await _archive_io(on_cancel, result)
+        except BaseException:
+            pass
+        raise
+
+
+def _process_alive(pid: int) -> bool:
+    if pid == os.getpid():
+        return False  # active stages in this process are tracked separately
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = kernel.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return ctypes.get_last_error() != 87  # denied/unknown: preserve
+        try:
+            code = wintypes.DWORD()
+            return not kernel.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value == 259
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _prepare_stage(archive: Path) -> Path:
+    archive.mkdir(parents=True, exist_ok=True)
+    with _STAGE_LOCK:
+        # Only the PID-bearing namespace we own is eligible. Legacy or unknown
+        # .part files are preserved; live imports (including other processes)
+        # and recent leftovers cannot be mistaken for abandoned stages.
+        for candidate in archive.glob(".nightseam-import-*.part"):
+            match = _STAGE_NAME.fullmatch(candidate.name)
+            if match is None or candidate in _ACTIVE_STAGES or candidate.is_symlink():
+                continue
+            try:
+                if (time.time() - candidate.stat().st_mtime > _STALE_STAGE_SECONDS
+                        and not _process_alive(int(match[1]))):
+                    candidate.unlink()
+            except OSError:
+                pass
+        fd, temporary = tempfile.mkstemp(prefix=f".nightseam-import-{os.getpid()}-",
+                                         suffix=".part", dir=archive)
+        os.close(fd)
+        stage = Path(temporary)
+        _ACTIVE_STAGES.add(stage)
+        return stage
+
+
+def _remove_stage(stage: Path) -> None:
+    with _STAGE_LOCK:
+        try:
+            stage.unlink(missing_ok=True)
+        finally:
+            _ACTIVE_STAGES.discard(stage)
+
+
+def _fingerprint_file(path: Path) -> tuple[str, int, int] | None:
+    """Hash current bytes, refusing files that change during the read."""
+    try:
+        before = path.stat()
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            while chunk := source.read(_COPY_CHUNK):
+                digest.update(chunk)
+        after = path.stat()
+        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+            return None
+        return digest.hexdigest(), after.st_size, after.st_mtime_ns
+    except OSError:
+        return None
+
+
+def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
+                    exclude_id: int | None = None) -> dict | None:
+    """Find matching local bytes, including originals from older versions.
+
+    Caller holds db.archive_lock for lookup/finalization. Database methods take
+    their own short-lived connection lock; hashing never holds it. Size and
+    mtime are hints only: a matching cached digest is always checked against
+    the actual archived file before an upload is skipped. Missing originals
+    therefore cannot prevent users importing a replacement.
+    """
+    for rec in db.image_fingerprint_candidates(digest, size):
+        if rec["id"] == exclude_id:
+            continue
+        original = paths.safe_join(archive, rec["file"])
+        if original is None:
+            continue
+        try:
+            stat = original.stat()
+        except OSError:
+            continue
+        if stat.st_size != size or not original.is_file():
+            continue
+        cached = rec.get("content_sha256")
+        unchanged = (rec.get("file_size") == stat.st_size and
+                     rec.get("file_mtime_ns") == stat.st_mtime_ns)
+        if cached and cached != digest and unchanged:
+            continue
+        measured = _fingerprint_file(original)
+        if measured is None:
+            continue
+        actual, actual_size, mtime_ns = measured
+        if (cached, rec.get("file_size"), rec.get("file_mtime_ns")) != measured:
+            db.set_image_fingerprint(rec["id"], actual, actual_size, mtime_ns)
+        if actual_size == size and actual == digest:
+            return rec
+    return None
+
+
+def _duplicate_result(name: str, rec: dict) -> dict:
+    return {"file": name, "ok": True, "skipped": True,
+            "reason": "already_imported", "id": rec["id"],
+            "stored": rec["file"],
+            "object": {"id": rec.get("object_id"),
+                       "name": rec.get("object_name"),
+                       "designation": imglib.designation_of(None, rec)},
+            **{key: rec.get(key) for key in
+               ("exposure", "date_obs", "session_date_obs", "filter", "telescope", "imagetyp")}}
+
+
+def _missing_original(db: Database, archive: Path, digest: str,
+                      size: int) -> tuple[dict, Path] | None:
+    """A trusted earlier fingerprint permits restoring a missing original."""
+    for rec in db.images_with_digest(digest):
+        if rec.get("file_size") != size:
+            continue
+        target = paths.safe_join(archive, rec["file"])
+        if target is None:
+            continue
+        try:
+            target.stat()
+        except FileNotFoundError:
+            return rec, target
+        except OSError:
+            continue
+    return None
+
+
+def _promote_stage(stage: Path, target: Path) -> None:
+    """Publish without replacing an original created by another process.
+
+    Hard links are atomic and avoid a second copy on supported filesystems.
+    Exclusive creation also works on archive drives that do not support them.
+    """
+    try:
+        os.link(stage, target)
+    except FileExistsError:
+        raise
+    except OSError:
+        created = False
+        try:
+            with target.open("xb") as destination:
+                created = True
+                with stage.open("rb") as source:
+                    shutil.copyfileobj(source, destination, _COPY_CHUNK)
+        except BaseException:
+            if created:
+                target.unlink(missing_ok=True)
+            raise
+
+
+def obj_slug(object_name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9 _-]+", "", object_name).strip() or "misc"
+
+
+FRAME_TYPES = {          # normalized IMAGETYP -> archive subfolder
+    "light": "lights", "bias": "bias", "dark": "darks", "flat": "flats",
+}
+FRAME_DIRS = {v: k for k, v in FRAME_TYPES.items()}   # subfolder -> type
+
+
+def classify_frame(imagetyp: str | None) -> str:
+    """Normalize a FITS IMAGETYP value into 'light'/'bias'/'dark'/'flat'.
+
+    Handles the multi-word spellings capture software writes ("Dark Frame",
+    "Flat Field", "Bias Frame") as well as the single-word ones, and the
+    "Master ..." qualifier stacking apps write on stacked calibration frames
+    (PY-09: "Master Dark"/"Master Flat" used to fall through to `light`, so
+    master calibration frames were archived under `lights/` and counted as
+    light frames)."""
+    t = re.sub(r"[^a-z]", "", str(imagetyp or "").lower())
+    if t.startswith("master"):
+        t = t[len("master"):]
+    if t in ("", "l", "science") or t.startswith("light"):
+        return "light"
+    if t.startswith(("bias", "zero")):
+        return "bias"
+    if t.startswith("dark"):
+        return "dark"
+    if t.startswith("flat") or t.startswith("skyflat"):
+        return "flat"
+    return "light"          # unknown types default to lights
+
+
+def session_folder_name(epoch: float | None) -> str:
+    """On-disk session folder: 'YYYY-MM-DD_HHMM' in the machine-local zone,
+    or 'undated' for frames without a parseable DATE-OBS."""
+    if epoch is None:
+        return "undated"
+    return datetime.fromtimestamp(epoch).strftime("%Y-%m-%d_%H%M")
+
+
+def _session_dir(db: Database, archive: Path, slug: str, object_id,
+                 object_name: str, date_obs: str | None,
+                 session_override: str | None = None) -> Path:
+    """<archive>/<slug>/<session>/ - the session the frame joins (mirrors
+    imglib.compute_sessions), so different nights get different folders.
+    An explicit `session` upload target (calibration buttons) wins."""
+    if session_override:
+        return archive / slug / session_override
+    existing = db.images_for_object(object_id, object_name)
+    joined = imglib.session_for_image(existing, {"date_obs": date_obs})
+    start = imglib.date_epoch(joined.get("start")) if joined else None
+    return archive / slug / session_folder_name(start)
+
+
+def calibration_import_target(db: Database, archive: Path, anchor_id: int,
+                              frame: str) -> dict:
+    """Resolve an existing logical session without trusting upload metadata."""
+    if frame not in ("dark", "flat", "bias"):
+        raise ValueError("A selected-session import must use dark, flat or bias.")
+    if (not isinstance(anchor_id, int) or isinstance(anchor_id, bool)
+            or not 1 <= anchor_id <= (1 << 63) - 1):
+        raise ValueError("Selected session anchor must be a positive image id in range.")
+    with db.archive_lock:
+        anchor = db.image(anchor_id)
+        if anchor is None:
+            raise ValueError("Selected session no longer exists. Select a session again.")
+        clean = paths.safe_rel(anchor.get("file"))
+        parts = clean.split("/") if clean else []
+        if (len(parts) not in (2, 3, 4)
+                or (len(parts) > 2 and parts[-2].lower() not in FRAME_DIRS)
+                or paths.safe_join(archive, clean) is None):
+            raise ValueError("Selected session has an unsupported or unsafe archive path.")
+        if anchor.get("object_id") is not None:
+            images = db.images_for_object(anchor["object_id"], anchor["object_name"])
+        else:
+            # Unresolved Library objects group whitespace/case variants together.
+            key = imglib.name_key(anchor.get("object_name") or "")
+            images = [image for image in db.images()
+                      if image.get("object_id") is None and
+                      imglib.name_key(image.get("object_name") or "") == key]
+        selected = imglib.session_for_anchor(images, anchor_id)
+        if selected is None:
+            raise ValueError("Selected session no longer exists. Select a session again.")
+        stamp = selected.get("start")
+        epoch = imglib.date_epoch(stamp)
+        session_date = normalize_session_date_obs(stamp) if epoch is not None else ""
+        # Keep a modern session's existing folder. Legacy Object/lights anchors
+        # gain the canonical Object/session/frame layout without moving files.
+        session = parts[1] if len(parts) == 4 else session_folder_name(epoch)
+        if paths.safe_join(archive, f"{parts[0]}/{session}/{FRAME_TYPES[frame]}") is None:
+            raise ValueError("Selected session has an unsafe calibration folder.")
+        return {"anchor_id": anchor_id, "anchor": imglib.public_image_record(anchor),
+                "slug": parts[0], "session": session,
+                "session_date_obs": session_date}
+
+
+def _unique_path(path: Path) -> Path:
+    """`path`, or its first free `stem_2`/`stem_3`/... variant.
+
+    The ONE uniquify rule for the archive: `_archive_target` uses it for a new
+    ingest and `rename_archive_folder` uses it when a rename merges into a
+    folder that already holds a same-named frame (PY-01) - an existing file is
+    never replaced."""
+    if not path.exists():
+        return path
+    suffix = path.suffix
+    stem = path.stem
+    n = 2
+    while True:
+        candidate = path.with_name(f"{stem}_{n}{suffix}")
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
+def _archive_target(archive: Path, name: str, slug: str,
+                    session: Path, frame: str) -> Path:
+    """Unique destination <archive>/<slug>/<session>/<frames>/<stem>..."""
+    suffix = Path(name).suffix or ".fit"
+    stem = (Path(name).stem or "image")[:80]
+    sub = session / FRAME_TYPES.get(frame, "lights")
+    sub.mkdir(parents=True, exist_ok=True)
+    for t in FRAME_TYPES.values():      # keep all four frame folders beside it
+        (session / t).mkdir(parents=True, exist_ok=True)
+    target = sub / f"{stem}{suffix}"
+    return _unique_path(target)
+
+
+async def ingest_one(db: Database, catalog: list[dict], archive: Path,
+                     f, frame_override: str | None = None,
+                     session_override: str | None = None,
+                     resolver: imglib.CatalogResolver | None = None,
+                     on_import=None, enforce_archive_root: bool = False,
+                     session_target: dict | None = None) -> dict:
+    """Stream one uploaded .fit/.fits into the archive and record it.
+
+    `f` is a fastapi UploadFile. Only the header block is buffered; the
+    remainder is streamed to disk. Returns a per-file result dict.
+    """
+    name = Path(f.filename or "image.fit").name
+    if not name.lower().endswith((".fit", ".fits")):
+        return {"file": name, "ok": False, "error": "not a .fit/.fits file"}
+    if getattr(f, "size", None) and f.size > MAX_INGEST_BYTES:
+        return {"file": name, "ok": False,
+                "error": f"file too large (max {MAX_INGEST_BYTES // (1 << 20)} MB)"}
+
+    header = await f.read(HEADER_READ)
+    try:
+        hdr = fitsio.read_fits_header(header)
+    except Exception as exc:  # noqa: BLE001
+        return {"file": name, "ok": False,
+                "error": f"header parse failed: {exc}"}
+    if not hdr:
+        return {"file": name, "ok": False,
+                "error": "Unsupported exposure file (SIMPLE header missing)"}
+
+    stem = Path(name).stem
+    hint = str(hdr.get("OBJECT") or "").strip() or stem
+    ra_h = fitsio.parse_ra_hours(hdr.get("OBJCTRA") or hdr.get("RA"))
+    dec_d = fitsio.parse_dec_deg(hdr.get("OBJCTDEC") or hdr.get("DEC"))
+    active_resolver = resolver if resolver is not None else \
+        imglib.CatalogResolver(catalog)
+    row = (active_resolver.row_by_id.get(session_target["anchor"].get("object_id"))
+           if session_target else active_resolver.resolve(hint, ra_h, dec_d))
+
+    if row:
+        object_id = row["id"]
+        object_name = str(row.get("primary_name") or hint)[:120]
+        ra_h, dec_d = row["ra_hours"], row["dec_deg"]
+    else:
+        object_id = None
+        object_name = (str(hdr.get("OBJECT") or "").strip() or stem)[:120]
+    if session_target is not None:
+        anchor = session_target["anchor"]
+        object_id, object_name = anchor.get("object_id"), anchor["object_name"]
+        ra_h, dec_d = anchor.get("ra_hours"), anchor.get("dec_deg")
+        row = active_resolver.row_by_id.get(object_id)
+
+    exposure = None
+    for k in ("EXPTIME", "EXPOSURE", "EXPTIM", "ELAPTIME"):
+        v = hdr.get(k)
+        if isinstance(v, (int, float)) and v >= 0:
+            exposure = float(v)
+            break
+    date_obs = fitsio.parse_date_obs(hdr.get("DATE-OBS") or hdr.get("DATE"))
+    filt = str(hdr.get("FILTER") or "").strip() or None
+    tel = str(hdr.get("TELESCOP") or hdr.get("INSTRUME") or "").strip() or None
+    frame = classify_frame(hdr.get("IMAGETYP"))
+    forced = (frame_override or "").strip().lower()
+    if forced in FRAME_TYPES:           # explicit upload target wins
+        frame = forced
+
+    stage = None
+    digest = hashlib.sha256()
+    try:
+        archive = await _archive_io(archive.resolve)
+        stage = await _archive_io(_prepare_stage, archive, on_cancel=_remove_stage)
+        streamed = await _stream_to(archive, stage, f, header, digest)
+        if streamed is None:
+            return {"file": name, "ok": False,
+                    "error": f"file too large (max {MAX_INGEST_BYTES // (1 << 20)} MB)"}
+        return await _archive_io(
+            _finalize_import, db, archive, stage, digest, name, object_id,
+            object_name, ra_h, dec_d, exposure, date_obs, filt, tel, frame,
+            session_override, row, on_import, enforce_archive_root, session_target)
+    except OSError as exc:
+        log.warning("ingest: cannot write %s: %s", archive, exc)
+        return {"file": name, "ok": False,
+                "error": f"could not write to the archive: {exc.strerror or exc}"}
+    finally:
+        if stage is not None:
+            await _archive_io(_remove_stage, stage)
+
+
+def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
+                     ra_h, dec_d, exposure, date_obs, filt, tel, frame,
+                     session_override, row, on_import=None,
+                     enforce_archive_root=False, session_target=None):
+    target = None
+    committed = promoted = False
+    try:
+        size = stage.stat().st_size
+        # Upload/reindex publication is serialized independently of SQLite.
+        # File hashing/copying never holds the database connection lock.
+        with db.archive_lock:
+            if enforce_archive_root and Path(db.image_dir()).resolve() != archive:
+                return {"file": name, "ok": False,
+                        "error": "Archive location changed during import; import this file again."}
+            if session_target is not None:
+                try:
+                    current = calibration_import_target(
+                        db, archive, session_target["anchor_id"], frame)
+                except ValueError:
+                    current = None
+                if current != session_target:
+                    return {"file": name, "ok": False,
+                            "error": "Selected session changed during import; select it again."}
+            duplicate = _find_duplicate(db, archive, digest.hexdigest(), size)
+            if duplicate is not None:
+                return _duplicate_result(name, duplicate)
+            missing = _missing_original(db, archive, digest.hexdigest(), size)
+            if missing is not None:
+                existing, target = missing
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    _promote_stage(stage, target)
+                except FileExistsError:
+                    measured = _fingerprint_file(target)
+                    if measured is None or measured[:2] != (digest.hexdigest(), size):
+                        raise
+                    return _duplicate_result(name, existing)
+                promoted = True
+                stat = target.stat()
+                db.set_image_fingerprint(existing["id"], digest.hexdigest(),
+                                         size, stat.st_mtime_ns)
+                committed = True
+                result = _duplicate_result(name, existing)
+                result.update(skipped=False, restored=True, reason="original_restored")
+                return result
+            slug = session_target["slug"] if session_target else obj_slug(object_name)
+            session = (archive / slug / session_target["session"] if session_target else
+                       _session_dir(db, archive, slug, object_id,
+                                    object_name, date_obs, session_override))
+            target = _archive_target(archive, name, slug, session, frame)
+            for attempt in range(8):
+                if session_target and paths.safe_join(
+                        archive, str(target.relative_to(archive))) is None:
+                    return {"file": name, "ok": False,
+                            "error": "Selected session has an unsafe calibration target."}
+                try:
+                    _promote_stage(stage, target)
+                    break
+                except FileExistsError:
+                    if attempt == 7:
+                        raise
+                    target = _archive_target(archive, name, slug, session, frame)
+            promoted = True
+            stored = paths.safe_rel(str(target.relative_to(archive)))
+            if stored is None:
+                raise ValueError("invalid archive target")
+            stat = target.stat()
+            try:
+                img_id = db.add_image({
+                    "file": stored, "orig_name": name, "object_id": object_id,
+                    "object_name": object_name, "ra_hours": ra_h, "dec_deg": dec_d,
+                    "exposure": exposure, "date_obs": date_obs, "filter": filt,
+                    "session_date_obs": session_target["session_date_obs"] if session_target else None,
+                    "telescope": tel, "imagetyp": frame,
+                    "content_sha256": digest.hexdigest(), "file_size": size,
+                    "file_mtime_ns": stat.st_mtime_ns,
+                    "ingested_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
+                })
+                committed = True
+                result = {
+                    "file": name, "ok": True, "id": img_id,
+                    "object": {"id": object_id, "name": object_name,
+                               "designation": imglib.designation_of(
+                                   row, {"object_name": object_name})},
+                    "exposure": exposure, "date_obs": date_obs, "filter": filt,
+                    "session_date_obs": session_target["session_date_obs"] if session_target else None,
+                    "telescope": tel, "imagetyp": frame, "stored": stored,
+                }
+            except BaseException:
+                target.unlink(missing_ok=True)
+                raise
+            if on_import is not None:
+                on_import(result, archive)
+    finally:
+        if target is not None and promoted and not committed:
+            target.unlink(missing_ok=True)
+    return result
+
+
+async def _stream_to(archive: Path, target: Path, f, first_chunk: bytes,
+                     digest=None) -> str | None:
+    """Write first_chunk + the rest of `f` to target, enforcing the size cap.
+    Returns the stored path relative to the archive root, or None if the file
+    exceeds MAX_INGEST_BYTES. An OSError (disk full, permissions, locked file)
+    propagates, so the caller can report the real cause instead of blaming the
+    size cap."""
+    total = len(first_chunk)
+    if total > MAX_INGEST_BYTES:
+        return None
+    source = getattr(f, "file", None)
+    if source is not None:
+        # Starlette has already spooled multipart data. Keep the sequential
+        # read/write/hash loop in ONE cancellable worker rather than crossing
+        # the event-loop/thread boundary twice for every megabyte. The worker
+        # completes before stage cleanup on disconnect, as with every other
+        # archive operation. Async-only upload adapters retain the fallback.
+        return await _archive_io(_copy_spooled_upload, archive, target, source,
+                                 first_chunk, digest)
+    def write_chunk(out, chunk):
+        out.write(chunk)
+        if digest is not None:
+            digest.update(chunk)
+
+    out = await _archive_io(target.open, "wb", on_cancel=lambda stream: stream.close())
+    try:
+        await _archive_io(write_chunk, out, first_chunk)
+        while True:
+            chunk = await f.read(_COPY_CHUNK)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_INGEST_BYTES:
+                return None
+            await _archive_io(write_chunk, out, chunk)
+    finally:
+        await _archive_io(out.close)
+    return str(target.relative_to(archive)).replace("\\", "/")
+
+
+def _copy_spooled_upload(archive, target, source, first_chunk, digest):
+    total = 0
+    with target.open("wb") as out:
+        chunk = first_chunk
+        while chunk:
+            total += len(chunk)
+            if total > MAX_INGEST_BYTES:
+                return None
+            out.write(chunk)
+            if digest is not None:
+                digest.update(chunk)
+            chunk = source.read(_COPY_CHUNK)
+    return str(target.relative_to(archive)).replace("\\", "/")
+
+
+def rename_archive_folder(archive: Path, old_name: str,
+                          new_name: str) -> dict[str, str] | None:
+    """Move <archive>/<old slug> to <archive>/<new slug>, merging if the new
+    folder already exists. Returns the map of moved frames ({old relative path:
+    new relative path}, forward slashes) - `{}` when there was nothing to move -
+    or None when the move could not be completed, in which case the caller must
+    NOT rewrite the stored paths, or every frame of the group would point at a
+    folder that does not exist.
+
+    A frame whose name already exists in the destination is UNIQUIFIED
+    (`Light_001.fit` -> `Light_001_2.fit`), exactly like `_archive_target` does
+    for a new ingest. It used to be `replace`d in place, which silently
+    destroyed those pixels while the DB kept two rows aliasing one file
+    (PY-01, blocker). The returned map is what the caller feeds to
+    `db.rename_images`, so the stored paths name the files that really exist."""
+    old = archive / obj_slug(old_name)
+    new = archive / obj_slug(new_name)
+    if old == new or not old.is_dir():
+        return {}
+    moved: dict[str, str] = {}
+
+    def _rel(p: Path) -> str:
+        return str(p.relative_to(archive)).replace("\\", "/")
+
+    try:
+        if new.exists():
+            for f in sorted(old.rglob("*")):
+                if not f.is_file():
+                    continue
+                dest = _unique_path(new / f.relative_to(old))
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                f.replace(dest)
+                moved[_rel(f)] = _rel(dest)
+            for d in sorted([p for p in old.rglob("*") if p.is_dir()],
+                            key=lambda p: len(p.parts), reverse=True):
+                d.rmdir()
+            old.rmdir()
+        else:
+            old.rename(new)
+            for f in sorted(new.rglob("*")):
+                if f.is_file():
+                    moved[_rel(f)] = _rel(f)
+    except OSError as exc:
+        log.warning("rename: could not move %s -> %s: %s", old, new, exc)
+        return None
+    return moved
+
+
+def _norm_rel(rel) -> str:
+    """Normalized relative path for dedup - separator- and case-insensitive."""
+    return str(rel).replace("\\", "/").lower()
+
+
+def reindex_library(db: Database, archive: Path) -> dict:
+    # Serialize archive writes, not SQLite reads, while hashing in this worker.
+    with db.archive_lock:
+        return _reindex_library_locked(db, archive)
+
+
+def _reindex_library_locked(db: Database, archive: Path) -> dict:
+    """Scan the archive folder and record .fit/.fits files not yet in the DB.
+
+    Covers files placed on disk outside the app (manual copies, restored
+    backups, imports from other tools). Files already recorded by normalized
+    path or exact content are skipped. Manually placed duplicate files remain
+    untouched on disk. The frame type comes from the required standard
+    sub-folder (lights/darks/flats/bias); the object is resolved from the header
+    (OBJECT + coordinates) with the folder name as fallback.
+    """
+    if not archive.is_dir():
+        return {"found": 0, "added": 0, "skipped": 0, "failed": 0}
+    def candidate_files():
+        for p in archive.rglob("*"):
+            if p.is_file() and p.suffix.lower() in (".fit", ".fits"):
+                yield p
+
+    candidates = sorted(candidate_files())
+    # Validate the WHOLE scan before even backfilling a known fingerprint.
+    # Source folders belong in Import Exposures, not the managed archive scan.
+    malformed = [path for path in candidates
+                 if len(path.relative_to(archive).parts) not in (3, 4)
+                 or path.parent.name.lower() not in FRAME_DIRS]
+    if malformed:
+        folder = malformed[0].parent.resolve()
+        raise ValueError(
+            f"Unexpected archive folder structure at '{folder}'. "
+            "Expected <object>/<session>/<frame-type>/<file.fit> or legacy "
+            "<object>/<frame-type>/<file.fit>, where frame-type is lights, "
+            "darks, flats or bias. Use Import Exposures for flat source folders. "
+            "No library records were changed.")
+
+    known = {_norm_rel(r["file"]): r for r in db.images()}
+    resolver = None
+    found = added = skipped = failed = 0
+    for f in candidates:
+        found += 1
+        rel = f.relative_to(archive)
+        if _norm_rel(rel) in known:
+            rec = known[_norm_rel(rel)]
+            try:
+                stat = f.stat()
+                unchanged = (rec.get("content_sha256") and
+                             rec.get("file_size") == stat.st_size and
+                             rec.get("file_mtime_ns") == stat.st_mtime_ns)
+            except OSError:
+                unchanged = False
+            if not unchanged:
+                measured = _fingerprint_file(f)
+                if measured is not None:
+                    db.set_image_fingerprint(rec["id"], *measured)
+            skipped += 1
+            continue
+
+        parts = rel.parts
+        frame_dir = parts[-2].lower()
+        folder_frame = frame_dir
+        # The OBJECT is the folder above the session, never the session folder
+        # itself: <archive>/<Object>/<session>/<frame>/f.fit -> parts[-4], and
+        # for the older <archive>/<Object>/<frame>/f.fit layout -> parts[-3].
+        if frame_dir is not None:
+            folder_name = (parts[-4] if len(parts) >= 4
+                           else parts[-3] if len(parts) >= 3 else None)
+        else:
+            folder_name = parts[-2] if len(parts) >= 2 else None
+        try:
+            with open(f, "rb") as fh:
+                hdr = fitsio.read_fits_header(fh.read(HEADER_READ))
+            if not hdr:
+                failed += 1
+                continue
+        except OSError:
+            failed += 1
+            continue
+        measured = _fingerprint_file(f)
+        if measured is None:
+            failed += 1
+            continue
+        digest, size, mtime_ns = measured
+        if _find_duplicate(db, archive, digest, size) is not None:
+            skipped += 1
+            continue
+
+        stem = f.stem
+        hint = (folder_name or "").strip() or str(hdr.get("OBJECT") or "").strip() or stem
+        ra_h = fitsio.parse_ra_hours(hdr.get("OBJCTRA") or hdr.get("RA"))
+        dec_d = fitsio.parse_dec_deg(hdr.get("OBJCTDEC") or hdr.get("DEC"))
+        if resolver is None:
+            resolver = imglib.CatalogResolver(db.all_objects(advanced=True))
+        row = resolver.resolve(hint, ra_h, dec_d)
+        if row is None and str(hdr.get("OBJECT") or "").strip() not in ("", hint):
+            row = resolver.resolve(
+                str(hdr.get("OBJECT") or "").strip(), ra_h, dec_d)
+
+        if row:
+            object_id = row["id"]
+            object_name = str(row.get("primary_name") or hint)[:120]
+            ra_h, dec_d = row["ra_hours"], row["dec_deg"]
+        else:
+            object_id = None
+            object_name = (folder_name or
+                           str(hdr.get("OBJECT") or "").strip() or stem)[:120]
+
+        exposure = None
+        for k in ("EXPTIME", "EXPOSURE", "EXPTIM", "ELAPTIME"):
+            v = hdr.get(k)
+            if isinstance(v, (int, float)) and v >= 0:
+                exposure = float(v)
+                break
+        frame = (FRAME_DIRS[folder_frame] if folder_frame
+                 else classify_frame(hdr.get("IMAGETYP")))
+        db.add_image({
+            "file": str(rel).replace("\\", "/"),   # forward slashes
+            "orig_name": f.name, "object_id": object_id,
+            "object_name": object_name, "ra_hours": ra_h, "dec_deg": dec_d,
+            "exposure": exposure,
+            "date_obs": fitsio.parse_date_obs(hdr.get("DATE-OBS") or hdr.get("DATE")),
+            "filter": str(hdr.get("FILTER") or "").strip() or None,
+            "telescope": str(hdr.get("TELESCOP") or hdr.get("INSTRUME") or "").strip() or None,
+            "imagetyp": frame,
+            "content_sha256": digest, "file_size": size,
+            "file_mtime_ns": mtime_ns,
+            "ingested_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
+        })
+        added += 1
+
+    return {"found": found, "added": added, "skipped": skipped, "failed": failed}
