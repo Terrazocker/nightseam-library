@@ -60,13 +60,6 @@ def test_no_shipped_file_reaches_an_external_host():
         "snapshot must be baked into the catalog instead:\n  " + "\n  ".join(offenders))
 
 
-def test_web_has_no_live_popularity_fetch():
-    """The web shell reads only the baked field; the fetch machinery is gone."""
-    app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
-    for gone in ("loadPopularity", "_popMap", "popKey"):
-        assert gone not in app, f"web/app.js still contains the live-fetch helper {gone!r}"
-    assert "function popularityOf(o)" in app, "popularityOf() disappeared"
-    assert "o.popularity" in app, "popularityOf() no longer reads the baked field"
 
 
 def test_matcher_has_no_network_path_at_all():

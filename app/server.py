@@ -9,7 +9,6 @@ import os
 import re
 import threading
 import time
-import urllib.request
 import uuid
 from datetime import UTC, datetime
 from functools import wraps
@@ -67,78 +66,8 @@ _INT_ID_MAX = 2 ** 63 - 1
 
 _state = {"last_request": time.time(), "shutdown": False}
 
-# ---- update check (SP-02, 0.6.32 review) ------------------------------------
-# The desktop used to load https://nightseam.de/downloads/ns-version.js as a
-# JSONP <script> (static/js/updater.js), which executed THIRD-PARTY JavaScript
-# in the app's own origin - where /api/export, /api/state and every
-# state-changing route answer unauthenticated same-origin requests. No amount of
-# payload validation fixes that, because the script itself runs. The fetch,
-# parse and validation now happen HERE, in Python, where CORS does not apply;
-# the page only ever receives a JSON document from its own origin.
-UPDATE_VERSION_URL = "https://nightseam.de/downloads/version.json"
-UPDATE_TIMEOUT = 6.0
-UPDATE_MAX_BYTES = 64 * 1024
-_VERSION_RE = re.compile(r"^[0-9][0-9A-Za-z.\-+]{0,31}$")
-
-
-def _fetch_remote_version() -> str | None:
-    """The published version string, or None.
-
-    Returns None for EVERY failure (offline, DNS, TLS, HTTP error, a hostile or
-    oversized body, a version that is not a plain version token) - the check is
-    silent and optional, so any failure simply means "no update". Tests must
-    never hit the real site: patch `server_mod.UPDATE_VERSION_URL` (or the
-    module's `urllib.request.urlopen`) at the network boundary.
-    """
-    url = UPDATE_VERSION_URL
-    if not url.startswith("https://"):
-        return None                       # defence in depth: never plain HTTP
-    try:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "NightSeam/1.0 (update check)",
-            "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=UPDATE_TIMEOUT) as resp:
-            raw = resp.read(UPDATE_MAX_BYTES + 1)
-    except Exception:                     # noqa: BLE001 - offline/hostile/HTTP
-        return None
-    if len(raw) > UPDATE_MAX_BYTES:
-        return None
-    try:
-        doc = json.loads(raw.decode("utf-8", "replace"))
-    except Exception:                     # noqa: BLE001
-        return None
-    if not isinstance(doc, dict):
-        return None
-    value = doc.get("version")
-    if value is None:
-        # tolerate the site baking the string as a pre-set variable
-        value = doc.get("describe") or doc.get("tag") or ""
-    value = str(value).strip().lstrip("vV")
-    return value if _VERSION_RE.match(value) else None
-
-
-def _version_greater(a: str, b: str) -> bool:
-    """True when version `a` is strictly newer than `b` (numeric fields, so
-    0.6.32 > 0.6.9 - a string compare would get that wrong)."""
-    def parts(v):
-        out = []
-        for chunk in str(v or "").split("-")[0].split("."):
-            num = ""
-            for ch in chunk:
-                if ch.isdigit():
-                    num += ch
-                else:
-                    break
-            out.append(int(num) if num else 0)
-        return out
-    pa, pb = parts(a), parts(b)
-    for i in range(max(len(pa), len(pb))):
-        x = pa[i] if i < len(pa) else 0
-        y = pb[i] if i < len(pb) else 0
-        if x != y:
-            return x > y
-    return False
-
+# Catalog releases are independent of the former combined website releases.
+# Update checks remain unavailable until a catalog-specific source is configured.
 
 # Content-Security-Policy for the HTML the server serves (SP-02, defence in
 # depth). The load-bearing part is that NO remote origin may provide script:
@@ -1220,27 +1149,9 @@ def create_app(db: Database, *, prefetch: bool = True,
 
     @app.post("/api/update-check")
     def api_update_check():
-        """SP-02: the update check, server-side.
-
-        The page used to load `ns-version.js` as a JSONP <script>, executing
-        remote code in the privileged origin. Python fetches the published
-        version document here (no CORS constraint on this side), validates it
-        strictly and answers a same-origin JSON document. EVERY failure is
-        "no update": silent, never blocking, never fatal.
-
-        POST because StaticFiles (mounted at "/") claims GET/HEAD for every
-        unmatched path - and because this is the app's own JSON endpoint, not a
-        cacheable document.
-        """
-        if catalog_only:
-            raise HTTPException(404, "updates are unavailable in catalog-only mode")
-        remote = _fetch_remote_version()
-        if remote is None:
-            return {"ok": False, "version": None, "update": False,
-                    "current": APP_VERSION}
-        return {"ok": True, "version": remote,
-                "update": _version_greater(remote, APP_VERSION),
-                "current": APP_VERSION}
+        """Old clients cannot compare catalog releases to combined web versions."""
+        raise HTTPException(
+            404, "updates are unavailable until a catalog release source is configured")
 
     @app.get("/api/shutdown")
     def api_shutdown_get():

@@ -22,19 +22,3 @@ def test_desktop_shell_delegates_visibility_to_core():
     assert "effectiveMinAlt as coreMinAlt" in derive
     assert "function effectiveMinAlt" not in derive, \
         "desktop kept a min-alt rule copy"
-
-
-def test_web_shells_delegate_visibility_to_core():
-    horizon = _read("web", "horizon.js")
-    assert "effectiveMinAlt as coreMinAlt" in horizon
-    assert "function effectiveMinAlt" not in horizon, \
-        "web horizon kept a min-alt rule copy"
-    nr = _read("web", "nightrank.js")
-    assert "sampleVisible" in nr
-    assert "function sampleVisible" not in nr, "nightrank kept the predicate"
-    app = _read("web", "app.js")
-    assert "sampleVisible(altNow, minAlt" in app, \
-        "Tonight must use the shared predicate"
-    assert "sampleVisible(alt, minAlt" in app, \
-        "the detail loop must use the shared predicate"
-    assert "altNow > ceilNow.ceil" not in app, "inline predicate copy survived"

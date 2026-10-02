@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_packaged_default_selects_catalog_shell_and_source_keeps_planner():
     assert main.catalog_only_for_launch(frozen=True) is True
-    assert main.catalog_only_for_launch(frozen=False) is False
+    assert main.catalog_only_for_launch(frozen=False) is True
     assert main.catalog_only_for_launch(True, frozen=False) is True
     assert main.catalog_only_for_launch(False, frozen=True) is False
 
@@ -70,8 +70,8 @@ def test_catalog_server_disables_planner_network_routes(tmp_path, monkeypatch):
 
     monkeypatch.setattr(images, "fetch_image", fetch_image)
     monkeypatch.setattr(images, "fetch_image_cached", fetch_image)
-    monkeypatch.setattr(server, "_fetch_remote_version",
-                        lambda: calls.append(("update", None)) or "9.9.9")
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda *args, **kwargs: calls.append(("update", None)))
 
     catalog_db = Database(tmp_path / "catalog-remote-routes.sqlite3")
     with TestClient(create_app(catalog_db, prefetch=False,
@@ -90,10 +90,9 @@ def test_catalog_server_disables_planner_network_routes(tmp_path, monkeypatch):
     assert image.content == b"test image"
     assert thumbnail.status_code == 200
     assert thumbnail.content == b"test image"
-    assert update.status_code == 200
-    assert update.json()["version"] == "9.9.9"
-    assert calls == [("image", "ngc224"), ("image", "ngc224"),
-                     ("update", None)]
+    assert update.status_code == 404
+    assert "catalog release source" in update.json()["detail"]
+    assert calls == [("image", "ngc224"), ("image", "ngc224")]
 
 
 def test_catalog_server_exposes_only_the_archive_shell(tmp_path):

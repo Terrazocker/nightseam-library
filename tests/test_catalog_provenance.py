@@ -14,7 +14,6 @@ from app.server import create_app
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WEB = ROOT / "web"
 DESKTOP = ROOT / "app" / "data"
 
 
@@ -26,12 +25,11 @@ def _load_script(name: str):
     return module
 
 
-def test_provenance_sidecars_are_identical_and_cover_the_catalog():
-    web = (WEB / "catalog-provenance.json").read_bytes()
+def test_provenance_sidecar_covers_the_catalog(tmp_path):
     desktop = (DESKTOP / "catalog_provenance.json").read_bytes()
-    assert web == desktop
-    payload = json.loads(web)
-    catalog = json.loads((WEB / "catalog.json").read_text(encoding="utf-8"))
+    payload = json.loads(desktop)
+    db = Database(tmp_path / "provenance.db")
+    catalog = db.all_objects(advanced=True)
     objects = payload["objects"]
     ids = {row["id"] for row in catalog}
     assert payload["schema_version"] == 1
@@ -50,9 +48,6 @@ def test_provenance_sidecars_are_identical_and_cover_the_catalog():
     assert objects["m40"]["source"] == "NightSeam supplement"
 
 
-def test_provenance_cache_guard_is_clean():
-    guard = _load_script("check_catalog_provenance.py")
-    assert guard.scan() == []
 
 
 def test_catalog_provenance_api_returns_the_shipped_sidecar(tmp_path):

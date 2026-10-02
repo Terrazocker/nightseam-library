@@ -1,12 +1,12 @@
 """Fail when the baked core trees drift from core/, or when a moved concept is
 re-implemented outside core/.
 
-Modeled on scripts/check_catalog_token.py:
+Local source/bake contracts:
   * core/ bytes hash to the manifest hash (bake not re-run -> fail)
-  * web/core/<hash>/ and static/js/core/<hash>/ are byte-identical to core/
-  * exactly one hash directory exists on each side (no stale bakes)
-  * both stable stubs point at the manifest hash
-  * the web stub's cache token matches the manifest token (bump discipline)
+  * static/js/core/<hash>/ is byte-identical to core/
+  * retained hash directories match the manifest current plus N-1 policy
+  * the stable local stub points at the manifest hash
+  * the local stub's cache token matches the manifest token
   * core/ stays pure (no DOM/storage/network identifiers)
   * the moved concepts cannot reappear as definitions in the shells
 
@@ -26,7 +26,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CORE = ROOT / "core"
 MANIFEST = CORE / "core.manifest.json"
-WEB_DIR = ROOT / "web"
 STATIC_JS = ROOT / "static" / "js"
 APP_DIR = ROOT / "app"
 SCRIPTS_DIR = ROOT / "scripts"
@@ -221,7 +220,7 @@ def scan() -> list[str]:
         problems.append("core/ per-file hashes differ from the manifest - "
                         "re-run scripts/build_core.py")
 
-    for label, dest_root in (("web", WEB_DIR / "core"), ("static", STATIC_JS / "core")):
+    for label, dest_root in (("static", STATIC_JS / "core"),):
         problems.extend(baked_dir_problems(label, dest_root, hash_, previous))
         for rel, digest in sorted(files.items()):
             fp = dest_root / hash_ / rel
@@ -230,27 +229,12 @@ def scan() -> list[str]:
             elif hashlib.sha256(build.normalize(fp.read_bytes())).hexdigest() != digest:
                 problems.append(f"{label}: {rel} differs from core/")
 
-    for label, stub in (("web", WEB_DIR / "core.js"), ("static", STATIC_JS / "core.js")):
+    for label, stub in (("static", STATIC_JS / "core.js"),):
         if not stub.is_file():
             problems.append(f"{label}: {stub.name} stub is missing")
             continue
         if f"./core/{hash_}/index.js" not in _read(stub):
             problems.append(f"{label}: {stub.name} stub does not point at {hash_}")
-
-    importers = []
-    for p in shell_sources(WEB_DIR):
-        if p.name == "core.js":
-            continue
-        rel = p.relative_to(WEB_DIR).as_posix()
-        for m in re.finditer(r"['\"](?:\.\.?/)+core\.js\?v=(\d+)['\"]",
-                             source_text(p)):
-            importers.append((rel, int(m.group(1))))
-    if not importers:
-        problems.append("web: no './core.js?v=' import found")
-    for rel, tok in importers:
-        if tok != token:
-            problems.append(
-                f"web/{rel}: core token {tok} != manifest token {token}")
 
     static_edge = any(re.search(r"['\"]\./core\.js['\"]", source_text(p))
                       for p in shell_sources(STATIC_JS) if p.name != "core.js")
@@ -263,7 +247,7 @@ def scan() -> list[str]:
             if re.search(pattern, text):
                 problems.append(f"core/{p.name}: forbidden pattern {pattern}")
 
-    for base in (WEB_DIR, STATIC_JS):
+    for base in (STATIC_JS,):
         for p in shell_sources(base):
             if p.name == "core.js":
                 continue

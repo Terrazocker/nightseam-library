@@ -13,7 +13,6 @@ import { bindSetup, applyCfgToUI } from "./setup.js";
 import { bindDetail, drawAltChart, refreshOpenDetail } from "./detail.js";
 import { bindSky, renderSky } from "./skyview.js";
 import { bindWeather, refreshWeatherForSite } from "./weather.js";
-import { checkForUpdates } from "./updater.js";
 import { Pano } from "./pano.js";
 import { bindArchive, applyArchiveUI, loadLibrary, exportLibrary } from "./archive.js";
 import { bindSkyMap, renderSkyMap } from "./skymap.js";
@@ -331,7 +330,6 @@ async function init() {
   await loadNight();
   Pano.init();
   applyArchiveUI();
-  checkForUpdates();   // silent version check against the website
 }
 
 function DETAIL_OPEN() {

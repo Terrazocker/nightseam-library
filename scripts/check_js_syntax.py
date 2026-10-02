@@ -7,17 +7,15 @@ undefined identifiers are all text matching - so a module with a syntax error
 looked clean. The measured case: a duplicate `const` in `web/app.js` survived
 `check_js.py` and was only found by a manual `node --check`.
 
-Covers the desktop UI (`static/js/*.js`), the web app (`web/*.js`) - the same
-two graphs as the sibling checkers - plus the SHARED CORE source (`core/*.js`)
-and both baked, content-hashed trees (`web/core/<hash>/`,
-`static/js/core/<hash>/`), which are copies the browser loads verbatim.
+Covers the local UI (`static/js/*.js`), project-owned core source
+(`core/*.js`) and the local content-hashed bake (`static/js/core/<hash>/`).
 (TO-06, 0.6.24 review: this docstring and AGENTS.md claimed the core coverage
 while `ROOTS` excluded it.)
 
 Usage:
     python scripts/check_js_syntax.py                  # everything that ships
-    python scripts/check_js_syntax.py --path web       # one app
-    python scripts/check_js_syntax.py --path web/app.js
+    python scripts/check_js_syntax.py --path static/js # local UI
+    python scripts/check_js_syntax.py --path static/js/main.js
 
 Exit codes: 0 = every module parses, 1 = at least one syntax error, 2 = the
 command line was wrong OR the check could not run at all. A missing node, a node
@@ -40,12 +38,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 # the JS that actually ships: the desktop UI and the web twin (flat modules)
-ROOTS = [REPO / "static" / "js", REPO / "web"]
+ROOTS = [REPO / "static" / "js"]
 
 # ... plus the shared core and its baked copies, which are scanned RECURSIVELY:
 # `core/` is the authored source and `<app>/core/<hash>/` are byte-for-byte copies
 # the browser loads, so a syntax error in any of them ships (TO-06).
-CORE_ROOTS = [REPO / "core", REPO / "web" / "core", REPO / "static" / "js" / "core"]
+CORE_ROOTS = [REPO / "core", REPO / "static" / "js" / "core"]
 
 # never shipped / never ours (a --path can point at one of these by accident)
 IGNORED_DIRS = {"node_modules", "whale", "dev"}
@@ -115,7 +113,7 @@ def collect(paths: list[str]) -> list[Path]:
     files = []
     for raw in paths:
         files += discover(Path(raw))
-    # one module can be named twice (e.g. --path web --path web/app.js)
+    # one module can be named twice (e.g. --path web --path static/js/main.js)
     return list(dict.fromkeys(files))
 
 

@@ -19,7 +19,7 @@ app/_version_baked.py
 # missed `data/.export-<hex>.zip` (the spool of a GET /api/export that was
 # aborted) and `data/*.db-journal`, both of which hold user data. Ignore the
 # whole folder and re-include the one tracked placeholder.
-data/
+/data/
 !data/panos/
 data/panos/*
 !data/panos/.gitkeep

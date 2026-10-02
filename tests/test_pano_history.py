@@ -219,14 +219,9 @@ def test_both_shells_encode_the_same_state_through_their_own_keys(probe):
 
 
 def test_the_desktop_delegates_instead_of_re_implementing():
-    """The shells must CALL the core model, not carry a copy: the desktop's undo
-    helpers go through core, and the web's history functions are delegates."""
+    """The local editor must delegate snapshot/apply to its own core model."""
     pano = (ROOT / "static" / "js" / "pano.js").read_text(encoding="utf-8")
     assert "coreSnapshotPano(rec, HISTORY_KEYS_DESKTOP)" in pano
     assert "coreApplySnapshot(rec, stack.pop(), HISTORY_KEYS_DESKTOP)" in pano
     assert "JSON.stringify({\n    strokes:" not in pano, (
         "the desktop is building its own snapshot again")
-    horizon = (ROOT / "web" / "horizon.js").read_text(encoding="utf-8")
-    for call in ("coreSnapshotPano(p, HISTORY_KEYS)", "coreApplySnapshot(p, snap, HISTORY_KEYS)",
-                 "coreHistoryCommit(h, p, limit)", "coreHistoryDirty(h, p)"):
-        assert call in horizon, f"web/horizon.js must delegate: {call}"

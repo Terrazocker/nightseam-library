@@ -160,7 +160,7 @@ def main() -> int:
         print("build_core: core/index.js has no explicit export list")
         return 1
     keep = retention_keep(hash_, previous)
-    for dest_root in (WEB_DIR / "core", STATIC_JS / "core"):
+    for dest_root in (STATIC_JS / "core",):
         stale = prune_baked_dirs(dest_root, keep)
         if stale:
             print("build_core: pruned stale baked dir(s): "
@@ -170,8 +170,6 @@ def main() -> int:
             target = dest / p.relative_to(CORE)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(normalize(p.read_bytes()))
-    (WEB_DIR / STUB_NAME).write_text(stub_text(hash_, names),
-                                     encoding="utf-8", newline="\n")
     (STATIC_JS / STUB_NAME).write_text(stub_text(hash_, names),
                                        encoding="utf-8", newline="\n")
     MANIFEST.write_text(
@@ -179,7 +177,7 @@ def main() -> int:
                     "files": files}, indent=2) + "\n",
         encoding="utf-8", newline="\n")
     print(f"build_core: hash={hash_} token={token} files={len(files)} "
-          f"-> web/core/{hash_} + static/js/core/{hash_}")
+          f"-> static/js/core/{hash_}")
     return 0
 
 

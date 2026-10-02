@@ -1,3 +1,13 @@
+# Independent catalog decisions
+
+On October 1, 2026 the local catalog and website became separate repositories.
+Each owns its source dependencies, catalog inputs, tests, builds and release
+versions. The catalog begins at 0.1.0; the website retains its existing history.
+No sibling source imports or symlinks are used. Existing archive paths and both
+desktop libraries were preserved. The remaining entries below are historical
+decisions from the combined project; references to removed cross-project paths
+describe that historical state, not current build requirements.
+
 # DECISIONS.md — why NightSeam works the way it does
 
 One entry per decision that an agent or maintainer would otherwise re-litigate.

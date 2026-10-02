@@ -28,7 +28,6 @@ from app.database import Database
 
 ROOT = Path(__file__).resolve().parents[1]
 CSV = ROOT / "app" / "data" / "openned.csv"
-CATALOG_JSON = ROOT / "web" / "catalog.json"
 TOKEN = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 
 
@@ -127,25 +126,8 @@ def test_curated_ids_are_gone_everywhere(tmp_path):
     assert db.get_object("eso56-115") is not None    # LMC
 
 
-def test_web_catalog_ids_unique_and_resolve_like_desktop(tmp_path):
-    cat = json.loads(CATALOG_JSON.read_text(encoding="utf-8"))
-    ids = [o["id"] for o in cat]
-    assert len(ids) == len(set(ids)), "web/catalog.json has duplicate ids"
-    db = Database(tmp_path / "t.db")
-    union_ids = [o["id"] for o in db.all_objects(advanced=True)]
-    assert len(union_ids) == len(set(union_ids)), "desktop catalog union has duplicate ids"
-    for o in cat:
-        got = db.get_object(o["id"])
-        assert got is not None, o["id"]
-        assert got["primary_name"] == o["primary_name"], o["id"]
 
 
-def test_web_catalog_standard_split_matches_the_rule(tmp_path):
-    """`_adv: false` is the standard-mode selection and nothing else."""
-    cat = json.loads(CATALOG_JSON.read_text(encoding="utf-8"))
-    standard = {o["id"] for o in cat if not o["_adv"]}
-    assert len(standard) == STANDARD_TOP_N
-    assert standard == standard_ids([o["id"] for o in cat])
 
 
 # ------------------------------------------------------- advertised catalog size
@@ -165,15 +147,7 @@ def test_web_catalog_standard_split_matches_the_rule(tmp_path):
 # way to cover a new surface. `landing/features.html`'s "12,000 objects" is a
 # deliberate rounding (a feature blurb, not a catalogue count) and is not pinned.
 ADVERTISED_SIZE = [
-    ("web/index.html", 3, [r"Catalog: OpenNGC \+ supplement \(([\d,]+) objects\)",
-                           r"supplement OpenNGC\s+cannot carry \(([\d,]+)\s+objects"]),
-    ("web/app.js", 1, [r"search/sort across ([\d,]+) objects"]),
-    ("landing/index.html", 2, [r"a small supplement: ([\d,]+) objects",
-                               r"computed entirely in your browser\. ([\d,]+) objects"]),
-    ("landing/about.html", 1, [r"<b>([\d,]+)</b><span>catalog objects</span>"]),
     ("static/index.html", 1, [r"supplement OpenNGC cannot carry \(([\d,]+)\s+objects"]),
-    ("README.md", 2, [r"([\d,]+) objects to magnitude 20",
-                      r"shows all ([\d,]+)\."]),
 ]
 
 
@@ -227,16 +201,6 @@ def test_advertised_size_guard_catches_a_drifted_desktop_hint(tmp_path):
     assert _advertised_mismatches(ROOT) == [], "the real tree must be clean"
 
 
-def test_catalog_csv_and_web_payload_describe_the_same_catalog(tmp_path):
-    """The CSV (desktop seed) and web/catalog.json (web payload) must describe
-    the same catalog - the web file is generated FROM the CSV, so a divergence
-    means one of them was hand-edited."""
-    rows = list(_adv_rows())
-    cat = json.loads(CATALOG_JSON.read_text(encoding="utf-8"))
-    assert len(cat) == len(rows)
-    assert {o["id"] for o in cat} == {r["id"] for r in rows}
-    db = Database(tmp_path / "t.db")
-    assert db.advanced_count() + STANDARD_TOP_N == len(rows)
 
 
 def test_advanced_count_is_defined_once():

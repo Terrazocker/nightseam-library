@@ -1,6 +1,6 @@
 """Cross-check: every $('#id') referenced by an app's JS must exist in its HTML.
 
-Covers the source desktop planner, packaged catalog-only shell, and web app.
+Covers the local catalog and retained maintenance planner shells.
 The desktop shells share archive/map modules, so their shell-specific IDs are
 checked against each page separately.
 """
@@ -25,8 +25,6 @@ APPS = [
      # skymap.js imports the planner inspector only in its non-catalog branch.
      # The catalog browser gate also forbids any request for this module.
      {("js/skymap.js", "js/detail.js")}),
-    ("web", REPO / "web" / "index.html",
-     set(), set()),
 ]
 
 # ids that only exist at runtime (created by JS template literals) or that are

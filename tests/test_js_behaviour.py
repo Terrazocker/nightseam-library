@@ -121,23 +121,8 @@ def test_desktop_preference_and_scrub_handlers():
     assert "DE-01 handler: custom target add rebuilds the plan held" in out
 
 
-def test_web_panorama_geometry():
-    """The web panorama editor's coordinate system (web/horizon.js): the
-    row<->altitude and azimuth->x transforms used by the guides are the SAME
-    ones the calibration grid, ceilFor and the profile use; obstacle/sky profile
-    derivation, the sky-mode open-above sentinel and the 360 deg seam wrap match
-    the desktop's semantics; a save/load round trip preserves them."""
-    out = run_node_harness("pano_geom.mjs")
-    assert "pano geometry contract held" in out
 
 
-def test_web_backup_integrity():
-    """web/webstore.js + web/horizon.js backup/restore through a fake
-    IndexedDB: truthful hasImage, the profile/strokes invariant, staged
-    validation before any write, and rollback to the pre-restore snapshot when
-    a write fails."""
-    out = run_node_harness("web_backup.mjs")
-    assert "web backup integrity held" in out
 
 
 def test_scrub_window_degeneracy_policy():
@@ -148,13 +133,6 @@ def test_scrub_window_degeneracy_policy():
     assert "scrub degeneracy policy held" in out
 
 
-def test_web_panorama_editor_history_and_view():
-    """The panorama editor's pure UI logic (web/horizon.js): undo/redo history
-    with a bounded stack and redo invalidation, the dirty/saved baseline, and
-    the presentation-only zoom transform (uniform scale, screen<->base
-    round-trip, focus clamping, DPR-independent geometry)."""
-    out = run_node_harness("pano_ui.mjs")
-    assert "pano ui contract held" in out
 
 
 def test_desktop_attribute_sinks_escape_imported_data():
@@ -170,24 +148,8 @@ def test_desktop_attribute_sinks_escape_imported_data():
     assert "desktop attribute sinks escape hostile values" in out
 
 
-def test_web_sky_band_complement_geometry():
-    """ITEM C (0.6.13): the visible-sky band is the exact complement of the
-    blocked band - open-above (90.5) extends to the zenith, unpainted columns
-    are fully blocked, the preview covers the full width, splits at the blocked
-    gaps and never self-intersects; and the shared edge geometry yields
-    identical vertices on web + desktop."""
-    out = run_node_harness("sky_band.mjs")
-    assert "sky-band contract held" in out
 
 
-def test_pano_mode_semantics_ruling_c():
-    """DE-03/WE-02 under ruling C: a DELIBERATE paint-mode switch re-derives the
-    canonical blank for a stroke-less record in BOTH shells and is ONE undoable
-    step that restores the previous mode AND the authoritative profile;
-    open/load/save never blank it, and the mask-derived (stroke-y) path is left
-    to the strokes."""
-    out = run_node_harness("pano_mode_semantics.mjs")
-    assert "pano mode semantics contract held" in out
 
 
 def test_horizon_entry_points_degrade_on_malformed_records():
@@ -212,3 +174,9 @@ def test_worker_failure_disposes_the_worker_and_aligns_the_detail_peak():
     shim."""
     out = run_node_harness("worker_failure.mjs")
     assert "DS4/DS5 worker contract held" in out
+
+
+def test_local_sky_band_complement_geometry():
+    """Local core and desktop adapter preserve complement/hatch/seam rules."""
+    out = run_node_harness("sky_band.mjs")
+    assert "sky-band contract held" in out

@@ -1,3 +1,46 @@
+# Independent catalog release record
+
+## Repository separation — October 1, 2026
+
+The current codex/direction-b-ui desktop snapshot was extracted to the
+independent Nightseam-catalog repository with VERSION 0.1.0. The original
+Nightseam-programm repository now owns only the website. The catalog keeps the
+same branch name with independent history and no remote; prior combined Git
+branches/tags and staged/working changes are saved in ignored recovery bundles
+and patches. Desktop source removed from the website has both a committed
+extraction snapshot and hash-verified pre-partition recovery copies.
+
+Source data/, packaged dist/data/, the existing executable and build environment
+were moved with byte verification. Configured external exposure archives were
+not altered. Website catalog generation now uses project-owned neutral data
+without an application database, retaining the exact committed payload bytes.
+Core baking, guards, tests, browser registration and releases are scoped to
+each project; website version history is unchanged. No remote push, upload or
+public deployment was performed.
+
+Validation completed October 2, 2026:
+- Initial full catalog pytest run: 599 passed, one launch-mode test still
+  expecting the former combined updater. Updated that test to require updater
+  refusal in both shells; all 17 affected launch/updater/seed checks passed.
+  The backend disables the obsolete updater, and neither shell initializes it.
+- Focused split verification retained 132 local guard/core/geometry/launcher
+  assertions, including published astronomy anchors and mutation proofs.
+- All 10 independent packaged catalog browser checks passed on the candidate
+  (0.1.0-gaa775e41-dirty), using private executable/data copies. Coverage includes
+  calibration file choosers, active objects, archive errors, import counters,
+  duplicate prevention, export, isolated launch, responsive layout and map labels.
+- Local JS/import/DOM/syntax/encoding/core guards and source release gate passed.
+  Local packaging checks reject private data, absent manifests, unsafe names,
+  stale versions/checksums/sizes and ZIP members differing from verified source.
+- All 649 source/packaged library file fingerprints remained unchanged through
+  tests and browser validation; external archive settings were retained. Results
+  and recovery material remain in ignored logs/repository-split/.
+- VERSION and the final v0.1.0 tag own this repository's independent release.
+  The final executable is compiled from that clean tag; final artifact hashes
+  and package-gate results are stored in the ignored installation record.
+
+## Historical combined-project entries
+
 # RELEASES.md - what each release shipped and how it was verified
 
 The per-release records moved out of `AGENTS.md` (which had grown past the

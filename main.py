@@ -149,16 +149,16 @@ class NoSignalServer(__import__("uvicorn").Server):
 
 def catalog_only_for_launch(override: bool | None = None, *,
                             frozen: bool | None = None) -> bool:
-    """Packaged desktop launches use the archive shell; source runs keep the planner.
+    """All normal launches use the independent archive shell.
 
     An explicit mode flag supports source preview and the legacy planner browser
-    checks, while the default follows how this program was launched.
+    checks, while source and packaged defaults both select the catalog.
     """
     if override is not None:
         return bool(override)
     if frozen is None:
         frozen = bool(getattr(sys, "frozen", False))
-    return bool(frozen)
+    return True
 
 
 def shell_url_for_launch(base_url: str, catalog_only: bool) -> str:

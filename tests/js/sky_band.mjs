@@ -6,7 +6,7 @@
  * ceiling only with the explicit "block above band" opt-in (p.blockAbove).
  * The visible region is the exact complement of the blocked region; the
  * assumed-open area is hatched (not blocked). Also pins that the shared edge
- * geometry (profileSegments) yields IDENTICAL vertices on web + desktop.
+ * geometry (profileSegments) yields IDENTICAL vertices in local core and the desktop adapter.
  * Prints one marker line; tests/test_js_behaviour.py asserts it.
  */
 globalThis.window = { addEventListener() {}, removeEventListener() {}, dispatchEvent() {} };
@@ -16,7 +16,7 @@ globalThis.localStorage = {
   setItem(k, v) { this._m[k] = String(v); },
 };
 
-const H = await import(new URL("../../web/horizon.js", import.meta.url).href);
+const H = await import(new URL("../../core/horizon.js", import.meta.url).href);
 const D = await import(new URL("../../static/js/pano.js", import.meta.url).href);
 
 const BINS = 720;
@@ -160,7 +160,7 @@ const parCases = [
 for (const c of parCases) {
   const a = H.profileSegments(c.prof, 720, 56, c.ab, c.at, c.azOff, c.fov, c.skip);
   const b = D.profileSegments(c.prof, 720, 56, c.ab, c.at, c.azOff, c.fov, c.skip);
-  if (JSON.stringify(a) !== JSON.stringify(b)) fail("web/desktop profileSegments vertices differ");
+  if (JSON.stringify(a) !== JSON.stringify(b)) fail("local core/desktop profileSegments vertices differ");
 }
 
 /* ---- 6. DEFAULT open above: overhang runs + assumed-open runs ---- */

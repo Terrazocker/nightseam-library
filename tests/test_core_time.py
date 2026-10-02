@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-HARNESS = ROOT / "tests" / "js" / "astro_parity.mjs"
+HARNESS = ROOT / "tests" / "js" / "catalog_time.mjs"
 
 # (tz, date) -> minutes EAST of UTC in effect at local noon
 _NOON_GOLDENS = {
@@ -121,15 +121,3 @@ def test_wall_utc_shift_is_an_inverse():
         assert res["back"] == _ms(parts), (tz, parts, res)
         want_wall = _ms(parts) + _INSTANT_GOLDENS[(tz, parts)] * 60000
         assert res["wall"] == want_wall, (tz, parts, res)
-
-
-def test_shells_delegate_timezone_math_to_core():
-    util = (ROOT / "static" / "js" / "util.js").read_text(encoding="utf-8")
-    assert "zoneOffsetAtLocalNoon(effZone(), dateStr)" in util, \
-        "desktop tzOffAt must delegate to core/time.js"
-    assert "timeZoneName" not in util, "desktop kept a private Intl parser"
-    ws = (ROOT / "web" / "webstore.js").read_text(encoding="utf-8")
-    assert "offsetEastMin(tzName, date.getTime())" in ws, \
-        "web tzOffMinAt must delegate to core/time.js"
-    assert "wallFromUtcMs" in ws and "utcFromWallMs" in ws
-    assert "timeZoneName" not in ws, "web kept a private Intl parser"

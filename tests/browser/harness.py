@@ -1,25 +1,8 @@
-"""Shared plumbing for the real-browser release gate (tests/browser/*).
+"""Browser gate support for the independent packaged Image Catalog.
 
-Two targets, both driven by Playwright against a REAL browser engine (a
-browser that cannot launch is a HARD failure, exactly like a missing node in
-`tests/js/*` - never a silent skip):
-
-  web      a static HTTP server over `web/`, opened in system Chrome
-  desktop  the PACKED `dist/NightSeam.exe` legacy planner shell, copied into a throwaway temp dir
-           so its `data/` never touches the user's install, then driven over
-           the local FastAPI server it starts (`--no-browser --planner`)
-  catalog  the PACKED exe's standard launch, which must stay in the archive
-           shell and avoid planner startup
-
-Every check gets a fresh, deterministic context: UTC timezone, en-US locale,
-dark scheme, fixed viewport, a pinned fake clock, and empty storage.  Checks
-assert something a user can see; implementation details are only used to reach
-a state.
-
-This is NOT a pytest suite (pytest only collects `test_*.py` / `*_test.py`;
-the modules here are named `*_suite.py` and take a `ctx`, not fixtures), so
-`python -m pytest tests/` never touches it.  `scripts/check_browser.py` is the
-runner.  Only stdlib + playwright are imported.
+The executable is copied into private temporary data, never the user install.
+The catalog-only gate registers local checks and treats browser launch failures
+as hard errors. Retained legacy helper APIs are not registered by the runner.
 """
 
 from __future__ import annotations
@@ -412,7 +395,7 @@ def _attach(ctx: Ctx):
     ctx.page.on("response", on_response)
 
 
-def run(channel: str = "chrome", targets=("web", "desktop"),
+def run(channel: str = "chrome", targets=("catalog",),
         exe: Path = DEFAULT_EXE, only: str | None = None,
         headed: bool = False, prod_url: str | None = None,
         artifacts: Path = ARTIFACTS, verbose: bool = True) -> int:

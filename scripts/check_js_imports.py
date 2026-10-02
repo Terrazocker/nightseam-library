@@ -3,8 +3,7 @@ every named import actually exists as an export of the target module.
 
 Catches wrong relative paths (e.g. './js/util.js' from inside js/) and the
 worst class of boot-killer: importing a name the module never exported
-(aborts the ENTIRE module graph - the whole UI goes dead). Covers both JS
-graphs: the desktop UI in static/ and the web app in web/.
+(aborts the ENTIRE module graph - the whole UI goes dead). Covers the local UI in static/ and its project-owned core and bake.
 
 Usage: python scripts/check_js_imports.py
 """
@@ -16,10 +15,10 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-ROOTS = [REPO / "static", REPO / "web"]
+ROOTS = [REPO / "static"]
 # core source + the two baked trees: the stable stubs re-export explicit names
 # from the hashed directories, and those named imports must resolve too.
-CORE_ROOTS = [REPO / "core", REPO / "web" / "core", REPO / "static" / "js" / "core"]
+CORE_ROOTS = [REPO / "core", REPO / "static" / "js" / "core"]
 
 # `import ... from "spec"` / `import "spec"` (namespace, named, default, bare)
 IMPORT_RE = re.compile(

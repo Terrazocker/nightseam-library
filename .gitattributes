@@ -1,0 +1,2 @@
+# Preserve source-data bytes and literal trailing spaces in search fields.
+app/data/*.csv -text whitespace=-blank-at-eol
