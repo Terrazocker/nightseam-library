@@ -1,5 +1,26 @@
 # Independent catalog release record
 
+## Fresh validation and development setup - October 5, 2026
+
+Full suite: 600 passed, no skips or failures (186.75 seconds). One upstream
+Starlette/httpx deprecation warning remains; dependency maintenance is deferred.
+The packaged browser gate passed 10/10 with isolated executable/data copies.
+Before adding today's documentation, the strict clean-tag 0.1.0 release guard
+passed with zero errors. Logs are under logs/repository-split/*-20261005.log.
+
+All 649 prior source/packaged library fingerprints still match. The executable
+SHA-256 remains bf5be98b021d2c7d6ab02758e079498c58bfda8985933c248ffebced3e6618f8;
+the release ZIP remains ab6094850b02b5bdf82f79cd9aeda40978cfdba2a7710824623cdb7994b0f208.
+No library migration, executable replacement or release-tag movement occurred.
+
+main is established for independent development. Today's validation/backlog
+notes are separate from the existing v0.1.0 release baseline; its feature branch
+is preserved. IMPLEMENTATION_PLAN.md saves deferred status-report items 3, 4, 6
+and 7, and RELEASE_WORKFLOW.md documents local releases and optional remote setup.
+The user chose to keep the catalog local. No origin remote, GitHub repository
+or public executable release was created.
+
+
 ## Repository separation — October 1, 2026
 
 The current codex/direction-b-ui desktop snapshot was extracted to the
