@@ -1,5 +1,19 @@
 # Independent catalog release record
 
+## Separation verification - October 5, 2026
+
+Confirmed separate Git roots/object stores, project-owned build/version/core
+inputs and independent data paths. No active sibling runtime/build dependency
+was found. The regular packaged executable reports NightSeam 0.1.0. The retained
+maintenance planner remains catalog-owned and is deferred cleanup.
+
+A headless browser-test child from the earlier private gate had survived parent
+teardown. Its exact path, command, creation time and absent parent established
+ownership; only that orphan was stopped. Recorded the tooling issue in BUGS.md
+and the deferred roadmap. No application behavior or release artifacts changed;
+the previously recorded full-suite and browser results remain applicable.
+
+
 ## Fresh validation and development setup - October 5, 2026
 
 Full suite: 600 passed, no skips or failures (186.75 seconds). One upstream

@@ -27,6 +27,9 @@ These tasks remain open. Numbers refer to the shared status report's items 3-7.
 - Later performance work: profile representative real archives before changing
   sequential import/reindex batching; retain cancellation, archive locking,
   duplicate identity and transactional publication.
+- Later browser-test tooling: resolve the confirmed orphaned frozen child in
+  BUGS.md; assert harness-owned process/listener teardown and move test scratch
+  under ignored logs/.
 - Later dependency maintenance: review the Starlette/httpx test warning without
   broad dependency changes during this validation/repository pass.
 
