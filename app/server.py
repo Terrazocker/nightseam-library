@@ -21,7 +21,7 @@ from .database import Database
 from .imglib import CatalogResolver, name_key
 from .ingest import (_archive_io, calibration_import_target, ingest_one, obj_slug,
                      reindex_library, rename_archive_folder, undo_archive_rename)
-from .paths import static_dir
+from .paths import safe_join, static_dir
 from .version import app_version
 
 APP_VERSION = app_version()
@@ -136,6 +136,51 @@ def create_app(db: Database) -> FastAPI:
     if _extra_host:
         _ALLOWED_HOSTS.add(_extra_host)
 
+    # Middleware ORDER matters (F-09): guard_host is registered LAST, so
+    # Starlette runs it OUTERMOST - a rejected (foreign host / cross-site)
+    # request never reaches `touch`, and constant probing cannot keep the
+    # idle-exit from ever firing. touch therefore only records activity for
+    # requests the guard accepted.
+    @app.middleware("http")
+    async def touch(request, call_next):
+        _state["last_request"] = time.time()
+        # Reject an oversized upload from its declared length BEFORE Starlette
+        # spools the body to a temp file: the per-file cap inside the ingest
+        # route can only run once the whole request has been buffered.
+        limit = _MAX_REQUEST_BYTES.get(request.url.path)
+        if limit is not None:
+            try:
+                declared = int(request.headers.get("content-length") or 0)
+            except ValueError:
+                declared = 0
+            if declared > limit:
+                return JSONResponse(
+                    {"detail": f"upload too large (max "
+                               f"{limit // (1024 * 1024)} MB per request)"},
+                    status_code=413)
+        resp = await call_next(request)
+        # F-16: every response the app serves carries nosniff - cheap defense
+        # that also covers non-HTML responses (the SVG placeholder) which the
+        # CSP attachment below deliberately skips.
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        # SP-02: the privileged localhost origin must not accept remote script.
+        # Attach the policy to every HTML document the server serves (the SPA
+        # shell and FastAPI's own error pages; a 4xx/5xx body is HTML and needs
+        # it just as much, since a cross-site <script> tag can read nothing from
+        # a JSON response anyway but the browser still runs what it loads).
+        ctype = (resp.headers.get("content-type") or "").lower()
+        if ctype.startswith("text/html"):
+            resp.headers.setdefault("Content-Security-Policy", CSP_HEADER)
+        # the UI ships as plain files served from the exe/source bundle; a
+        # stale cached catalog.html next to fresh ES modules breaks the app
+        # (missing DOM ids). Never cache the UI shell or its assets - including
+        # themes.css, which carries the Workbench component overrides.
+        if request.url.path in ("/", "/index.html", "/catalog.html", "/style.css",
+                                "/themes.css", "/favicon.ico") or \
+                request.url.path.startswith("/js/"):
+            resp.headers["Cache-Control"] = "no-store"
+        return resp
+
     @app.middleware("http")
     async def guard_host(request, call_next):
         host = (request.headers.get("host") or "").strip()
@@ -146,14 +191,6 @@ def create_app(db: Database) -> FastAPI:
             return JSONResponse({"detail": "cross-site request rejected"},
                                 status_code=403)
         return await call_next(request)
-
-    @app.middleware("http")
-    async def touch(request, call_next):
-        _state["last_request"] = time.time()
-        # Reject an oversized upload from its declared length BEFORE Starlette
-        # spools the body to a temp file: the per-file cap inside the ingest
-        # route can only run once the whole request has been buffered.
-        limit = _MAX_REQUEST_BYTES.get(request.url.path)
         if limit is not None:
             try:
                 declared = int(request.headers.get("content-length") or 0)
@@ -290,13 +327,21 @@ def create_app(db: Database) -> FastAPI:
 
     @app.post("/api/library/open_folder")
     def api_library_open_folder(body: FolderOpenIn):
+        # F-13: the shared safe_join rail validates the segment rules the
+        # hand-rolled check missed (control characters, device names) - a raw
+        # NUL used to escape as a 500 instead of a clean 400. The archive root
+        # itself stays openable via "." (safe_join refuses the root, so that
+        # case is handled before it).
         rel = body.rel.strip().replace("\\", "/").strip("/")
         if not rel or any(p == ".." for p in rel.split("/")):
             raise HTTPException(400, "bad folder path")
         base = Path(db.image_dir()).resolve()
-        folder = (base / rel).resolve()
-        if folder != base and base not in folder.parents:
-            raise HTTPException(400, "folder outside the archive")
+        if rel == ".":
+            folder = base
+        else:
+            folder = safe_join(base, rel)
+            if folder is None:
+                raise HTTPException(400, "folder outside the archive")
         if not folder.is_dir():
             raise HTTPException(404, "folder not found on disk")
         try:

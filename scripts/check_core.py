@@ -6,7 +6,6 @@ Local source/bake contracts:
   * static/js/core/<hash>/ is byte-identical to core/
   * retained hash directories match the manifest current plus N-1 policy
   * the stable local stub points at the manifest hash
-  * the local stub's cache token matches the manifest token
   * core/ stays pure (no DOM/storage/network identifiers)
   * the moved concepts cannot reappear as definitions in the shells
 
@@ -208,7 +207,9 @@ def scan() -> list[str]:
 
     hash_ = str(man.get("hash") or "")
     files = man.get("files") or {}
-    token = man.get("token")
+    # The manifest token is a historical per-bake register counter (see
+    # DECISIONS.md): the stub carries the content HASH, not the token, so
+    # there is no token equality to validate here - do not re-add a dead read.
     previous = str(man.get("previous") or "") or None
     build = _load_build()
 

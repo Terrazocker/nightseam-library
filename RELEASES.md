@@ -1,5 +1,27 @@
 # Independent catalog release record
 
+## Server hardening round - October 11, 2026
+
+- F-09: middleware ORDER fixed - guard_host is now registered last (outermost),
+  so rejected foreign-host/cross-site requests never reach the idle-touch and
+  constant probing cannot keep the 12-hour idle exit from firing. Pinned by
+  test_rejected_requests_do_not_advance_the_idle_timer (403s leave the timer
+  untouched; an allowed request still advances it).
+- F-13: /api/library/open_folder goes through the shared safe_join rail -
+  control characters and device names are a clean 400 (a raw NUL used to
+  escape as a 500) while the archive root stays openable via ".".
+- F-16: every response carries X-Content-Type-Options: nosniff, covering the
+  non-HTML responses the CSP attachment deliberately skips.
+- check_core contract alignment: the header claimed a stub-token check, but
+  the generated stub carries the content HASH and no token at all - the claim
+  and the dead manifest-token read are removed (the token stays a historical
+  per-bake register counter, documented in DECISIONS.md).
+
+Validation: full suite **442 passed, one existing Starlette/httpx warning** in
+90.12 s (two new hardening tests); check_core.py, check_encoding.py,
+check_js.py and the source release guard all passed. Logs under logs/round1-*.
+No version, tag or release artifact was created.
+
 ## Rename recovery and hardening batch - October 10, 2026
 
 Follow-up hardening on the retired-planner tree (0ca1b2c era work):

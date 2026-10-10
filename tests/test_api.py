@@ -769,6 +769,48 @@ def test_open_folder(client, monkeypatch):
                        json={"rel": "M 42/nope"}).status_code == 404
 
 
+def test_open_folder_rejects_malformed_paths_and_keeps_the_root_open(client, monkeypatch):
+    """F-13: the route goes through the shared safe_join rail, so control
+    characters and device names are a clean 400 (a raw NUL used to escape as a
+    500), and the archive root itself stays openable via "."."""
+    from pathlib import Path
+
+    opened = []
+    monkeypatch.setattr("os.startfile", lambda p: opened.append(str(p)))
+    base = tmp_archive(client)
+    base.mkdir(parents=True, exist_ok=True)
+    assert client.post("/api/library/open_folder",
+                       json={"rel": "a\x00b"}).status_code == 400
+    assert client.post("/api/library/open_folder",
+                       json={"rel": "CON"}).status_code == 400
+    assert client.post("/api/library/open_folder",
+                       json={"rel": "."}).status_code == 200
+    assert opened and Path(opened[0]).resolve() == base.resolve()
+    assert client.post("/api/library/open_folder",
+                       json={"rel": ""}).status_code == 400
+
+
+def test_rejected_requests_do_not_advance_the_idle_timer(client):
+    """F-09: the guard runs OUTERMOST, so a rejected (foreign host / cross-site)
+    request never reaches the idle-touch - constant probing cannot keep the
+    12-hour idle exit from firing. Allowed requests still advance it."""
+    import time as time_mod
+
+    from app import server as server_mod
+
+    before = server_mod._state["last_request"]
+    time_mod.sleep(0.01)
+    r = client.get("/api/state", headers={"Host": "evil.example"})
+    assert r.status_code == 403
+    assert server_mod._state["last_request"] == before,         "a rejected request must not reset the idle timer"
+    r = client.get("/api/state", headers={"Sec-Fetch-Site": "cross-site"})
+    assert r.status_code == 403
+    assert server_mod._state["last_request"] == before,         "a cross-site rejection must not reset the idle timer either"
+    time_mod.sleep(0.01)
+    assert client.get("/api/state").status_code == 200
+    assert server_mod._state["last_request"] > before
+
+
 def test_ingest_session_folders(client):
     """Frames from different nights land in different session sub-folders;
     frames within 12 h share one session folder."""
