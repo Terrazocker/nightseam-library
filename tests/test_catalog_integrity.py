@@ -147,7 +147,7 @@ def test_curated_ids_are_gone_everywhere(tmp_path):
 # way to cover a new surface. `landing/features.html`'s "12,000 objects" is a
 # deliberate rounding (a feature blurb, not a catalogue count) and is not pinned.
 ADVERTISED_SIZE = [
-    ("static/index.html", 1, [r"supplement OpenNGC cannot carry \(([\d,]+)\s+objects"]),
+    ("CATALOG.md", 1, [r"ships ([\d,]+) OpenNGC/supplement objects"]),
 ]
 
 
@@ -192,12 +192,12 @@ def test_advertised_size_guard_catches_a_drifted_desktop_hint(tmp_path):
         dest = tmp_path / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(ROOT / rel, dest)
-    hint = tmp_path / "static" / "index.html"
+    hint = tmp_path / "CATALOG.md"
     hint.write_text(hint.read_text(encoding="utf-8").replace("12,176", "12,160"),
                     encoding="utf-8")
     problems = _advertised_mismatches(tmp_path)
-    assert any("static/index.html" in p and "12,160" in p for p in problems), \
-        f"the drifted desktop hint must be reported: {problems}"
+    assert any("CATALOG.md" in p and "12,160" in p for p in problems), \
+        f"the drifted catalog hint must be reported: {problems}"
     assert _advertised_mismatches(ROOT) == [], "the real tree must be clean"
 
 

@@ -337,7 +337,6 @@ export async function loadLibrary() {
     S.cfg = await api("/api/state");
     applyArchiveUI();
     renderLibrary();
-    renderArchiveStats();
     loadImports();
     if ($("#tab-image-catalog.active") && $("#tab-skymap.active")) renderSkyMap();
     return true;
@@ -350,18 +349,6 @@ function fmtDur(sec) {
   if (h) return `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;
   if (m) return `${m}m ${String(s).padStart(2, "0")}s`;
   return `${s}s`;
-}
-
-function renderArchiveStats() {
-  // The source planner's Import Exposures view retains its global rollup.
-  const el = $("#archiveStats");
-  if (!el) return;
-  const library = S.library;
-  el.innerHTML = library
-    ? `<div class="stat"><span class="k">objects</span><span class="v">${(library.objects || []).length}</span></div>` +
-      `<div class="stat"><span class="k">images</span><span class="v">${library.total_images}</span></div>` +
-      `<div class="stat"><span class="k">integration</span><span class="v">${fmtDur(library.total_exposure)}</span></div>`
-    : "";
 }
 
 export function renderLibrary() {
@@ -738,8 +725,6 @@ export function bindArchive() {
         await api("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ size_unit: next }) });
         S.cfg.size_unit = next;
-        const plannerSizeUnit = $("#sizeUnit");
-        if (plannerSizeUnit) plannerSizeUnit.value = next;
         renderLibrary();
         $(".library-size-unit")?.focus();
       } catch (err) { unitButton.disabled = false; }

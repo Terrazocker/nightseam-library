@@ -1,8 +1,4 @@
-"""Cross-check: every $('#id') referenced by an app's JS must exist in its HTML.
-
-Covers the local catalog and retained maintenance planner shells.
-The desktop shells share archive/map modules, so their shell-specific IDs are
-checked against each page separately.
+"""Cross-check: every $('#id') referenced by the catalog's JS must exist in its HTML.
 """
 
 from __future__ import annotations
@@ -16,15 +12,8 @@ from urllib.parse import urlsplit
 REPO = Path(__file__).resolve().parents[1]
 
 APPS = [
-    # (label, html file, intentional shell-specific omissions, unreachable import edges)
-    ("desktop", REPO / "static" / "index.html",
-     {"frameTypeHelp", "skymapDecAxis", "skymapPlot", "skymapRaAxis"}, set()),
-    ("catalog", REPO / "static" / "catalog.html",
-     # The source planner's Import Exposures panel retains its global stats.
-     {"edgeSpace", "edgeSpaceVal", "sizeUnit", "archiveStats"},
-     # skymap.js imports the planner inspector only in its non-catalog branch.
-     # The catalog browser gate also forbids any request for this module.
-     {("js/skymap.js", "js/detail.js")}),
+    # (label, html file, intentional omissions, unreachable import edges)
+    ("catalog", REPO / "static" / "catalog.html", set(), set()),
 ]
 
 # ids that only exist at runtime (created by JS template literals) or that are

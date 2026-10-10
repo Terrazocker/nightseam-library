@@ -1,14 +1,12 @@
 """HTTP-level API tests via fastapi TestClient (httpx).
 
 These exercise the full route layer of create_app(): validation, error
-codes, ingest, and the export/import round trip. The app is built with
-prefetch=False so no image-cache thread hits the network.
+codes, and ingest for the image-catalog API surface.
 """
 
 import io
 import json
 import math
-import zipfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -22,32 +20,16 @@ from _util import make_fits, m31_fits, unresolved_fits
 
 from app.catalog_data import STANDARD_TOP_N
 
-_DATE = "2026-08-24"
-_TZ = 120
-
-
 @pytest.fixture()
 def db(tmp_path):
     return Database(tmp_path / "nightseam.db")
 
 
 @pytest.fixture()
-def client(db, tmp_path, monkeypatch):
-    # pano uploads/replaces write to data_dir()/"panos" - point that at the tmp
-    # dir so a test run can never drop files into the repo's real data/ folder.
-    # The real data_dir() creates the panos sub-folder, so mirror that here.
-    data = tmp_path / "data"
-    (data / "panos").mkdir(parents=True)
-    monkeypatch.setattr("app.server.data_dir", lambda: data)
-    with TestClient(create_app(db, prefetch=False)) as c:
+def client(db, tmp_path):
+    with TestClient(create_app(db)) as c:
         c.post("/api/settings", json={"image_dir": str(tmp_path / "archive")})
         yield c
-
-
-def add_site(c, name="Backyard", lat=50.0, lon=7.8):
-    r = c.post("/api/sites", json={"name": name, "lat": lat, "lon": lon, "elev": 150})
-    assert r.status_code == 200
-    return r.json()["id"]
 
 
 # ------------------------------------------------------------------ state / settings
@@ -55,54 +37,17 @@ def add_site(c, name="Backyard", lat=50.0, lon=7.8):
 def test_state_defaults(client):
     st = client.get("/api/state").json()
     assert st["version"]
-    assert st["sites"] == []
-    assert st["adv_mode"] is False
-    assert st["min_useful_alt"] == 25.0
-    assert st["profile_len"] == 720
     assert st["image_dir"]  # defaults to a real path
+    assert st["size_unit"] == "arcmin"
 
 
 def test_settings_roundtrip(client):
-    r = client.post("/api/settings", json={
-        "min_useful_alt": 30.0, "moon_aware": True,
-        "favorites": ["m31", "m42"],
-        "filters": {"broadband": False, "narrowband_ha": True,
-                    "narrowband_oiii": False}})
+    r = client.post("/api/settings", json={"size_unit": "deg"})
     assert r.status_code == 200
-    st = client.get("/api/state").json()
-    assert st["min_useful_alt"] == 30.0
-    assert st["moon_aware"] is True
-    assert st["favorites"] == ["m31", "m42"]
-    assert st["filters"] == {"broadband": False, "narrowband_ha": True,
-                             "narrowband_oiii": False}
-
-
-def test_timezone_setting_roundtrip(client):
-    r = client.post("/api/settings", json={"timezone": "America/Santiago"})
+    assert client.get("/api/state").json()["size_unit"] == "deg"
+    r = client.post("/api/settings", json={"size_unit": "arcmin"})
     assert r.status_code == 200
-    assert client.get("/api/state").json()["timezone"] == "America/Santiago"
-    r = client.post("/api/settings", json={"timezone": ""})
-    assert r.status_code == 200
-    assert client.get("/api/state").json()["timezone"] == ""
-
-
-def test_min_vis_setting_roundtrips_and_clamps(client):
-    """`min_vis` is the target list's Min-visibility gate (0.6.30): a percentage
-    persisted like every other display setting. /api/state must carry it (the
-    desktop's filter bar is seeded from it) with a default of 1 and a 0..100
-    clamp, so a hand-edited settings row cannot wedge the slider."""
-    assert client.get("/api/state").json()["min_vis"] == 1        # default
-    assert client.post("/api/settings", json={"min_vis": 42}).status_code == 200
-    assert client.get("/api/state").json()["min_vis"] == 42
-    assert client.post("/api/settings", json={"min_vis": 0}).status_code == 200
-    assert client.get("/api/state").json()["min_vis"] == 0        # 0 = gate off
-    assert client.post("/api/settings", json={"min_vis": 150}).status_code == 200
-    assert client.get("/api/state").json()["min_vis"] == 100
-    assert client.post("/api/settings", json={"min_vis": -5}).status_code == 200
-    assert client.get("/api/state").json()["min_vis"] == 0
-    # it survives a reopen (the desktop reads it back at boot)
-    st = client.get("/api/state").json()
-    assert isinstance(st["min_vis"], int)
+    assert client.get("/api/state").json()["size_unit"] == "arcmin"
 
 
 def test_settings_rejects_bad_size_unit(client):
@@ -121,31 +66,6 @@ def test_retired_sky_brightness_setting_is_ignored(client):
 
 # ------------------------------------------------------------------ sites / rigs
 
-def test_sites_crud_and_first_is_active(client):
-    sid = add_site(client)
-    assert client.get("/api/state").json()["active_site_id"] == sid
-    r = client.put(f"/api/sites/{sid}",
-                   json={"name": "Renamed", "lat": 1.0, "lon": 2.0, "elev": 0})
-    assert r.status_code == 200
-    assert client.get("/api/sites").json()[0]["name"] == "Renamed"
-    assert client.delete(f"/api/sites/{sid}").status_code == 200
-    assert client.get("/api/sites").json() == []
-
-
-def test_rigs_crud_and_fov(client):
-    r = client.post("/api/rigs", json={"name": "Seestar",
-                                       "focal_mm": 150.0,
-                                       "sensor_w": 6.0, "sensor_h": 4.0})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["fov_w"] > body["fov_h"] > 0
-    assert client.delete(f"/api/rigs/{body['id']}").status_code == 200
-    r = client.post("/api/rigs", json={"name": "Bad",
-                                       "focal_mm": -5.0,
-                                       "sensor_w": 6.0, "sensor_h": 4.0})
-    assert r.status_code == 400
-
-
 # ---------------------------------------------------- planning lives in core/
 # Phase C removed the server planning routes (/api/night, /api/object/{oid}):
 # the desktop and the web both compute from core/ client-side. The payload
@@ -153,126 +73,33 @@ def test_rigs_crud_and_fov(client):
 # and the derive engines - plus the frozen fixtures under tests/fixtures/.
 
 
-def test_removed_planning_routes_answer_404(client):
-    """A stale client must fail loudly, not reach a half-alive compute route."""
-    add_site(client)
-    assert client.get("/api/night", params={
-        "date": _DATE, "tz_offset_min": _TZ}).status_code == 404
-    assert client.get("/api/object/m31", params={
-        "date": _DATE, "tz_offset_min": _TZ}).status_code == 404
-    # the image IO route is NOT planning and stays (for an existing object)
-    assert client.get("/api/object/ngc224/image", params={
-        "thumb": 1}).status_code == 200
+def test_retired_planner_and_restore_routes_answer_404(client):
+    """A stale client must fail loudly, not reach a half-alive route. The
+    planner retirement removed whole route families; every one of them must
+    now fall through to the static mount's 404 instead of half-working."""
+    for method, path in (
+            ("get", "/api/night"), ("get", "/api/sites"),
+            ("post", "/api/sites"), ("get", "/api/rigs"),
+            ("post", "/api/rigs"), ("get", "/api/panoramas"),
+            ("post", "/api/panorama"), ("get", "/api/catalog"),
+            ("get", "/api/catalog/provenance"),
+            ("post", "/api/catalog/custom"),
+            ("get", "/api/object/m31/image"),
+            ("post", "/api/images/cache/clear"),
+            ("get", "/api/export"), ("post", "/api/import"),
+            ("post", "/api/update-check"), ("get", "/api/shutdown"),
+            ("post", "/api/shutdown"),
+            ("get", "/api/images/1/preview"),
+            ("get", "/index.html")):
+        r = client.request(method, path)
+        # GETs fall through to the static mount's 404; POSTs are refused by
+        # the mount itself with 405 (it only serves GET/HEAD) - both prove
+        # the route family is gone rather than half-alive.
+        assert r.status_code in ({404} if method == "get" else {404, 405}), (
+            method, path, r.status_code)
 
 
 # ------------------------------------------------------------------ catalog / customs
-
-def test_catalog_counts(client, db):
-    plain = client.get("/api/catalog").json()
-    assert len(plain) == STANDARD_TOP_N
-    adv = client.get("/api/catalog", params={"adv": "1"}).json()
-    assert len(adv) == STANDARD_TOP_N + db.advanced_count()
-    assert all("_adv" not in o for o in adv)
-
-
-def test_custom_target_crud(client):
-    r = client.post("/api/catalog/custom", json={
-        "name": "My Nebula", "ra": "5h 34.5m", "dec": "+22 01"})
-    assert r.status_code == 200
-    cid = r.json()["id"]
-    assert cid.startswith("u_")
-    catalog = client.get("/api/catalog").json()
-    mine = next(o for o in catalog if o["id"] == cid)
-    assert mine["primary_name"] == "My Nebula"
-    assert 5.5 < mine["ra_hours"] < 5.6
-    # builtin objects cannot be deleted
-    assert client.delete("/api/catalog/custom/m31").status_code == 400
-    assert client.delete(f"/api/catalog/custom/{cid}").status_code == 200
-    assert not any(o["id"] == cid
-                   for o in client.get("/api/catalog").json())
-
-
-def test_custom_target_rejects_bad_ra(client):
-    r = client.post("/api/catalog/custom", json={
-        "name": "Bad", "ra": "99h", "dec": "+22"})
-    assert r.status_code == 400
-
-
-def test_custom_target_comma_decimals(client):
-    """RA/Dec with comma decimals must parse (German locale)."""
-    r = client.post("/api/catalog/custom", json={
-        "name": "Comma Neb", "ra": "5,5", "dec": "+22,5", "vmag": 9.5})
-    assert r.status_code == 200
-    cid = r.json()["id"]
-    mine = next(o for o in client.get("/api/catalog").json()
-                if o["id"] == cid)
-    assert 5.49 < mine["ra_hours"] < 5.51
-    assert 22.49 < mine["dec_deg"] < 22.51
-    assert mine["vmag"] == 9.5
-    assert client.delete(f"/api/catalog/custom/{cid}").status_code == 200
-
-
-def test_custom_target_rejects_non_finite_vmag(client, db):
-    """T6-F1 (review of t6, high): the LIVE create route was unguarded.
-
-    POST /api/catalog/custom with `vmag: 1e400` (a valid strict-JSON number
-    literal that Python parses to inf) - or with the bare `Infinity` token -
-    returned 200 and stored custom_objects.vmag = inf. GET /api/catalog then
-    answered 500 on EVERY later request (Starlette serializes with
-    allow_nan=False) and the desktop shell fetches that route at boot. This is
-    the certified PY-04 failure mode reached with no FITS file and no bundle.
-    """
-    shapes = {
-        "1e400 literal": '{"name":"Zzz","ra":"1.0","dec":"1.0","vmag":1e400}',
-        "bare Infinity token":
-            '{"name":"Zzz","ra":"1.0","dec":"1.0","vmag":Infinity}',
-        "bare -Infinity token":
-            '{"name":"Zzz","ra":"1.0","dec":"1.0","vmag":-Infinity}',
-        "bare NaN token": '{"name":"Zzz","ra":"1.0","dec":"1.0","vmag":NaN}',
-    }
-    for label, body in shapes.items():
-        r = client.post("/api/catalog/custom", content=body,
-                        headers={"Content-Type": "application/json"})
-        assert 400 <= r.status_code < 500, (label, r.status_code, r.text)
-        # nothing was stored ...
-        assert not any(c["primary_name"] == "Zzz" for c in db.customs()), label
-        for c in db.customs():
-            for key in ("vmag", "ra_hours", "dec_deg"):
-                assert c[key] is None or math.isfinite(float(c[key])), (label, c)
-        # ... and the route the desktop awaits at boot still answers
-        cat = client.get("/api/catalog")
-        assert cat.status_code == 200, (label, cat.status_code)
-        text = cat.content.decode("utf-8")
-        assert "Infinity" not in text and "NaN" not in text, label
-
-
-def test_database_add_custom_refuses_non_finite_numbers(db):
-    """The storage boundary holds for ANY caller, not just the route: a
-    non-finite vmag/ra/dec is refused instead of persisted. A refusal (not a
-    silent NULL) is the right shape here - silently nulling would change what
-    the caller asked to store."""
-    for key, bad in (("vmag", float("inf")), ("vmag", float("nan")),
-                     ("ra_hours", float("inf")), ("dec_deg", float("-inf"))):
-        with pytest.raises(ValueError, match="finite"):
-            db.add_custom({"id": "u_bad", "primary_name": "Bad target",
-                           "otype": "galaxy", "ra_hours": 1.0, "dec_deg": 1.0,
-                           "vmag": 9.5, key: bad})
-    assert not any(c["primary_name"] == "Bad target" for c in db.customs())
-
-
-def test_custom_target_accepts_large_finite_vmag(client, db):
-    """The fix must not be a blanket refusal: legitimate large-but-finite
-    magnitudes still create the target."""
-    for vmag in (30.0, 99.9):
-        r = client.post("/api/catalog/custom", json={
-            "name": f"Faint {vmag}", "ra": "1.0", "dec": "1.0", "vmag": vmag})
-        assert r.status_code == 200, (vmag, r.status_code, r.text)
-        stored = next(c for c in db.customs()
-                      if c["primary_name"] == f"Faint {vmag}")
-        assert stored["vmag"] == vmag
-        assert math.isfinite(float(stored["vmag"]))
-    assert client.get("/api/catalog").status_code == 200
-
 
 # ------------------------------------------------------------------ ingest / library
 
@@ -376,54 +203,6 @@ def test_library_rename_waits_for_duplicate_verification_without_stale_paths(cli
     assert row["object_name"] == "Renamed 42"
     assert (tmp_archive(client) / row["file"]).read_bytes() == payload
     assert len(list(tmp_archive(client).rglob("*.fit"))) == 1
-
-
-def test_restore_payload_commit_serializes_duplicate_finalization(client, db, monkeypatch):
-    from app import backup
-    payload = unresolved_fits()
-    first = client.post("/api/images/ingest", files=[
-        ("files", ("source.fit", payload, "application/octet-stream")),
-    ]).json()["results"][0]
-    blob = client.get("/api/export").content
-    changed = payload + b"different restored pixels"
-    rebuilt = io.BytesIO()
-    with zipfile.ZipFile(io.BytesIO(blob)) as source, zipfile.ZipFile(rebuilt, "w") as target:
-        for member in source.namelist():
-            contents = changed if member.startswith("library/") else source.read(member)
-            target.writestr(member, contents)
-    lock = _ObservedArchiveLock(db.archive_lock)
-    monkeypatch.setattr(db, "archive_lock", lock)
-    entered, release = threading.Event(), threading.Event()
-    original = backup._PayloadStage.commit
-
-    def paused(stage):
-        assert not db.lock._is_owned()
-        entered.set()
-        assert release.wait(8)
-        return original(stage)
-
-    monkeypatch.setattr(backup._PayloadStage, "commit", paused)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        restore = pool.submit(client.post, "/api/import", files={
-            "file": ("restore.zip", rebuilt.getvalue(), "application/zip")})
-        try:
-            assert entered.wait(3)
-            duplicate = pool.submit(client.post, "/api/images/ingest", files=[
-                ("files", ("renamed.fit", changed, "application/octet-stream")),
-            ])
-            assert lock.contended.wait(3)
-            assert not duplicate.done()
-            assert client.get("/api/library").json()["total_images"] == 1
-            assert (tmp_archive(client) / first["stored"]).read_bytes() == payload
-        finally:
-            release.set()
-        assert restore.result(timeout=5).status_code == 200
-        assert duplicate.result(timeout=5).json()["results"][0]["skipped"]
-    assert len(db.images()) == 1
-    assert (tmp_archive(client) / first["stored"]).read_bytes() == changed
-    assert client.get("/api/library/imports").json() == []
-    assert not list(tmp_archive(client).rglob("*.part"))
-    assert not list(tmp_archive(client).rglob("payload.journal"))
 
 
 def test_archive_change_during_streaming_refuses_stale_root_publication(client, db, tmp_path, monkeypatch):
@@ -743,9 +522,6 @@ def test_ingest_classification_and_rollups(client):
     assert g["types"]["dark"]["n"] == 1
     assert g["filters"]["L"]["n"] == 1
     assert g["filters"]["L"]["exposure"] == 300.0
-    # preview of the light frame renders a PNG
-    img_id = g["images"][0]["id"]
-    assert client.get(f"/api/images/{img_id}/preview").content.startswith(b"\x89PNG")
 
 
 def m31_at(date_obs: str) -> bytes:
@@ -1325,27 +1101,6 @@ def tmp_archive(client) -> Path:
     return _Path(st["image_dir"])
 
 
-def test_preview_endpoint(client):
-    client.post("/api/images/ingest",
-                files=[("files", ("m31.fit", m31_fits(),
-                                  "application/octet-stream"))])
-    lib = client.get("/api/library").json()
-    img_id = lib["objects"][0]["images"][0]["id"]
-    r = client.get(f"/api/images/{img_id}/preview")
-    assert r.status_code == 404            # m31_fits has no image data
-    client.post("/api/images/ingest",
-                files=[("files", ("m42.fit", m42_light_fits(),
-                                  "application/octet-stream"))])
-    lib = client.get("/api/library").json()
-    m42 = next(o for o in lib["objects"] if o["object_id"] == "ngc1976")
-    img_id = m42["images"][0]["id"]
-    r = client.get(f"/api/images/{img_id}/preview")
-    assert r.status_code == 200
-    assert r.content.startswith(b"\x89PNG")
-    r = client.get("/api/images/999999/preview")
-    assert r.status_code == 404
-
-
 # ------------------------------------------------- stored-path trust (C2)
 
 def _crafted_pano(db, pid: str, file_value: str):
@@ -1364,60 +1119,6 @@ def _crafted_image(db, file_value: str):
     return cur.lastrowid
 
 
-@pytest.mark.parametrize("evil", [
-    "../secret.jpg",
-    "..\\secret.jpg",                 # Windows separator
-    "/etc/passwd",
-    "C:/Windows/win.ini",
-])
-def test_pano_image_never_leaves_the_pano_folder(client, db, tmp_path, evil):
-    """Regression: a stored `file` value was joined onto data/panos raw, so a
-    crafted import turned this route into an arbitrary-file-read primitive."""
-    secret = tmp_path / "secret.jpg"
-    secret.write_bytes(b"TOP-SECRET-OUTSIDE-PANOS")
-    _crafted_pano(db, "evilpano", evil)
-
-    r = client.get("/api/panorama/evilpano/image")
-    assert r.status_code == 404
-    assert b"TOP-SECRET" not in r.content
-
-
-def test_pano_image_still_serves_a_legitimate_file(client, db, tmp_path):
-    payload = b"a-real-panorama"
-    (tmp_path / "data" / "panos" / "goodpano.jpg").write_bytes(payload)
-    db.add_panorama("goodpano", "mine", "goodpano.jpg")
-    db.update_panorama("goodpano", active=False)
-
-    r = client.get("/api/panorama/goodpano/image")
-    assert r.status_code == 200
-    assert r.content == payload
-    # the self-heal fallback (db names a variant that is gone) still works
-    db.update_panorama("goodpano", file="goodpano.png")
-    r = client.get("/api/panorama/goodpano/image")
-    assert r.status_code == 200 and r.content == payload
-
-
-def test_pano_delete_cannot_remove_a_file_outside_the_pano_folder(client, db, tmp_path):
-    victim = tmp_path / "victim.jpg"
-    victim.write_bytes(b"keep me")
-    _crafted_pano(db, "evilpano", "../victim.jpg")
-
-    assert client.delete("/api/panorama/evilpano").status_code == 200
-    assert victim.exists(), "a stored path escaped the panorama folder on delete"
-    assert db.get_panorama("evilpano") is None
-
-
-def test_pano_replace_cannot_unlink_a_file_outside_the_pano_folder(client, db, tmp_path):
-    victim = tmp_path / "victim.jpg"
-    victim.write_bytes(b"keep me")
-    _crafted_pano(db, "evilpano", "../victim.jpg")
-
-    r = client.post("/api/panorama/evilpano/image",
-                    files={"file": ("new.jpg", b"new pano", "image/jpeg")})
-    assert r.status_code == 200
-    assert victim.exists(), "the replace path unlinked a file it does not own"
-
-
 def test_image_preview_never_leaves_the_archive(client, db, tmp_path):
     secret = tmp_path / "secret.fit"
     secret.write_bytes(m42_light_fits())
@@ -1426,141 +1127,7 @@ def test_image_preview_never_leaves_the_archive(client, db, tmp_path):
     assert client.get(f"/api/images/{img_id}/preview").status_code == 404
 
 
-@pytest.mark.parametrize("evil_id,url_pid,refused", [
-    ("..\\evil", "..%5Cevil", {404}),      # decoded backslash; route matches
-    (".\\evil", ".%5Cevil", {404}),        # '.' + '\' -> temp name escapes
-    ("C:evil", "C%3Aevil", {404}),
-    ("evil\x00", "evil%00", {404}),
-    # the router does not turn %2F into a separator, so these never reach a
-    # handler at all (405 for POST, 404 for the GET route) - equally safe
-    ("../evil", "..%2Fevil", {404, 405}),
-    ("sub/../../evil", "sub%2F..%2F..%2Fevil", {404, 405}),
-])
-def test_pano_routes_refuse_ids_that_could_act_as_paths(client, db, tmp_path,
-                                                        evil_id, url_pid,
-                                                        refused):
-    """Regression (found in post-remediation review): the crop/replace route
-    builds `f"{pid}.{ext}"` and writes it under data/panos, so an id planted by
-    a crafted setup ZIP reached the filesystem - `..\\evil` made the server try
-    to open data/panos/...\\evil.<hex>.upload.tmp (HTTP 500) and `.\\evil` wrote
-    a temp file into data/ itself. Ids that are not plain tokens must be
-    refused on every pid route, before anything path-like is built."""
-    db.conn.execute("INSERT INTO panoramas(id,name,file,active) VALUES(?,?,?,?)",
-                    (evil_id, "crafted", "legit.jpg", 0))
-    db.conn.commit()
-    (tmp_path / "data" / "panos" / "legit.jpg").write_bytes(b"ORIGINAL")
-
-    r = client.post(f"/api/panorama/{url_pid}/image",
-                    files={"file": ("new.jpg", b"ATTACKER-BYTES", "image/jpeg")})
-    assert r.status_code in refused, (evil_id, r.status_code, r.text[:200])
-    assert client.get(f"/api/panorama/{url_pid}/image").status_code in refused
-    assert client.put(f"/api/panorama/{url_pid}",
-                      json={"paint_mode": "sky"}).status_code in refused
-    # deleting stays idempotent (200) when the route matches, and never touches
-    # anything outside panos either way
-    assert client.delete(f"/api/panorama/{url_pid}").status_code in (200, 405)
-
-    # nothing was created next to the panorama folder, and the original file
-    # (and the legitimate picture) is untouched
-    assert sorted(p.name for p in (tmp_path / "data").iterdir()) == ["panos"]
-    assert (tmp_path / "data" / "panos" / "legit.jpg").read_bytes() == b"ORIGINAL"
-    assert not list((tmp_path / "data" / "panos").glob("*.tmp"))
-
-
-def test_pano_replace_still_works_for_a_normal_id(client, db, tmp_path):
-    """The guard must not break the crop tool's normal flow."""
-    pid = client.post("/api/panorama",
-                      files={"file": ("p.jpg", b"first", "image/jpeg")}).json()["id"]
-    r = client.post(f"/api/panorama/{pid}/image",
-                    files={"file": ("p2.jpg", b"SECOND", "image/jpeg")})
-    assert r.status_code == 200
-    assert (tmp_path / "data" / "panos" / f"{pid}.jpg").read_bytes() == b"SECOND"
-    assert client.get(f"/api/panorama/{pid}/image").content == b"SECOND"
-
-
-@pytest.mark.parametrize("fov,azimuth", [(360, 0), (288, 36), (72, 108)])
-def test_pano_crop_preserves_multipart_calibration_after_saved_metadata(client, tmp_path, fov, azimuth):
-    """The editor saves old metadata before posting its cropped PNG/calibration."""
-    import struct
-    import zlib
-
-    def png(width, height, color):
-        def chunk(tag, body):
-            return (struct.pack(">I", len(body)) + tag + body
-                    + struct.pack(">I", zlib.crc32(tag + body) & 0xffffffff))
-        pixels = (b"\x00" + bytes(color) * width) * height
-        return (b"\x89PNG\r\n\x1a\n"
-                + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-                + chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b""))
-
-    source = png(1000, 100, (40, 60, 90))
-    pid = client.post("/api/panorama", files={
-        "file": ("wide.png", source, "image/png")}).json()["id"]
-    saved = client.put(f"/api/panorama/{pid}", json={
-        "fov": 360, "az_offset": 0, "paint_mode": "sky", "block_above": True,
-        "strokes": [{"m": "b", "x": 0.5, "y": 0.3, "r": 0.02}],
-        "profile": [10] * 720, "profile_top": [30] * 720})
-    assert saved.status_code == 200
-    width = round(1000 * fov / 360)
-    cropped = png(width, 100, (50, 70, 100))
-    response = client.post(f"/api/panorama/{pid}/image", files={
-        "file": ("crop.png", cropped, "image/png")},
-        data={"fov": str(fov), "az_offset": str(azimuth)})
-    assert response.status_code == 200
-    row = next(item for item in client.get("/api/panoramas").json() if item["id"] == pid)
-    assert row["fov"] == fov and row["az_offset"] == azimuth
-    assert row["strokes"] == [] and row["profile"] == [] and row["profile_top"] == []
-    assert row["paint_mode"] == "obstacle" and not row["block_above"]
-    downloaded = client.get(f"/api/panorama/{pid}/image").content
-    assert downloaded == cropped
-    assert struct.unpack(">II", downloaded[16:24]) == (width, 100)
-    assert not list((tmp_path / "data" / "panos").glob("*.tmp"))
-
-
-def test_image_preview_still_serves_an_archived_frame(client, db, tmp_path):
-    """The safe path is unchanged: a normal ingest + preview still works."""
-    client.post("/api/images/ingest",
-                files=[("files", ("m42.fit", m42_light_fits(),
-                                  "application/octet-stream"))])
-    lib = client.get("/api/library").json()
-    m42 = next(o for o in lib["objects"] if o["object_id"] == "ngc1976")
-    img_id = m42["images"][0]["id"]
-    r = client.get(f"/api/images/{img_id}/preview")
-    assert r.status_code == 200 and r.content.startswith(b"\x89PNG")
-
-
 # ------------------------------------------------------------------ bortle
-
-def test_bortle_setting_and_min_alt_default(client):
-    client.post("/api/settings", json={"bortle": 8})
-    st = client.get("/api/state").json()
-    assert st["bortle"] == 8
-    assert st["min_useful_alt"] == 17 + 16     # default follows bortle
-    client.post("/api/settings", json={"bortle": 1})
-    assert client.get("/api/state").json()["min_useful_alt"] == 19.0
-    # an explicit min alt wins over the bortle default
-    client.post("/api/settings", json={"min_useful_alt": 30.0})
-    assert client.get("/api/state").json()["min_useful_alt"] == 30.0
-    # out-of-range values are clamped
-    client.post("/api/settings", json={"bortle": 42})
-    assert client.get("/api/state").json()["bortle"] == 9
-
-
-def test_state_min_alt_explicit_flag(client):
-    """E5: /api/state must tell the desktop client whether the min altitude is
-    an EXPLICIT value or the Bortle-derived default - the client re-derives the
-    default live on Bortle changes and must not treat the resolved number as an
-    explicit choice (the flag used to not exist)."""
-    assert client.get("/api/state").json()["min_useful_alt_explicit"] is False
-    client.post("/api/settings", json={"min_useful_alt": 30.0})
-    st = client.get("/api/state").json()
-    assert st["min_useful_alt_explicit"] is True
-    assert st["min_useful_alt"] == 30.0
-    client.post("/api/settings", json={"bortle": 1})
-    st = client.get("/api/state").json()
-    assert st["min_useful_alt_explicit"] is True     # explicit still wins
-    assert st["min_useful_alt"] == 30.0
-
 
 # ------------------------------------------------------------------ library export
 
@@ -1664,245 +1231,7 @@ def test_library_export_object_accepts_encoded_unicode_name(client, db, format):
 
 # ------------------------------------------------------------------ panoramas
 
-def test_paint_mode_roundtrip(client, tmp_path):
-    # upload a fake pano image (server only checks the extension)
-    r = client.post("/api/panorama",
-                    files={"file": ("pano.jpg", b"fake jpeg", "image/jpeg")})
-    assert r.status_code == 200
-    pid = r.json()["id"]
-    try:
-        assert client.get("/api/panoramas").json()[0]["paint_mode"] == "obstacle"
-        # invalid mode rejected
-        assert client.put(f"/api/panorama/{pid}",
-                          json={"paint_mode": "diagonal"}).status_code == 400
-        r = client.put(f"/api/panorama/{pid}", json={
-            "paint_mode": "sky",
-            "strokes": [{"m": "b", "x": 0.5, "y": 0.3, "r": 0.02}],
-            "profile": [90.0] * 720,
-            "profile_top": [90.0] * 720})
-        assert r.status_code == 200
-        row = client.get("/api/panoramas").json()[0]
-        assert row["paint_mode"] == "sky"
-        assert len(row["profile_top"]) == 720
-        assert client.get("/api/state").json()["panoramas"][0]["paint_mode"] == "sky"
-
-        # export -> import preserves the mode and both profiles
-        data = client.get("/api/export").content
-        db2 = Database(tmp_path / "other.db")
-        # give the second database its own archive: without this the import
-        # restored into the DEFAULT folder (~/Documents/NightSeam Images)
-        db2.set_setting("image_dir", str(tmp_path / "archive2"))
-        with TestClient(create_app(db2, prefetch=False)) as c2:
-            c2.post("/api/import", files={
-                "file": ("b.zip", data, "application/zip")})
-            row = c2.get("/api/panoramas").json()[0]
-            assert row["paint_mode"] == "sky"
-            assert len(row["profile_top"]) == 720
-    finally:
-        client.delete(f"/api/panorama/{pid}")
-
-
-def test_panorama_activate_deactivate(client):
-    """active:true makes a pano the active one; active:false clears it."""
-    r = client.post("/api/panorama",
-                    files={"file": ("pano.jpg", b"fake jpeg", "image/jpeg")})
-    assert r.status_code == 200
-    pid = r.json()["id"]
-    try:
-        # activate via the PUT endpoint
-        assert client.put(f"/api/panorama/{pid}",
-                          json={"active": True}).status_code == 200
-        assert client.get("/api/state").json()["active_pano_id"] == pid
-        # explicit False deactivates (clears the global pointer)
-        assert client.put(f"/api/panorama/{pid}",
-                          json={"active": False}).status_code == 200
-        assert client.get("/api/state").json()["active_pano_id"] is None
-        # an update that doesn't mention active leaves the pointer alone
-        other = client.post("/api/panorama",
-                            files={"file": ("p2.jpg", b"x", "image/jpeg")}).json()["id"]
-        try:
-            assert client.put(f"/api/panorama/{other}",
-                              json={"active": True}).status_code == 200
-            assert client.put(f"/api/panorama/{other}",
-                              json={"az_offset": 5.0}).status_code == 200
-            assert client.get("/api/state").json()["active_pano_id"] == other
-        finally:
-            client.delete(f"/api/panorama/{other}")
-    finally:
-        client.delete(f"/api/panorama/{pid}")
-
-
-def test_deleting_the_active_panorama_clears_the_pointer(client):
-    """BUG-006: `DELETE /api/panorama/{pid}` removed the row and its image but
-    left `settings.active_pano_id` naming it, so `/api/state` advertised an
-    "active panorama" that planning could not resolve - the desktop planned
-    against empty sky while the UI claimed a horizon. Deleting an INACTIVE pano
-    must leave the user's active choice alone."""
-    ids = [client.post("/api/panorama",
-                       files={"file": (f"{n}.jpg", b"x", "image/jpeg")}).json()["id"]
-           for n in ("pdel-active", "pdel-other", "pdel-third")]
-    active, other, third = ids
-    # (a) deleting the ACTIVE record clears the pointer
-    client.put(f"/api/panorama/{active}", json={"active": True})
-    assert client.get("/api/state").json()["active_pano_id"] == active
-    assert client.delete(f"/api/panorama/{active}").status_code == 200
-    state = client.get("/api/state").json()
-    assert state["active_pano_id"] is None, state["active_pano_id"]
-    assert all(p["id"] != active for p in state["panoramas"])
-    # (b) deleting an INACTIVE record keeps the pointer where it was ...
-    client.put(f"/api/panorama/{other}", json={"active": True})
-    assert client.delete(f"/api/panorama/{third}").status_code == 200
-    assert client.get("/api/state").json()["active_pano_id"] == other
-    # ... and the surviving row is still the active one
-    rows = client.get("/api/panoramas").json()
-    assert [r["id"] for r in rows if r["active"]] == [other]
-    # (c) the pointer is idempotent to a second delete of the same id
-    assert client.delete(f"/api/panorama/{other}").status_code == 200
-    assert client.delete(f"/api/panorama/{other}").status_code == 200
-    assert client.get("/api/state").json()["active_pano_id"] is None
-
-
-def test_activating_an_unknown_panorama_id_is_refused(client):
-    """BUG-006: `POST /api/settings {active_pano_id: <well-formed but unknown>}`
-    stored the pointer anyway (the token rule passed), so `/api/state` advertised
-    a panorama that does not exist. A well-formed id must still NAME a row."""
-    pid = client.post("/api/panorama",
-                      files={"file": ("pknown.jpg", b"x", "image/jpeg")}).json()["id"]
-    try:
-        # unknown but token-shaped -> 400, and nothing is stored
-        r = client.post("/api/settings", json={"active_pano_id": "deadbeef00"})
-        assert r.status_code == 400, r.text
-        assert "deadbeef00" in r.json()["detail"]
-        assert client.get("/api/state").json()["active_pano_id"] is None
-        # a real id still works, and clearing still works
-        assert client.post("/api/settings",
-                           json={"active_pano_id": pid}).status_code == 200
-        assert client.get("/api/state").json()["active_pano_id"] == pid
-        assert client.post("/api/settings",
-                           json={"active_pano_id": ""}).status_code == 200
-        assert client.get("/api/state").json()["active_pano_id"] in (None, "")
-    finally:
-        client.delete(f"/api/panorama/{pid}")
-
-
-def test_the_database_refuses_a_dangling_active_pointer(client, db):
-    """The rule lives in the DATABASE transaction, not only in the route: the
-    import path writes settings directly, so a pointer that names no row must be
-    refused there too (and the activate/clear pair must stay atomic)."""
-    import pytest as _pytest
-
-    pid = client.post("/api/panorama",
-                      files={"file": ("pdbrule.jpg", b"x", "image/jpeg")}).json()["id"]
-    with _pytest.raises(ValueError):
-        db.set_active_panorama("nosuchpano")
-    assert db.setting("active_pano_id") is None
-    # a known id still activates, and deleting it through the DB clears it
-    db.set_active_panorama(pid)
-    assert db.setting("active_pano_id") == pid
-    db.delete_panorama(pid)
-    assert db.setting("active_pano_id") is None
-    # deleting an unknown id is a no-op, not an error, and never clears a
-    # pointer that names a DIFFERENT row
-    other = client.post("/api/panorama",
-                        files={"file": ("pdbrule2.jpg", b"x", "image/jpeg")}).json()["id"]
-    try:
-        db.set_active_panorama(other)
-        db.delete_panorama("nosuchpano")
-        assert db.setting("active_pano_id") == other
-    finally:
-        client.delete(f"/api/panorama/{other}")
-
-
-def test_activating_a_panorama_deactivates_the_previous(client):
-    """Exactly one panorama may be active at a time.
-
-    `PUT /api/panorama/{pid}` with active=true used to leave earlier rows
-    active; `active_panorama()` returns the newest of them, so `/api/state` and
-    the planning client could disagree about which horizon governs planning."""
-    ids = [client.post("/api/panorama",
-                       files={"file": (f"{n}.jpg", b"x", "image/jpeg")}).json()["id"]
-           for n in ("pa", "pb")]
-    try:
-        client.put(f"/api/panorama/{ids[0]}", json={"active": True})
-        client.put(f"/api/panorama/{ids[1]}", json={"active": True})
-        rows = client.get("/api/panoramas").json()
-        active = [r["id"] for r in rows if r["active"]]
-        assert active == [ids[1]], active
-        assert client.get("/api/state").json()["active_pano_id"] == ids[1]
-        # and the settings route equally keeps a single active row
-        client.post("/api/settings", json={"active_pano_id": ids[0]})
-        rows = client.get("/api/panoramas").json()
-        assert [r["id"] for r in rows if r["active"]] == [ids[0]]
-    finally:
-        for i in ids:
-            client.delete(f"/api/panorama/{i}")
-
-
 # ------------------------------------------------------------------ export / import
-
-def test_export_import_roundtrip(client, tmp_path):
-    add_site(client, "Export Site")
-    client.post("/api/rigs", json={"name": "RigA", "focal_mm": 150.0,
-                                   "sensor_w": 6.0, "sensor_h": 4.0})
-    cust = client.post("/api/catalog/custom", json={
-        "name": "Export Neb", "ra": "6.0", "dec": "-10"}).json()["id"]
-    client.post("/api/images/ingest",
-                files=[("files", ("m31.fit", m31_fits(),
-                                  "application/octet-stream"))])
-    client.post("/api/settings", json={"min_useful_alt": 33.0})
-
-    z = client.get("/api/export")
-    assert z.status_code == 200
-    data = z.content
-    assert data[:2] == b"PK"
-    names = zipfile.ZipFile(io.BytesIO(data)).namelist()
-    assert any(n.startswith("library/") for n in names)
-
-    # fresh database + app -> import
-    db2 = Database(tmp_path / "other.db")
-    # own archive: the default would be the developer's real Documents folder
-    db2.set_setting("image_dir", str(tmp_path / "archive2"))
-    with TestClient(create_app(db2, prefetch=False)) as c2:
-        r = c2.post("/api/import", files={
-            "file": ("backup.zip", data, "application/zip")})
-        assert r.status_code == 200
-        assert r.json()["sites"] == 1
-        assert r.json()["customs"] == 1
-        assert r.json()["images"] == 1
-        st = c2.get("/api/state").json()
-        assert st["min_useful_alt"] == 33.0
-        assert st["sites"][0]["name"] == "Export Site"
-        lib = c2.get("/api/library").json()
-        assert lib["total_images"] == 1
-        assert lib["objects"][0]["name"]
-        catalog = c2.get("/api/catalog").json()
-        assert any(o["id"] == cust for o in catalog)
-
-
-def test_import_rejects_garbage(client):
-    r = client.post("/api/import", files={
-        "file": ("junk.zip", b"not a zip at all", "application/zip")})
-    assert r.status_code == 400
-
-
-def test_numeric_fields_reject_nan_and_keep_state_alive(client):
-    """PY3 (review): NaN/Infinity used to be stored by settings/rigs/panoramas
-    and then 500 /api/state forever (the desktop awaits it at boot)."""
-    for path, body in (("/api/settings", {"min_useful_alt": float("nan")}),
-                       ("/api/rigs", {"name": "x", "focal_mm": float("nan"),
-                                      "sensor_w": 6.0, "sensor_h": 4.0})):
-        r = client.post(path, content=json.dumps(body),
-                        headers={"Content-Type": "application/json"})
-        assert r.status_code == 400, (path, r.status_code, r.text)
-    pid = client.post("/api/panorama",
-                      files={"file": ("p.jpg", b"x", "image/jpeg")}
-                      ).json()["id"]
-    r = client.put(f"/api/panorama/{pid}",
-                   content=json.dumps({"az_offset": float("inf")}),
-                   headers={"Content-Type": "application/json"})
-    assert r.status_code == 400, r.text
-    assert client.get("/api/state").status_code == 200
-
 
 def test_origin_null_is_rejected(client):
     """PY6 (review): `Origin: null` skips the host comparison - it never
@@ -1910,204 +1239,6 @@ def test_origin_null_is_rejected(client):
     assert client.get("/api/state",
                       headers={"Origin": "null"}).status_code == 403
     assert client.get("/api/state").status_code == 200
-
-
-def test_shutdown_is_post_only(client, monkeypatch):
-    """SP-03 (review 0.6.32): the route was BOTH `@app.get` and `@app.post`, so
-    any page the user visits could kill the app with
-    `<img src="http://127.0.0.1:8407/api/shutdown">` - an image request carries
-    neither `Sec-Fetch-Site` nor `Origin`, which is exactly the case the
-    anti-cross-site guard must fail open on (non-browser clients send neither).
-    A state-changing route must not be reachable by GET."""
-    # the POST arms a 1.5 s thread that calls os._exit(0): never let it run here
-    class _NoTimer:
-        def __init__(self, *a, **k):
-            pass
-
-        def start(self):
-            pass
-
-    monkeypatch.setattr(server_mod.threading, "Timer", _NoTimer)
-    assert client.get("/api/shutdown").status_code == 405
-    assert client.post("/api/shutdown").status_code == 200
-    assert server_mod._state["shutdown"] is True
-
-
-def test_int_path_params_beyond_64_bits_are_404_not_500(client):
-    """PY-05 (review 0.6.32): pydantic accepts arbitrary-precision ints, so a
-    hand-crafted URL reached sqlite3 and raised `OverflowError: Python int too
-    large to convert to SQLite INTEGER` - a 500 with a traceback instead of a
-    clean not-found. 2**63-1 is the largest id SQLite can hold and must still
-    answer normally."""
-    too_big = 999999999999999999999
-    assert client.get(f"/api/images/{too_big}/preview").status_code == 404
-    assert client.delete(f"/api/sites/{too_big}").status_code == 404
-    assert client.delete(f"/api/rigs/{too_big}").status_code == 404
-    assert client.put(
-        f"/api/sites/{too_big}",
-        json={"name": "x", "lat": 1.0, "lon": 2.0, "elev": 0}
-    ).status_code == 404
-    assert client.get(
-        f"/api/images/{2 ** 63 - 1}/preview").status_code == 404   # clean miss
-
-
-def test_import_malformed_bundles_are_clean_400s(client):
-    """FIX-4 follow-up (verification): a VALID zip with a wrong/missing
-    setup.json used to leave the ZipFile open, so the route's spool unlink
-    failed on Windows and a clean 400 became a 500 (plus a leaked spool)."""
-    for setup in ({"app": "Other"}, None):
-        out = io.BytesIO()
-        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-            if setup is not None:
-                z.writestr("setup.json", json.dumps(setup))
-            else:
-                z.writestr("other.txt", "x")
-        r = client.post("/api/import", files={
-            "file": ("backup.zip", out.getvalue(), "application/zip")})
-        assert r.status_code == 400, (setup, r.status_code, r.text)
-
-
-def test_import_rejects_hostile_settings_and_keeps_state_alive(client):
-    """FIX-4 (review PY2): a crafted bundle with bortle=null used to be stored
-    verbatim and then 500'd /api/state forever - and the desktop awaits that
-    route at boot, so the UI never started. The import must be a clean 400 and
-    the state route must stay alive afterwards."""
-    z = client.get("/api/export")
-    assert z.status_code == 200
-    setup = json.loads(zipfile.ZipFile(io.BytesIO(z.content))
-                       .read("setup.json"))
-    setup["settings"]["bortle"] = None
-    out = io.BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
-        dst.writestr("setup.json", json.dumps(setup))
-    r = client.post("/api/import", files={
-        "file": ("backup.zip", out.getvalue(), "application/zip")})
-    assert r.status_code == 400, r.text
-    assert "bortle" in r.json()["detail"]
-    st = client.get("/api/state")
-    assert st.status_code == 200
-    assert st.json()["bortle"] == 4
-
-
-def test_import_rejects_a_hostile_min_vis_and_keeps_state_alive(client):
-    """PY-02 (review 0.6.32): `min_vis` was the one int-coerced setting with no
-    import check, so `"abc"`/`null` was stored verbatim and every `/api/state`
-    then answered 500 (`int(db.setting("min_vis", 1))`) - static/js/main.js
-    awaits that route before rendering anything, so one crafted bundle bricked
-    the desktop at every boot."""
-    z = client.get("/api/export")
-    assert z.status_code == 200
-    base = json.loads(zipfile.ZipFile(io.BytesIO(z.content)).read("setup.json"))
-    for bad in ("abc", None):
-        setup = json.loads(json.dumps(base))
-        setup["settings"]["min_vis"] = bad
-        out = io.BytesIO()
-        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
-            dst.writestr("setup.json", json.dumps(setup))
-        r = client.post("/api/import", files={
-            "file": ("backup.zip", out.getvalue(), "application/zip")})
-        assert r.status_code == 400, (bad, r.status_code, r.text)
-        assert "min_vis" in r.json()["detail"]
-    st = client.get("/api/state")
-    assert st.status_code == 200
-    assert st.json()["min_vis"] == 1
-    # a finite float is a legitimate (if odd) value: coerced and clamped
-    setup = json.loads(json.dumps(base))
-    setup["settings"]["min_vis"] = 42.9
-    out = io.BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
-        dst.writestr("setup.json", json.dumps(setup))
-    r = client.post("/api/import", files={
-        "file": ("backup.zip", out.getvalue(), "application/zip")})
-    assert r.status_code == 200, r.text
-    assert client.get("/api/state").json()["min_vis"] == 42
-
-
-def test_state_survives_a_min_vis_row_that_is_not_a_number(db, tmp_path,
-                                                           monkeypatch):
-    """PY-02, second half: even a row that arrived some other way must not be
-    able to 500 the boot route. `/api/state` falls back to the default."""
-    db.set_setting("min_vis", "abc")
-    data = tmp_path / "data"
-    (data / "panos").mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr("app.server.data_dir", lambda: data)
-    with TestClient(create_app(db, prefetch=False)) as c:
-        r = c.get("/api/state")
-    assert r.status_code == 200
-    assert r.json()["min_vis"] == 1
-
-
-def test_import_never_writes_a_payload_for_a_record_it_dropped(client, tmp_path):
-    """SP-05/PY-06 (review 0.6.32): the restore write loop iterated the RAW
-    bundle list, so a panorama whose id failed `safe_token` never became a row
-    but its payload was still written into `data/panos` - an orphan file, never
-    cleaned, while the summary reported `panoramas: 0, pano_images: 1`."""
-    pano_root = server_mod.data_dir() / "panos"
-    setup = {"app": "NightSeam", "version": "test", "settings": {},
-             "sites": [], "rigs": [], "customs": [],
-             "panoramas": [{"id": "../evil", "name": "evil", "file": "ok.jpg"}],
-             "images": []}
-    out = io.BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("setup.json", json.dumps(setup))
-        z.writestr("panos/ok.jpg", b"JPEGDATA")
-    r = client.post("/api/import", files={
-        "file": ("backup.zip", out.getvalue(), "application/zip")})
-    assert r.status_code == 200, r.text
-    assert r.json()["panoramas"] == 0
-    assert r.json()["pano_images"] == 0, "a dropped record's payload was written"
-    assert not (pano_root / "ok.jpg").exists()
-
-
-def test_import_rejects_a_control_character_in_a_stored_path(client):
-    """SP-05 (review 0.6.32): `safe_rel` rejected NUL, `..`, absolutes and
-    device names but let `\\x01`/`\\n`/`\\t`/`\\x1b` through, and Windows refuses
-    those at write time (`OSError: [Errno 22] Invalid argument`) - so the record
-    was stored and then aborted the restore AFTER the database had been
-    replaced. It must be refused at the boundary, so nothing is stored."""
-    setup = {"app": "NightSeam", "version": "test", "settings": {},
-             "sites": [], "rigs": [], "customs": [], "images": [],
-             "panoramas": [{"id": "p1", "name": "ctl", "file": "a\x01b.jpg"}]}
-    out = io.BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("setup.json", json.dumps(setup))
-    r = client.post("/api/import", files={
-        "file": ("backup.zip", out.getvalue(), "application/zip")})
-    assert r.status_code == 200, r.text
-    assert r.json()["panoramas"] == 0
-    assert client.get("/api/state").json()["panoramas"] == []
-
-
-def test_import_rejects_nonfinite_image_numbers_and_keeps_library_alive(client):
-    """PY04-F2 (review round 2): a crafted bundle whose images[0] carries the
-    bare JSON token Infinity/NaN was stored verbatim, so /api/library then
-    answered 500 on every request (Starlette serializes with allow_nan=False).
-    The import must be a defined 400-class error with nothing persisted, and
-    the library route must stay alive."""
-    for bad in ({"exposure": float("inf")},
-                {"ra_hours": float("nan")},
-                {"dec_deg": float("-inf")}):
-        image = {"file": "M 31/2026-08-22_2314/lights/m31.fit",
-                 "orig_name": "m31.fit", "object_id": None,
-                 "object_name": "M 31", "ra_hours": 0.712, "dec_deg": 41.269,
-                 "exposure": 300.0, "date_obs": "2026-08-22T23:14:05",
-                 "filter": "L", "telescope": "Seestar S50",
-                 "imagetyp": "light", "ingested_at": "2026-08-22T23:20:00"}
-        image.update(bad)
-        out = io.BytesIO()
-        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
-            dst.writestr("setup.json", json.dumps(
-                {"app": "NightSeam", "version": "test", "settings": {},
-                 "sites": [], "rigs": [], "panoramas": [], "customs": [],
-                 "images": [image]}))
-        r = client.post("/api/import", files={
-            "file": ("backup.zip", out.getvalue(), "application/zip")})
-        assert r.status_code == 400, (bad, r.status_code, r.text)
-        assert "finite number" in r.json()["detail"]
-        lib = client.get("/api/library")
-        assert lib.status_code == 200, (bad, lib.status_code)
-        assert lib.json()["total_images"] == 0      # nothing was persisted
-        assert client.get("/api/library/imports").status_code == 200
 
 
 # -------------------------------------------------- request guard (middleware)
@@ -2121,11 +1252,11 @@ def test_cross_site_requests_are_rejected(client):
     r = client.get("/api/state", headers={"Sec-Fetch-Site": "cross-site"})
     assert r.status_code == 403 and "cross-site" in r.json()["detail"]
 
-    r = client.post("/api/settings", json={"min_useful_alt": 42.0},
+    r = client.post("/api/settings", json={"size_unit": "deg"},
                     headers={"Sec-Fetch-Site": "cross-site"})
     assert r.status_code == 403
     # ... and the rejected request really did not change anything
-    assert client.get("/api/state").json()["min_useful_alt"] != 42.0
+    assert client.get("/api/state").json()["size_unit"] != "deg"
 
     r = client.get("/api/state", headers={"Origin": "http://evil.example"})
     assert r.status_code == 403
@@ -2148,39 +1279,6 @@ def test_foreign_host_header_is_rejected(client):
 # length first. The limits are module constants so the mechanism is testable
 # without sending gigabytes.
 
-def test_oversized_request_body_is_rejected_before_parsing(client, monkeypatch):
-    """A 413 + "too large" alone does not say WHERE the request died: the
-    route's own per-file cap (60 MB, inside the handler) produces a similar
-    body. This proves the rejection happened BEFORE the handler: the streaming
-    drain the route calls is replaced by a recorder, the declared request cap is
-    set to 3 MB, and the reply must be the middleware's REQUEST-cap wording
-    ("... per request", which the per-file cap never emits) with no recorded
-    call and no panorama row."""
-    cap = 3 * 1024 * 1024
-    calls = []
-
-    async def _record(*args, **kwargs):
-        calls.append((args, kwargs))
-
-    with monkeypatch.context() as m:
-        m.setitem(server_mod._MAX_REQUEST_BYTES, "/api/panorama", cap)
-        m.setattr(server_mod, "_drain_upload", _record)
-        r = client.post("/api/panorama",
-                        files={"file": ("big.jpg", b"x" * (cap + 1),
-                                        "image/jpeg")})
-    assert r.status_code == 413, r.text
-    # distinct from the per-file message: f"Image too large (max 60 MB)"
-    assert r.json()["detail"] == "upload too large (max 3 MB per request)"
-    assert calls == [], "the handler ran despite the oversized request"
-    assert client.get("/api/panoramas").json() == [], "a panorama was stored"
-
-    # a request under the cap still goes through the real handler
-    r = client.post("/api/panorama",
-                    files={"file": ("ok.jpg", b"x" * 64, "image/jpeg")})
-    assert r.status_code == 200
-    client.delete(f"/api/panorama/{r.json()['id']}")
-
-
 def test_too_many_files_in_one_ingest_request(client, monkeypatch):
     monkeypatch.setattr("app.server.MAX_FILES_PER_REQUEST", 2)
     files = [("files", (f"m{i}.fit", m31_fits(), "application/octet-stream"))
@@ -2195,155 +1293,14 @@ def test_too_many_files_in_one_ingest_request(client, monkeypatch):
 
 # --------------------------------------------------- panorama profile shapes
 
-def test_panorama_profile_length_and_types_are_validated(client):
-    pid = client.post("/api/panorama",
-                      files={"file": ("p.jpg", b"fake jpeg", "image/jpeg")}
-                      ).json()["id"]
-    try:
-        # a short profile used to be stored and then failed OPEN at read time
-        assert client.put(f"/api/panorama/{pid}",
-                          json={"profile": [10.0] * 719}).status_code == 400
-        assert client.put(f"/api/panorama/{pid}",
-                          json={"profile_top": [10.0] * 721}).status_code == 400
-        # non-numeric values used to make the read-time lookup fail open
-        assert client.put(f"/api/panorama/{pid}",
-                          json={"profile": ["x"] * 720}).status_code == 400
-        assert client.put(f"/api/panorama/{pid}",
-                          json={"profile": [True] * 720}).status_code == 400
-        # empty (clear) and exactly 720 finite numbers are fine
-        assert client.put(f"/api/panorama/{pid}",
-                          json={"profile": [], "profile_top": []}).status_code == 200
-        assert client.put(f"/api/panorama/{pid}",
-                          json={"profile": [12.5] * 720}).status_code == 200
-        assert client.post("/api/settings",
-                           json={"active_pano_id": pid}).status_code == 200
-    finally:
-        client.delete(f"/api/panorama/{pid}")
-
-
-def test_panorama_strokes_shape_is_validated(client):
-    """PY-03 (write half): both profile arrays were validated but `strokes` - the
-    THIRD stored array, and the one both editors iterate - accepted any list, so a
-    list of non-objects was persisted and the desktop editor then threw while
-    painting/saving that record."""
-    pid = client.post("/api/panorama",
-                      files={"file": ("p.jpg", b"fake jpeg", "image/jpeg")}
-                      ).json()["id"]
-    try:
-        # pydantic rejects a non-list body with 422 before the route runs; the
-        # route's own content rule (a list of stroke OBJECTS) is the 400 half.
-        for bad in ({}, "abc", 7):
-            assert client.put(f"/api/panorama/{pid}",
-                              json={"strokes": bad}).status_code in (400, 422), bad
-        for bad in (["not-a-stroke"], [1, 2], [None]):
-            assert client.put(f"/api/panorama/{pid}",
-                              json={"strokes": bad}).status_code == 400, bad
-        # a real stroke list, and the empty list, are fine
-        assert client.put(f"/api/panorama/{pid}", json={
-            "strokes": [{"m": "b", "x": 0.1, "y": 0.2, "r": 0.01}]}
-        ).status_code == 200
-        assert client.put(f"/api/panorama/{pid}",
-                          json={"strokes": []}).status_code == 200
-    finally:
-        client.delete(f"/api/panorama/{pid}")
-
-
-def test_panorama_metadata_rejects_unhashable_enum_values(client):
-    pid = client.post("/api/panorama",
-                      files={"file": ("p.jpg", b"fake jpeg", "image/jpeg")}
-                      ).json()["id"]
-    try:
-        landmark = {"name": "oak", "azimuth": 45.0, "altitude": 20.0,
-                    "kind": []}
-        r = client.put(f"/api/panorama/{pid}", json={"landmarks": [landmark]})
-        assert r.status_code == 400, r.text
-
-        r = client.put(f"/api/panorama/{pid}",
-                       json={"provenance": {"source": {}}})
-        assert r.status_code == 400, r.text
-    finally:
-        client.delete(f"/api/panorama/{pid}")
-
-
-def test_malformed_stored_strokes_do_not_500_the_listing(client, db):
-    """PY-03 (read half): a row whose `strokes` column is not valid JSON (hand
-    edit, interrupted write, an older build) made `panoramas()` raise, so
-    /api/state and /api/panoramas answered 500 - and the desktop's FIRST boot
-    request is /api/state, i.e. the app was unbootable until the DB was repaired.
-    The column now falls back to its canonical empty value."""
-    db.conn.execute(
-        "INSERT INTO panoramas(id,name,file,az_offset,alt_bottom,alt_top,strokes,"
-        "profile,profile_top,active,fov,paint_mode,block_above) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        ("pbad", "bad", "bad.jpg", 0, 0, 45, "{not json", "[]", "[]", 1, 360,
-         "obstacle", 0))
-    db.conn.commit()
-    try:
-        assert client.get("/api/state").status_code == 200
-        assert client.get("/api/panoramas").status_code == 200
-        row = [p for p in db.panoramas() if p["id"] == "pbad"][0]
-        assert row["strokes"] == []            # canonical empty, not a crash
-        # a non-JSON profile falls back the same way rather than 500ing
-        db.conn.execute("UPDATE panoramas SET profile=? WHERE id=?", ("{oops", "pbad"))
-        db.conn.commit()
-        assert client.get("/api/panoramas").status_code == 200
-    finally:
-        client.delete("/api/panorama/pbad")
-
-
-def test_settings_rejects_a_non_token_active_pano_id(client):
-    """PY-05: this boundary accepted ANY string as `active_pano_id` while every
-    id-consuming route rejects a non-token id (`_pano_or_404`) - so /api/state
-    advertised an "active panorama" that no route could ever resolve."""
-    assert client.post("/api/settings",
-                       json={"active_pano_id": "../../evil"}).status_code == 400
-    # "" and null legitimately mean "no active panorama"
-    assert client.post("/api/settings",
-                       json={"active_pano_id": ""}).status_code == 200
-    assert client.get("/api/state").json()["active_pano_id"] in (None, "")
-
-
 # ------------------------------------------------------------- site validation
-
-def test_site_coordinates_are_validated(client):
-    for body in ({"name": "x", "lat": 999, "lon": 0},
-                 {"name": "x", "lat": 0, "lon": 200},
-                 {"name": "x", "lat": 0, "lon": 0, "elev": 99999}):
-        r = client.post("/api/sites", json=body)
-        assert r.status_code == 400, body
-    assert client.get("/api/sites").json() == []
-    sid = add_site(client)
-    assert client.put(f"/api/sites/{sid}",
-                      json={"name": "x", "lat": 91, "lon": 0}).status_code == 400
-
-
-def test_deleting_the_active_site_reassigns_the_pointer(client):
-    """Regression: the active pointer dangled, so planning had no site with no
-    way back through the UI. The server keeps the pointer coherent; the client
-    core resolves the same way."""
-    first = add_site(client, "First")
-    second = add_site(client, "Second")
-    assert client.get("/api/state").json()["active_site_id"] == first
-
-    client.post("/api/settings", json={"active_site_id": second})
-    assert client.delete(f"/api/sites/{second}").status_code == 200
-    st = client.get("/api/state").json()
-    assert st["active_site_id"] == first
-
-    # deleting every site clears the pointer
-    assert client.delete(f"/api/sites/{first}").status_code == 200
-    assert client.get("/api/state").json()["active_site_id"] is None
-    # ... and adding a new site repairs it without touching the files
-    again = add_site(client, "Again")
-    assert client.get("/api/state").json()["active_site_id"] == again
-
 
 # ------------------------------------------------------------ UI cache policy
 
 def test_ui_assets_are_never_cached(client):
     """A stale themes.css/style.css next to a fresh index.html breaks the UI -
     themes.css was missing from the no-store list."""
-    for path in ("/", "/index.html", "/style.css", "/themes.css",
+    for path in ("/", "/catalog.html", "/style.css", "/themes.css",
                  "/favicon.ico", "/js/util.js"):
         r = client.get(path)
         assert r.status_code == 200, path

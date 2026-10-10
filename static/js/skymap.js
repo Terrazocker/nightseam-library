@@ -461,19 +461,11 @@ function focusMapPoint(index) {
     `${point.obj.name || "Library object"}, ${captureSessionText(point.obj)}. Use the arrow keys to browse plotted objects, then Enter to select.`);
 }
 
-async function selectMapPoint(point, canvas) {
+function selectMapPoint(point, _canvas) {
   if (!point) return;
   SM_HOVER = point;
-  const object = point.obj;
-  SM_SELECTED = object;
+  SM_SELECTED = point.obj;
   renderSkyMap();
-  if (document.body.classList.contains("catalog-only")) {
-    return;
-  }
-  if (object.object_id && S.meta && S.meta[object.object_id]) {
-    const { openDetail } = await import("./detail.js");
-    openDetail(object.object_id, { opener: canvas });
-  }
 }
 
 function onMapKeydown(event) {

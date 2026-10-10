@@ -112,14 +112,6 @@ async function initCatalog() {
   document.body.dataset.primaryView = "image-catalog";
   document.body.classList.add("image-catalog-view", "catalog-only");
   bindCatalogHost();
-  if (new URLSearchParams(window.location.search).has("planner-unavailable")) {
-    const notice = document.createElement("div");
-    notice.className = "catalog-launch-notice";
-    notice.setAttribute("role", "status");
-    notice.setAttribute("aria-live", "polite");
-    notice.textContent = "The full planner could not open in the running NightSeam window. Close that window, then relaunch with --planner.";
-    document.querySelector("#topbar").after(notice);
-  }
   updateVersionTag();
   bindCatalogTabs();
   bindTopActions();

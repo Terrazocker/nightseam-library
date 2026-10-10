@@ -7,10 +7,7 @@ import importlib.util
 import json
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
 from app.database import Database
-from app.server import create_app
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,11 +47,4 @@ def test_provenance_sidecar_covers_the_catalog(tmp_path):
 
 
 
-def test_catalog_provenance_api_returns_the_shipped_sidecar(tmp_path):
-    db = Database(tmp_path / "nightseam.db")
-    with TestClient(create_app(db, prefetch=False)) as client:
-        response = client.get("/api/catalog/provenance")
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["schema_version"] == 1
-    assert payload["objects"]["ngc1976"]["source"] == "OpenNGC"
+

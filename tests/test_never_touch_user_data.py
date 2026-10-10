@@ -1,84 +1,69 @@
-"""The autouse profile guard must keep payload writes out of the repo's `data/`.
+"""The autouse profile guard must keep archive writes out of the repo's `data/`.
 
-`app/backup.py` binds `data_dir` with `from .paths import data_dir`, so patching
-`app.server.data_dir` (which `test_api.py`'s client fixture does) is NOT enough:
-a bundle import still wrote its panorama payload into the developer's real
-`data/panos/`. It was found twice as a stray `ok.jpg` - 1 byte during the 0.6.32
-    prior full review (the removed report remains in Git history) and 8 bytes
-(`b"JPEGDATA"`) during the fix session - and the timing was the nasty part: the
-assertion that guards it reads that same real directory, so the pollution
-happened exactly when the test was FAILING.
-
-`tests/conftest.py` now redirects `data_dir` for every test. This module pins
-that the redirect really INTERCEPTS a write, by forcing one: a bundle whose
-panorama record is valid (a plain token id), so the payload is written by design.
+Ingest writes land in the configured archive folder, whose DEFAULT comes from
+`app.paths.default_archive_dir()` (Documents/NightSeam Images). `tests/conftest.py`
+redirects that default for every test; this module pins that the redirect really
+INTERCEPTS a write, and that no test ever creates the real default folder or
+touches the repo's own `data/` store.
 """
 
 from __future__ import annotations
 
-import io
-import json
-import zipfile
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app import paths
 from app.database import Database
 from app.server import create_app
 
 ROOT = Path(__file__).resolve().parents[1]
-REAL_PANOS = ROOT / "data" / "panos"
-PROBE = "never_touch_user_data_probe.jpg"
+REAL_DATA = ROOT / "data"
 
 
 @pytest.fixture()
 def client(tmp_path):
     db = Database(tmp_path / "nightseam.db")
-    with TestClient(create_app(db, prefetch=False)) as c:
-        c.post("/api/settings", json={"image_dir": str(tmp_path / "archive")})
+    with TestClient(create_app(db)) as c:
         yield c
 
 
-def _bundle() -> bytes:
-    setup = {"app": "NightSeam", "settings": {}, "sites": [], "rigs": [],
-             "panoramas": [{"id": "p1", "name": "P", "file": PROBE,
-                            "strokes": [], "profile": [], "profile_top": []}],
-             "customs": [], "images": []}
-    out = io.BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("setup.json", json.dumps(setup))
-        z.writestr(f"panos/{PROBE}", b"PROBE-PAYLOAD")
-    return out.getvalue()
-
-
-def test_a_bundle_import_keeps_the_pano_payload_out_of_the_real_data_dir(client):
-    import app.backup
-    real = REAL_PANOS / PROBE
-    before = real.read_bytes() if real.exists() else None
-    sand = app.backup.data_dir() / "panos" / PROBE
-    r = client.post("/api/import", files={
-        "file": ("bundle.zip", _bundle(), "application/zip")})
+def _ingest_one_frame(client):
+    from _util import make_fits
+    frame = make_fits([("SIMPLE", "T"), ("OBJECT", "'Unlisted nebula'"),
+                       ("IMAGETYP", "'LIGHT'"), ("EXPTIME", "60"),
+                       ("DATE-OBS", "'2026-08-22T20:00:00'")]) + b"pixels"
+    r = client.post("/api/images/ingest", files={
+        "files": ("m42_00.fit", frame, "application/octet-stream")})
     assert r.status_code == 200, r.text
-    assert (real.read_bytes() if real.exists() else None) == before
-    assert sand.read_bytes() == b"PROBE-PAYLOAD"
+    return r.json()["results"][0]
 
 
-def test_without_the_guard_the_payload_bypasses_the_sandbox(client, monkeypatch, tmp_path):
-    """Mutation proof that the guard above is load-bearing.
+def test_default_archive_write_stays_inside_the_sandbox(client, tmp_path):
+    result = _ingest_one_frame(client)
+    assert result["ok"], result
+    sandbox_default = paths.default_archive_dir()
+    stored = Path(result["stored"])
+    # the write landed in the redirected default archive, inside this test's
+    # tmp sandbox - never in the repo's own data/ store
+    assert (sandbox_default / stored).is_file()
+    assert str(sandbox_default).startswith(str(tmp_path))
+    for existing in REAL_DATA.rglob("*") if REAL_DATA.exists() else []:
+        assert stored.name != existing.name or existing.is_dir()
 
-    Undo just the `app/backup.py` half of the conftest redirect and the identical
-    import drops the payload into a second private destination. Even this
-    mutation proof must never write or delete actual source data.
+
+def test_without_the_guard_the_default_reaches_the_real_documents_path(
+        client, monkeypatch, tmp_path):
+    """Mutation proof that the redirect is load-bearing.
+
+    Point `default_archive_dir` at a SECOND private directory (what an
+    unpatched run would do: the real Documents folder) and prove the write
+    follows that setting. This mutation proof must never write to the real
+    Documents folder - the substitute is private scratch.
     """
-    import app.backup
-
-    sand = app.backup.data_dir() / "panos" / PROBE
-    alternate = tmp_path / "guard-disabled"
-    (alternate / "panos").mkdir(parents=True)
-    monkeypatch.setattr(app.backup, "data_dir", lambda: alternate)
-    r = client.post("/api/import", files={
-        "file": ("bundle.zip", _bundle(), "application/zip")})
-    assert r.status_code == 200, r.text
-    assert (alternate / "panos" / PROBE).read_bytes() == b"PROBE-PAYLOAD"
-    assert not sand.exists()
+    alternate = tmp_path / "guard-disabled" / "NightSeam Images"
+    monkeypatch.setattr("app.paths.default_archive_dir", lambda: alternate)
+    result = _ingest_one_frame(client)
+    assert result["ok"], result
+    assert (alternate / result["stored"]).is_file()

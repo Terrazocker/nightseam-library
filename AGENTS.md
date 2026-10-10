@@ -14,18 +14,21 @@ archive remains read-only. No remote repository is configured by this split.
   caption buttons, system menu and Snap. Keep interface density stable as
   available workspace changes; no proportional root-font scaling.
 - main.py opens static/catalog.html by default, both from source and frozen.
-  app/ owns storage/platform/IO; static/ owns the local interface. The optional
-  retained planner shell is maintenance-only. core/ is a project-owned snapshot
-  of astronomy/geometry ES modules; regenerate its local static bake with
-  scripts/build_core.py and keep the manifest/hash/export contracts intact.
+  app/ owns storage/platform/IO; static/ owns the local interface. The planning
+  shell was retired on October 10, 2026 (route families and planner tables are
+  gone; legacy databases keep unread planner tables). core/ is a project-owned
+  snapshot of astronomy/geometry ES modules; regenerate its local static bake
+  with scripts/build_core.py and keep the manifest/hash/export contracts intact.
 - Never edit baked core trees or generated stubs manually. Do not recreate
   astronomy math in app/ or scripts/. Published reference anchors are the
   correctness authority; never update fixtures to hide a formula regression.
-- Stored/imported paths must pass paths.safe_rel and paths.safe_join; ids used
-  in filenames must pass safe_token. Never honor an imported image_dir setting.
-- Restore validates the complete bundle before staging destination-filesystem
-  payloads. Only database commit may publish staged bytes; every refusal or
-  exception rolls back both database and files. No journal or .part leftovers.
+- Stored paths must pass paths.safe_rel and paths.safe_join; ids used in
+  filenames must pass safe_token. The archive folder is user-configured; never
+  write outside it (the setup-ZIP restore that once carried an imported
+  image_dir was retired on October 10, 2026).
+- Ingest and reindex stage destination-filesystem writes and publish them only
+  on database commit; every refusal or exception rolls back both sides. No
+  journal or .part leftovers.
 - Dedup identity is SHA-256 of complete exposure bytes. A duplicate keeps its
   original record, class and location. Explicit session calibration attachment
   uses a validated stored image anchor and preserves the original date_obs;
@@ -35,13 +38,14 @@ archive remains read-only. No remote repository is configured by this split.
   lock, cancellation and staging cleanup; do not block the async event loop or
   hold long SQLite critical sections while copying or hashing.
 - Tests never touch profile archives or actual source/packaged data. Keep test
-  scratch under ignored logs/. Catalog IDs are global and safe, and catalog
-  provenance/backup compatibility must survive the split.
+  scratch under ignored logs/. Catalog IDs are global and safe; catalog
+  provenance must survive the split, and legacy databases (planner tables,
+  custom targets) must keep opening and resolving.
 
 ## Commands and release
 
 - Run: python main.py; --console for diagnostics, --no-browser for headless,
-  --port N for a separate listener, --planner for legacy maintenance only.
+  --port N for a separate listener.
 - Tests: python -m pytest tests/ -q --tb=no. Run relevant modules while editing
   and the full suite once at the end. JS: python scripts/check_js.py.
 - Browser: python scripts/check_browser.py --desktop, using a freshly compiled

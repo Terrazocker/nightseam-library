@@ -1,9 +1,8 @@
 """JavaScript behaviour tests that do not fit the Python mirrors.
 
 These drive the real browser modules through Node with a stub DOM/fetch, which
-is the smallest practical harness for async UI invariants. They skip cleanly
-when Node is unavailable or cannot be spawned (restricted sandboxes deny the
-pipe that captures its output).
+is the smallest practical harness for async UI invariants. A missing Node is a
+HARD failure (never a skip) - the same rule the syntax checker enforces.
 """
 
 import shutil
@@ -28,12 +27,6 @@ def run_node_harness(script: str):
     assert proc.returncode == 0, (
         f"{script} failed:\n{proc.stdout[-1500:]}\n{proc.stderr[-1500:]}")
     return proc.stdout
-
-
-def test_night_load_supersession_invariant():
-    """A superseded night load must not commit its payload or clear busy."""
-    out = run_node_harness("night_race.mjs")
-    assert "supersession invariant held" in out
 
 
 def test_shared_planner_state_revision_contract():
@@ -64,65 +57,11 @@ def test_core_exports_that_no_other_test_named():
     assert "core exports contract held" in out
 
 
-def test_worker_lifecycle_prefs_during_build():
-    """FIX-1: a preference change during an in-flight worker build must not
-    cancel the build; the finished plan carries the new preference and the busy
-    chip clears (real planning_worker.js under Node via worker_bridge.mjs)."""
-    out = run_node_harness("worker_lifecycle.mjs")
-    assert "worker lifecycle contract held" in out
-
-
-def test_catalog_identity_across_worker_boundary():
-    """FIX-2: a changed catalog must invalidate the worker + client caches, and
-    a worker response whose ids do not match the current catalog must never be
-    bound by position (real planning_worker.js under Node)."""
-    out = run_node_harness("catalog_identity.mjs")
-    assert "catalog identity contract held" in out
-
-
 def test_polar_fallback_never_reads_the_wall_clock():
     """FIX-6: the polar-day fallback window needs the site's local noon (or an
     explicit day anchor); with neither it must refuse, not use `new Date()`."""
     out = run_node_harness("noon_fallback.mjs")
     assert "noon fallback contract held" in out
-
-
-def test_sync_cache_key_covers_tz_and_profile_content():
-    """FIX-3: on the synchronous fallback a timezone change or a horizon
-    repaint (same pano id, same 720 bins) must rebuild the payload."""
-    out = run_node_harness("sync_cache_key.mjs")
-    assert "sync cache key contract held" in out
-
-
-def test_desktop_window_contract():
-    """The clear window / % of night / score are measured inside dusk..dawn.
-
-    Regression: the derivation counted the payload's twilight margins, so the
-    targets table advertised clear windows that included daylight (measured on
-    a real payload: 164/197 objects, worst 690 min for a 590-min night)."""
-    out = run_node_harness("derive_window.mjs")
-    assert "derive window contract held" in out
-
-
-def test_desktop_preference_and_scrub_handlers():
-    """E5/E8/E9 + DE-01: the real header.js Bortle/min-alt handlers re-derive the
-    Bortle default live and let an explicit value win, the real main.js keydown
-    handler scrubs by one 6-min sample (Shift = 60 min), clamped, and the real
-    setup.js custom-target add rebuilds the night plan (review 0.6.24, DE-01:
-    it dropped the planning caches but never re-ran the build, so the new target
-    was missing from Targets/Tonight/Sky). Driven through a stub DOM because
-    headless browsers cannot run in this sandbox; the pure helpers are pinned
-    separately in tests/test_js_parity.py."""
-    out = run_node_harness("dom_handlers.mjs")
-    assert "E5 handler: bortle re-derives min-alt held" in out
-    assert "E5 handler: explicit min-alt survives bortle held" in out
-    assert "E8 handler: 6/60-min steps + clamp held" in out
-    assert "E9 handler: scrub window (sunset..sunrise) + scoring window held" in out
-    assert "DE-01 handler: custom target add rebuilds the plan held" in out
-
-
-
-
 
 
 def test_scrub_window_degeneracy_policy():
@@ -131,25 +70,6 @@ def test_scrub_window_degeneracy_policy():
     sunset/sunrise pair is degenerate (sunset after the next dawn)."""
     out = run_node_harness("scrub_degenerate.mjs")
     assert "scrub degeneracy policy held" in out
-
-
-
-
-def test_desktop_attribute_sinks_escape_imported_data():
-    """BUG-002: an imported custom id / image type must never become MARKUP.
-
-    The real desktop renderers (targets.js, tonight.js) run under Node with a
-    stub DOM and a hostile id is pushed through them: every attribute sink has to
-    emit an entity-escaped value, no inline event handler may remain (that is
-    what forced `script-src 'unsafe-inline'`, which made the injection
-    executable), and the listener that replaced the thumbnail `onerror=` must
-    actually run. Mutation-proven: dropping one `esc()` makes it fail."""
-    out = run_node_harness("dom_escape.mjs")
-    assert "desktop attribute sinks escape hostile values" in out
-
-
-
-
 
 
 def test_horizon_entry_points_degrade_on_malformed_records():
@@ -161,22 +81,3 @@ def test_horizon_entry_points_degrade_on_malformed_records():
     Mutation-proven for both guards this pass added."""
     out = run_node_harness("horizon_degrade.mjs")
     assert "CR2 horizon degrade contract held" in out
-
-
-def test_worker_failure_disposes_the_worker_and_aligns_the_detail_peak():
-    """DS4 + DS5 (carried over, closed in 0.6.35).
-
-    DS5: `_worker.onerror` set the broken flag but kept the DEAD Worker, so the
-    revive hook handed the corpse back to `postMessage` - the worker path could
-    not recover. DS4: the detail payload took its peak from the 2-dp-ROUNDED
-    array while the night payload used the raw argmax, so the two could name
-    different samples. Drives the real planning_client.js with a counting Worker
-    shim."""
-    out = run_node_harness("worker_failure.mjs")
-    assert "DS4/DS5 worker contract held" in out
-
-
-def test_local_sky_band_complement_geometry():
-    """Local core and desktop adapter preserve complement/hatch/seam rules."""
-    out = run_node_harness("sky_band.mjs")
-    assert "sky-band contract held" in out

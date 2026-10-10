@@ -119,7 +119,7 @@ def test_default_discovery_is_the_shipping_set():
     rel = {p.relative_to(ROOT).as_posix() for p in files}
 
     assert not any(p.startswith("web/") for p in rel)
-    assert "static/js/main.js" in rel        # the desktop UI
+    assert "static/js/catalog_main.js" in rel  # the catalog UI
     # Parse authored local core and its packaged content-hashed bake.
     assert "core/horizon.js" in rel
     assert "core/index.js" in rel

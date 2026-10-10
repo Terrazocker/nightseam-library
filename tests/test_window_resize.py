@@ -195,8 +195,7 @@ def test_catalog_uses_standard_native_frame_and_existing_icon(monkeypatch, tmp_p
     monkeypatch.setattr(main.paths, "window_placement_path",
                         lambda: tmp_path / "local" / "window-placement.json")
 
-    assert main.run_native_window("http://127.0.0.1/catalog.html",
-                                  catalog_only=True) is True
+    assert main.run_native_window("http://127.0.0.1/catalog.html") is True
     assert titles_seen[0] == "NightSeam — Image Catalog"
     assert options_seen[0]["frameless"] is False
     assert options_seen[0]["resizable"] is True
@@ -206,16 +205,9 @@ def test_catalog_uses_standard_native_frame_and_existing_icon(monkeypatch, tmp_p
     assert options_seen[0]["maximized"] is True
     assert start_args[0]["icon"] == str(static / "favicon.ico")
 
-    assert main.run_native_window("http://127.0.0.1/index.html",
-                                  catalog_only=False) is True
-    assert titles_seen[1] == "NightSeam"
-    assert "frameless" not in options_seen[1]
-    assert "min_size" in options_seen[1] and options_seen[1]["min_size"] == (1000, 640)
-    assert start_args[1] == {}
-
 
 def test_host_capabilities_distinguish_browser_from_native_frame():
-    api = main.JsApi(catalog_only=True)
+    api = main.JsApi()
     assert api.host_capabilities() == {
         "window_chrome": "browser", "native_folder_picker": False}
     api.bind_window(FakeWindow())
@@ -332,23 +324,9 @@ def test_optional_placement_failure_keeps_native_frame_and_downloads(monkeypatch
     monkeypatch.setattr(main.paths, "window_placement_path", lambda: (_ for _ in ()).throw(failure))
     import app.window_placement as module
     monkeypatch.setattr(module, "windows_monitors", lambda: [FakeScreen()])
-    assert main.run_native_window("http://127.0.0.1/catalog.html", catalog_only=True)
+    assert main.run_native_window("http://127.0.0.1/catalog.html")
     assert webview.settings["ALLOW_DOWNLOADS"] is True
     assert created[0]["frameless"] is False and created[0]["maximized"] is True
-
-
-def test_source_planner_publishes_native_picker_capability(monkeypatch):
-    webview = types.ModuleType("webview")
-    webview.settings = {}
-    apis = []
-    def create(_title, _url, **options):
-        apis.append(options["js_api"])
-        return FakeWindow()
-    webview.create_window = create
-    webview.start = lambda: None
-    monkeypatch.setitem(sys.modules, "webview", webview)
-    assert main.run_native_window("http://127.0.0.1/index.html")
-    assert apis[0].host_capabilities() == {"window_chrome": "native", "native_folder_picker": True}
 
 
 @pytest.mark.parametrize("scale", [1.25, 1.5, 2.0])

@@ -96,12 +96,16 @@ def test_migration_is_idempotent_and_leaves_custom_targets_alone(tmp_path):
     p = tmp_path / "old.db"
     db = Database(p)
     db.add_image(_img(object_id="m31"))
-    cid = db.add_custom({"id": "u_test0001", "primary_name": "My Thing",
-                         "ra_hours": 1.0, "dec_deg": 2.0})
+    # custom targets are seeded raw: the planner-era add_custom API is retired,
+    # but legacy libraries still carry u_ rows that must survive migrations
+    db.conn.execute(
+        "INSERT INTO custom_objects(id,primary_name,otype,ra_hours,dec_deg) "
+        "VALUES('u_test0001','My Thing','galaxy',1.0,2.0)")
+    db.conn.commit()
     second = Database(p)
     assert second.migrate_legacy_object_ids() == 0, "nothing left to migrate"
     assert {r["object_id"] for r in second.images()} == {"ngc224"}
-    assert second.get_object(cid)["primary_name"] == "My Thing"
+    assert second.get_object("u_test0001")["primary_name"] == "My Thing"
 
 
 def test_stale_id_still_displays_through_imglib(tmp_path):

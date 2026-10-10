@@ -105,7 +105,7 @@ date does not send calibration exposures to another session. Undated sessions
 and legacy `<object>/lights` folders are supported too.
 
 Original capture timestamps and exposure-file contents remain intact; the
-explicit association is stored separately and survives setup backup/restore.
+explicit association is stored in the database alongside the capture rows.
 Legacy archives gain a canonical object/session/calibration folder without
 moving their existing light exposures. Recent-import calibration actions use
 the corresponding session still present in the library. If that session is

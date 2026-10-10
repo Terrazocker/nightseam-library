@@ -20,8 +20,10 @@ These tasks remain open. Numbers refer to the shared status report's items 3-7.
   displays/scaling and confirm stable density and window placement.
 - Item 4: manual accessibility acceptance for keyboard focus, chooser/dialog
   focus restoration, dynamic announcements and screen-reader use.
-- Item 6: retire the retained maintenance planner and unused endpoints in a
-  separate tested cleanup. Preserve existing database migrations and backups.
+- Item 6: DONE - the planner shell, its route families and the setup-ZIP
+  export/import were retired on October 10, 2026. Legacy databases keep their
+  planner tables unread, custom targets still resolve for old rows, and the
+  recovery story is the archive folder + rolling SQLite backup + Reindex.
 - Item 7: consolidate backlog/plan authority and repair stale map-roadmap
   references. Choose alternative map styles deliberately before implementing.
 - Later performance work: profile representative real archives before changing

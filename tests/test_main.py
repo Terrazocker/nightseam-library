@@ -8,6 +8,7 @@ throwaway HTTP server on a loopback port), no network, no real `data/`.
 
 import http.server
 import json
+import os
 import socket
 import threading
 from pathlib import Path
@@ -85,10 +86,10 @@ def test_free_port_moves_away_from_a_bound_but_unlistening_port(reuse):
 def test_instance_file_round_trip(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "_instance_file",
                         lambda: tmp_path / "instance.json")
-    main.write_instance_file(12345, catalog_only=True)
+    main.write_instance_file(12345)
     data = json.loads((tmp_path / "instance.json").read_text())
     assert data["port"] == 12345
-    assert data["catalog_only"] is True
+    assert data["pid"] == os.getpid()
     main.clear_instance_file()
     assert not (tmp_path / "instance.json").exists()
     main.clear_instance_file()               # idempotent

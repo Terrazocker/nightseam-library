@@ -8,6 +8,32 @@ desktop libraries were preserved. The remaining entries below are historical
 decisions from the combined project; references to removed cross-project paths
 describe that historical state, not current build requirements.
 
+## 2026-10-10 - The planning shell is retired, not frozen
+
+**Decision.** The retained maintenance planner (its shell, route families, and
+setup-ZIP export/import) was removed outright rather than frozen. Legacy
+databases keep their planner tables unread; custom targets keep resolving for
+old image rows; the recovery story is the archive folder + the rolling
+`nightseam.db.backup` + Reindex folders.
+
+**Why.** The planner was the only consumer of several defect-prone surfaces
+(worker horizon scoring, the CDS unverified-TLS image fallback, two-commit
+panorama creation, restore publication failure) and the only caller of the
+setup ZIP. Retiring it deleted those defects as code instead of accumulating
+fixes for a shell nobody launches. A from-scratch backend was considered and
+rejected: the frontend IS the API contract, so a rewrite would re-implement the
+same domain logic while invalidating the verified test suite.
+
+**What was rejected.** Freezing the planner with open findings; keeping the
+restore path without a UI; a stdlib rewrite phase now (revisit only if
+dependency maintenance becomes a real burden).
+
+**Enforced by.** Route families absent from `app/server.py`; the tombstone test
+`test_retired_planner_and_restore_routes_answer_404`; the additive-migration
+rule (old planner tables are never dropped, only unread); `AGENTS.md`.
+Related defects closed as code: NEW-01, F-02, F-05, F-08, F-12/NEW-03, F-14,
+M-1/M-2.
+
 # DECISIONS.md — why NightSeam works the way it does
 
 One entry per decision that an agent or maintainer would otherwise re-litigate.

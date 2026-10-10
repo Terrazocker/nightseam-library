@@ -60,8 +60,7 @@ def _never_touch_the_user_profile(monkeypatch, tmp_path):
         (sandbox / "panos").mkdir(parents=True, exist_ok=True)
         return sandbox
 
-    for target in ("app.paths.data_dir", "app.backup.data_dir",
-                   "app.server.data_dir"):
+    for target in ("app.paths.data_dir", "app.server.data_dir"):
         monkeypatch.setattr(target, _sandbox_data, raising=False)
     # only if app.images is already imported - importing it here would create the
     # real data/imgcache as a side effect of collecting tests

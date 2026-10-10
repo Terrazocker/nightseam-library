@@ -17,12 +17,10 @@ TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 def safe_token(value) -> str | None:
     """Canonical opaque id, or None when it could act as a path.
 
-    Panorama ids come from `new_id()` (hex + digits) or from an imported bundle,
-    and `POST /api/panorama/{pid}/image` builds a filename from the id. A crafted
-    bundle carrying an id like `..\\evil` therefore made the crop tool write
-    outside `data/panos` (and a sibling id crashed the route with a 500) even
-    though the *file* value was validated. Ids are stored and compared, never
-    interpreted: anything outside [A-Za-z0-9_-] is refused.
+    Some routes interpolate an id into a FILE NAME, so an id must never be able
+    to act as one. Ids are stored and compared, never interpreted: anything
+    outside [A-Za-z0-9_-] is refused. (Kept for stored-data validation and
+    tests; the panorama routes that motivated SP-05 are retired.)
     """
     if value is None:
         return None
@@ -147,7 +145,7 @@ def static_dir() -> Path:
 
 def data_dir() -> Path:
     d = app_base_dir() / "data"
-    (d / "panos").mkdir(parents=True, exist_ok=True)
+    d.mkdir(parents=True, exist_ok=True)
     return d
 
 

@@ -167,27 +167,19 @@ def test_selected_session_changed_during_upload_refuses_and_cleans_stage(
     assert len(list(archive.rglob("*.fit"))) == 1 and not list(archive.rglob("*.part"))
 
 
-@pytest.mark.parametrize("stamp", [None, "", "2026-08-22T20:00:00Z",
-                                  "2026-08-22T22:00:00+02:00",
-                                  "2026-08-22T22:00:00.123456+02:00"])
-def test_session_anchor_metadata_roundtrips_backup_without_changing_capture_date(
-        dedup_store, stamp):
-    db, archive = dedup_store
-    first = _import(db, archive, _capture())
-    record = db.image(first["id"])
-    record["session_date_obs"] = stamp
-    db.import_bundle({}, [], [], [], images=[record])
-    restored = db.image(first["id"])
-    expected = "2026-08-22T20:00:00Z" if stamp else stamp
-    if stamp and ".123456" in stamp:
-        expected = "2026-08-22T20:00:00.123456Z"
-    assert restored["session_date_obs"] == expected
-    assert restored["date_obs"] == first["date_obs"]
-    assert restored["content_sha256"] is None
-    # A second restore of the public image record preserves the distinction
-    # between ordinary NULL timestamps and an explicitly undated attachment.
-    db.import_bundle({}, [], [], [], images=[restored])
-    assert db.image(first["id"])["session_date_obs"] == expected
+@pytest.mark.parametrize("stamp,expected", [
+    (None, None),
+    ("", ""),
+    ("2026-08-22T20:00:00Z", "2026-08-22T20:00:00Z"),
+    ("2026-08-22T22:00:00+02:00", "2026-08-22T20:00:00Z"),
+    ("2026-08-22T22:00:00.123456+02:00", "2026-08-22T20:00:00.123456Z"),
+])
+def test_session_anchor_normalizer_normalizes_to_utc_z(stamp, expected):
+    """Calibration anchors carry a logical session date; the storage boundary
+    normalizes every accepted spelling to UTC ...Z while keeping the distinct
+    ordinary-NULL vs explicitly-undated ("") forms."""
+    from app.database import normalize_session_date_obs
+    assert normalize_session_date_obs(stamp) == expected
 
 
 @pytest.mark.parametrize("local_hours", [-5, 9])
@@ -227,16 +219,11 @@ def test_fractional_session_attachment_cannot_bridge_exact_twelve_hour_boundary(
 
 
 @pytest.mark.parametrize("stamp", [False, 42, [], {}, "2026-02-30T20:00:00Z",
-                                  "2026-08-22", '<img src="x">'])
-def test_backup_rejects_invalid_session_anchor_before_database_changes(dedup_store, stamp):
-    db, archive = dedup_store
-    first = _import(db, archive, _capture())
-    before = db.images()
-    record = dict(before[0], session_date_obs=stamp)
+                                   "2026-08-22", '<img src="x">'])
+def test_session_anchor_normalizer_rejects_invalid_values(stamp):
+    from app.database import normalize_session_date_obs
     with pytest.raises(ValueError, match="session_date_obs"):
-        db.import_bundle({}, [], [], [], images=[record])
-    assert db.images() == before
-    assert (archive / first["stored"]).read_bytes() == _capture()
+        normalize_session_date_obs(stamp)
 
 
 def test_old_image_schema_migrates_nullable_session_anchor(tmp_path):
@@ -682,17 +669,23 @@ def test_archive_publication_never_overwrites_existing_file(tmp_path):
     assert target.read_bytes() == b"existing bytes"
 
 
-def test_backup_claimed_digest_is_discarded_on_restore(dedup_store):
+def test_stale_fingerprint_hint_is_remeasured_and_still_dedups(dedup_store):
+    """A cached fingerprint is a hint, never identity evidence: when the stored
+    size/mtime do not match the file on disk, the candidate is re-measured from
+    the actual bytes (refreshing the hint) instead of trusting stale metadata."""
     db, archive = dedup_store
     first = _import(db, archive, _capture())
-    rec = db.image(first["id"])
-    rec["content_sha256"] = "a" * 64
-    db.import_bundle({}, [], [], [], images=[rec])
-    restored = db.image(first["id"])
-    assert restored["content_sha256"] is None
-    assert restored["file_size"] is None and restored["file_mtime_ns"] is None
+    original = db.image(first["id"])
+    real_digest, real_size, real_mtime = (original["content_sha256"],
+                                          original["file_size"],
+                                          original["file_mtime_ns"])
+    db.set_image_fingerprint(first["id"], real_digest, 1, 1)   # stale size/mtime
     result = _import(db, archive, _capture())
     assert result["skipped"] and len(db.images()) == 1
+    restored = db.image(first["id"])
+    assert restored["content_sha256"] == real_digest
+    assert restored["file_size"] == real_size
+    assert restored["file_mtime_ns"] == real_mtime
 
 
 def test_additive_fingerprint_migration_preserves_old_image_rows(tmp_path):
@@ -989,7 +982,7 @@ def test_ingest_endpoint_builds_catalog_off_the_event_loop(tmp_path, monkeypatch
 
     db = Database(tmp_path / "ingest-loop.sqlite3")
     try:
-        app = create_app(db, prefetch=False, catalog_only=True)
+        app = create_app(db)
         route = next(route for route in app.routes
                      if getattr(route, "path", None) == "/api/images/ingest")
         endpoint = route.endpoint

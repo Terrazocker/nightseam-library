@@ -69,31 +69,10 @@ def existing_instance_url() -> str | None:
         return None
 
 
-def existing_instance_catalog_only(base_url: str) -> bool | None:
-    """Return the live singleton's shell mode, probing older instance files."""
-    try:
-        info = json.loads(_instance_file().read_text())
-        mode = info.get("catalog_only")
-        if isinstance(mode, bool):
-            return mode
-    except Exception:
-        pass
-
-    try:
-        from urllib.request import urlopen
-        with urlopen(f"{base_url.rstrip('/')}/index.html", timeout=2.0):
-            return False
-    except Exception as exc:
-        if getattr(exc, "code", None) == 404:
-            return True
-        return None
-
-
-def write_instance_file(port: int, *, catalog_only: bool = False) -> None:
+def write_instance_file(port: int) -> None:
     try:
         _instance_file().write_text(
-            json.dumps({"port": port, "pid": os.getpid(),
-                        "catalog_only": catalog_only}))
+            json.dumps({"port": port, "pid": os.getpid()}))
     except OSError:
         pass
 
@@ -147,46 +126,11 @@ class NoSignalServer(__import__("uvicorn").Server):
         pass
 
 
-def catalog_only_for_launch(override: bool | None = None, *,
-                            frozen: bool | None = None) -> bool:
-    """All normal launches use the independent archive shell.
-
-    An explicit mode flag supports source preview and the legacy planner browser
-    checks, while source and packaged defaults both select the catalog.
-    """
-    if override is not None:
-        return bool(override)
-    if frozen is None:
-        frozen = bool(getattr(sys, "frozen", False))
-    return True
-
-
-def shell_url_for_launch(base_url: str, catalog_only: bool) -> str:
-    """Address the requested shell even when another mode owns the server."""
-    entry = "catalog.html" if catalog_only else "index.html"
-    return f"{base_url.rstrip('/')}/{entry}"
-
-
-def handoff_url_for_launch(base_url: str, requested_catalog_only: bool,
-                           running_catalog_only: bool | None) -> str:
-    """Avoid handing a planner launch to a catalog server's hidden route."""
-    if not requested_catalog_only and running_catalog_only is not False:
-        return (f"{base_url.rstrip('/')}/catalog.html"
-                "?planner-unavailable=1")
-    return shell_url_for_launch(base_url, requested_catalog_only)
-
-
-def create_launch_app(db: Database, *, catalog_only: bool):
-    """Build the selected local shell without planner-only startup work."""
-    return create_app(db, prefetch=not catalog_only, catalog_only=catalog_only)
-
-
 class JsApi:
     """Native helpers exposed to the UI as window.pywebview.api (pywebview
     window only; browser fallback has no bridge)."""
 
-    def __init__(self, catalog_only: bool = False):
-        self._catalog_only = catalog_only
+    def __init__(self):
         self._window = None
 
     def bind_window(self, window) -> None:
@@ -220,7 +164,7 @@ class JsApi:
         return None
 
 
-def run_native_window(url: str, *, catalog_only: bool = False) -> bool:
+def run_native_window(url: str) -> bool:
     """Open a real desktop window via pywebview (Edge WebView2).
     Blocks until the window is closed. Returns False if unavailable."""
     log = logging.getLogger("nightseam")
@@ -231,45 +175,41 @@ def run_native_window(url: str, *, catalog_only: bool = False) -> bool:
         return False
     try:
         # WebView2 cancels every attachment download by default. Enabling the
-        # built-in handler opens Windows Save As for catalog CSV/JSON exports
-        # (and planner setup backups) without navigating away from the UI.
+        # built-in handler opens Windows Save As for catalog CSV exports
+        # without navigating away from the UI.
         webview.settings["ALLOW_DOWNLOADS"] = True
-        api = JsApi(catalog_only=catalog_only)
+        api = JsApi()
         options = {
             "width": 1440,
             "height": 920,
-            "min_size": (1000, 640),
+            "min_size": (500, 380),
             "background_color": "#0b0e14",
             "js_api": api,
+            "maximized": True, "frameless": False, "resizable": True,
+            "easy_drag": False, "zoomable": False,
         }
-        title = "NightSeam"
-        app_icon = None
+        app_icon_path = paths.static_dir() / "favicon.ico"
+        app_icon = str(app_icon_path) if app_icon_path.is_file() else None
         placement = None
-        if catalog_only:
-            title = "NightSeam — Image Catalog"
-            app_icon_path = paths.static_dir() / "favicon.ico"
-            app_icon = str(app_icon_path) if app_icon_path.is_file() else None
-            options.update(maximized=True, min_size=(500, 380), frameless=False,
-                           resizable=True, easy_drag=False, zoomable=False)
-            try:
-                from app.window_placement import WindowPlacement, windows_monitors
+        try:
+            from app.window_placement import WindowPlacement, windows_monitors
 
-                # pywebview.screens is queried before WinForms enables DPI
-                # awareness and cannot define a consistent mixed-DPI desktop.
-                screens = (windows_monitors() if os.name == "nt" else
-                           list(getattr(webview, "screens", ()) or ()))
-                placement = WindowPlacement(paths.window_placement_path(),
-                                            screens=screens)
-                bounds, maximized = placement.normal_bounds, placement.maximized
-                # Windows geometry is applied to the native form before Show.
-                # Feeding physical x/y into pywebview would scale them again.
-                if os.name != "nt":
-                    options.update(x=bounds.x, y=bounds.y, width=bounds.width,
-                                   height=bounds.height, maximized=maximized)
-            except Exception:  # Optional geometry must not disable native UI.
-                log.warning("Could not initialize local window placement",
-                            exc_info=True)
-        window = webview.create_window(title, url, **options)
+            # pywebview.screens is queried before WinForms enables DPI
+            # awareness and cannot define a consistent mixed-DPI desktop.
+            screens = (windows_monitors() if os.name == "nt" else
+                       list(getattr(webview, "screens", ()) or ()))
+            placement = WindowPlacement(paths.window_placement_path(),
+                                        screens=screens)
+            bounds, maximized = placement.normal_bounds, placement.maximized
+            # Windows geometry is applied to the native form before Show.
+            # Feeding physical x/y into pywebview would scale them again.
+            if os.name != "nt":
+                options.update(x=bounds.x, y=bounds.y, width=bounds.width,
+                               height=bounds.height, maximized=maximized)
+        except Exception:  # Optional geometry must not disable native UI.
+            log.warning("Could not initialize local window placement",
+                        exc_info=True)
+        window = webview.create_window("NightSeam — Image Catalog", url, **options)
         api.bind_window(window)
         if placement is not None:
             try:
@@ -281,7 +221,7 @@ def run_native_window(url: str, *, catalog_only: bool = False) -> bool:
         # although the public parameter documentation only lists GTK/Qt.
         # static/ is bundled in source and frozen launches, so this is the same
         # project icon in both; build.ps1 also embeds it in the executable.
-        webview.start(icon=app_icon) if catalog_only else webview.start()
+        webview.start(icon=app_icon)
         return True
     except Exception as exc:  # noqa: BLE001
         log.warning("native window failed (%s) - falling back to app window", exc)
@@ -328,13 +268,6 @@ def main() -> int:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--browser", action="store_true",
                     help="open in a regular browser tab instead of an app window")
-    app_mode = ap.add_mutually_exclusive_group()
-    app_mode.add_argument("--catalog-only", dest="catalog_only",
-                          action="store_true", default=None,
-                          help="open only the FITS Image Catalog shell")
-    app_mode.add_argument("--planner", dest="catalog_only",
-                          action="store_false", default=None,
-                          help="open the legacy full planner shell")
     ap.add_argument("--no-browser", action="store_true",
                     help="do not open any window (headless)")
     ap.add_argument("--console", action="store_true",
@@ -345,29 +278,26 @@ def main() -> int:
 
     ensure_stdio()
     log = setup_logging(args.console)
-    catalog_only = catalog_only_for_launch(args.catalog_only)
 
     # hand off to an already-running instance instead of shadowing it: two
     # instances would share one SQLite file and one archive folder, which can
     # truncate an in-flight ingest and tear the rolling .backup copy
     old_url = existing_instance_url()
     if old_url:
-        old_catalog_only = existing_instance_catalog_only(old_url)
-        launch_url = handoff_url_for_launch(
-            old_url, catalog_only, old_catalog_only)
+        launch_url = f"{old_url.rstrip('/')}/catalog.html"
         log.info("NightSeam already running - opening %s.", launch_url)
         if args.no_browser:
             return 0                     # headless launch: nothing to open
         if args.browser:
             webbrowser.open(launch_url)
         else:
-            if not run_native_window(launch_url, catalog_only=catalog_only):
+            if not run_native_window(launch_url):
                 if not launch_app_window(launch_url):
                     webbrowser.open(launch_url)
         return 0
 
     db = Database(paths.data_dir() / "nightseam.db")
-    app = create_launch_app(db, catalog_only=catalog_only)
+    app = create_app(db)
 
     port = free_port(args.port, args.host)
     url = f"http://{args.host}:{port}/"
@@ -394,14 +324,14 @@ def main() -> int:
         return 1
 
     log.info("NightSeam running at %s", url)
-    write_instance_file(port, catalog_only=catalog_only)
+    write_instance_file(port)
 
     idle_secs = args.idle_exit_hours * 3600.0
     ui_mode = "none" if args.no_browser else "browser" if args.browser else "window"
 
     try:
         if ui_mode == "window":
-            if run_native_window(url, catalog_only=catalog_only):
+            if run_native_window(url):
                 pass                               # window closed -> shut down
             elif launch_app_window(url):
                 wait_for_exit(server, idle_secs)
@@ -424,20 +354,11 @@ def wait_for_exit(server, idle_secs: float) -> None:
     try:
         while server.should_exit is False:
             time.sleep(1.0)
-            if _shutdown_requested():
-                logging.getLogger("nightseam").info(
-                    "Shutdown requested via /api/shutdown.")
-                break
             if idle_secs > 0 and time.time() - _last_request_ts() > idle_secs:
                 logging.getLogger("nightseam").info("Idle timeout reached.")
                 break
     except KeyboardInterrupt:
         pass
-
-
-def _shutdown_requested() -> bool:
-    from app import server as srv
-    return bool(srv._state.get("shutdown"))
 
 
 def _last_request_ts() -> float:

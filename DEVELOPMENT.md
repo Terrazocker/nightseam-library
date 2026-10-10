@@ -10,8 +10,9 @@ main.py hosts the local FastAPI application in app/server.py and opens the
 catalog shell. The client is vanilla ES-module JavaScript and CSS, with no npm
 or bundler. static/catalog.html owns Library, Import Exposures and the fixed
 archive Sky Map. Native pywebview/Windows chrome provides window behavior.
-The older full planner shell is retained only for explicit maintenance launches;
-its storage schema and backup fields remain compatible with existing libraries.
+The retired planning shell (sites, rigs, panoramas, custom-target editing) was
+removed on October 10, 2026; existing databases that still carry those tables
+keep them unread, and legacy libraries' custom objects still resolve.
 
 ## Data and imports
 
@@ -20,7 +21,10 @@ app/ingest.py parses exposure headers, matches objects, stages/copies files,
 hashes complete bytes for global duplicate identity and reindexes archive trees.
 app/imglib.py derives objects and capture sessions for the interface.
 app/paths.py contains safe path and writable/resource-directory boundaries.
-app/backup.py validates/restores a complete setup using transactional staging.
+Recovery is file-first: the archive folder is the source of truth, SQLite keeps
+a rolling `nightseam.db.backup` next to the database (taken with SQLite's own
+backup API under the connection lock), and **Reindex folders** rebuilds library
+rows from the archive.
 
 `POST /api/images/ingest` may receive a positive `session_anchor_id` for an
 existing image, with dark/flat/bias frame type. The server revalidates the target

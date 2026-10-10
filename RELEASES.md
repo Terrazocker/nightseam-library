@@ -1,5 +1,35 @@
 # Independent catalog release record
 
+## Planner retirement - October 10, 2026
+
+The retained maintenance planner was retired (IMPLEMENTATION_PLAN item 6,
+decision recorded in DECISIONS.md). Removed: static/index.html and the
+planner-only JS modules; the /api/sites, /api/rigs, /api/panorama*,
+/api/catalog(+provenance,+custom), /api/object/{id}/image, /api/images/cache/clear,
+/api/export, /api/import, /api/update-check and /api/shutdown route families;
+the image prefetch thread and app/images.py (with its third-party image fetch
+and TLS exception); app/backup.py (setup-ZIP export/import - its only caller
+was the planner UI); app/rig_presets.py; the --planner launch flag. New
+databases no longer create the planner tables; existing databases keep them
+unread (additive-migration policy) and legacy custom targets still resolve.
+Recovery is now the archive folder + the rolling nightseam.db.backup +
+Reindex folders. README's "requires no network access" claim is now literally
+true: the weather and object-image lookups retired with the planner.
+
+Closed as code (not fixed): restore publication failure (NEW-01, High),
+shutdown hard-exit stranding (F-08), worker horizon scoring (F-02/M-1),
+CDS TLS bypass (F-05), dangling active pointers (F-12/NEW-03), two-commit
+panorama creation (F-14).
+
+Validation: full suite **437 passed, one existing Starlette/httpx warning** in
+109.54 s (pre-retirement baseline 616; the catalog test surface is smaller by
+design). check_js.py (31 modules, 0 broken imports), check_dom_ids.py,
+check_core.py (core bake untouched - manifest unchanged), check_encoding.py
+and the source release guard (--allow-dirty --source-only --no-stage) all
+passed. Logs under logs/assignment2-*. No version, tag, build or release
+artifact was created; the browser gate needs a fresh build and is deferred to
+the next build session.
+
 ## Ingest event-loop offload and fixture output guard - October 10, 2026
 
 Two verified findings were implemented (reviews/independent-audit-verification-20261010.md):

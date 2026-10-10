@@ -14,9 +14,9 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
 The default source and packaged launches open the catalog. The executable is
-`dist/NightSeam.exe`. A retained legacy planner is maintenance-only and available
-through `--planner`; it is not connected to the website or its releases.
-The application requires no website checkout, server or network access.
+`dist/NightSeam.exe`. The retired planning shell was removed on October 10,
+2026; the catalog owns the whole application. The application requires no
+website checkout, server or network access.
 
 ## Library and import
 
