@@ -972,8 +972,16 @@ def create_app(db: Database, *, prefetch: bool = True,
         except OSError as exc:
             raise HTTPException(
                 500, f"Cannot create archive folder {archive}: {exc}")
-        catalog = db.all_objects(advanced=True)
-        resolver = CatalogResolver(catalog)
+        # F-06: the catalog snapshot and resolver build are pure CPU/DB work
+        # (measured ~350 ms combined on the full catalog); run both in the same
+        # threadpool worker so they cannot stall the event loop. The awaited
+        # call stays outside the archive-directory try/except above: a database
+        # or resolver error must not surface as a directory-creation failure.
+        def build_ingest_catalog():
+            catalog = db.all_objects(advanced=True)
+            return catalog, CatalogResolver(catalog)
+
+        catalog, resolver = await run_in_threadpool(build_ingest_catalog)
         sess = session.strip()
         if not _SESSION_NAME_RE.match(sess):
             sess = None                  # not a sane folder name -> auto session

@@ -971,3 +971,80 @@ def test_missing_original_collision_rechecks_original_identity(dedup_store, monk
         assert result["skipped"] and result["id"] == first["id"]
     assert original_path.read_bytes() == competing
     assert len(db.images()) == 1 and not list(archive.glob("*.part"))
+
+
+def test_ingest_endpoint_builds_catalog_off_the_event_loop(tmp_path, monkeypatch):
+    """F-06: /api/images/ingest reads the catalog and builds the resolver on
+    the threadpool, never on the event loop.
+
+    The verification measured ~60-67 ms for the catalog read and ~291-307 ms
+    for resolver construction on the full 12,176-row catalog; synchronously on
+    the loop they starved every other request. This test exercises the REAL
+    registered endpoint function with an empty upload (no exposure files), so
+    only catalog/resolver preparation runs, and records the thread of every
+    step. No elapsed-time thresholds: the thread identities alone prove the
+    offload, and run_in_threadpool itself stays unpatched."""
+    from app import server as server_module
+    from app.server import create_app
+
+    db = Database(tmp_path / "ingest-loop.sqlite3")
+    try:
+        app = create_app(db, prefetch=False, catalog_only=True)
+        route = next(route for route in app.routes
+                     if getattr(route, "path", None) == "/api/images/ingest")
+        endpoint = route.endpoint
+
+        observed = {}
+        real_all_objects = db.all_objects
+
+        def spy_all_objects(*args, **kwargs):
+            observed["thread"] = threading.get_ident()
+            observed["args"] = args
+            observed["kwargs"] = kwargs
+            observed["calls"] = observed.get("calls", 0) + 1
+            observed["catalog"] = real_all_objects(*args, **kwargs)
+            return observed["catalog"]
+
+        monkeypatch.setattr(db, "all_objects", spy_all_objects)
+
+        class RecordingResolver:
+            def __init__(self, catalog):
+                self.thread = threading.get_ident()
+                self.catalog_arg = catalog
+
+        resolver_seen = []
+        real_resolver = server_module.CatalogResolver
+
+        def recording_resolver(catalog):
+            instance = RecordingResolver(catalog)
+            resolver_seen.append(instance)
+            return real_resolver(catalog)
+
+        monkeypatch.setattr(server_module, "CatalogResolver", recording_resolver)
+
+        loop = {}
+
+        async def invoke():
+            loop["thread"] = threading.get_ident()
+            return await endpoint(files=[], frame="", session="",
+                                  run_id="", session_anchor_id=None)
+
+        result = asyncio.run(invoke())
+
+        # the endpoint finished successfully with nothing to ingest
+        assert result == {"results": []}
+        # all_objects received advanced=True, exactly once
+        assert observed["calls"] == 1
+        assert observed["kwargs"] == {"advanced": True}
+        assert observed["args"] == ()
+        # resolver construction received the exact list all_objects returned,
+        # exactly once
+        assert len(resolver_seen) == 1
+        assert resolver_seen[0].catalog_arg is observed["catalog"]
+        # both operations ran OUTSIDE the event-loop thread...
+        assert observed["thread"] != loop["thread"]
+        assert resolver_seen[0].thread != loop["thread"]
+        # ...and both inside the SAME worker thread (one helper invocation)
+        assert resolver_seen[0].thread == observed["thread"]
+    finally:
+        db.conn.close()

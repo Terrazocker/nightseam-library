@@ -1,5 +1,33 @@
 # Independent catalog release record
 
+## Ingest event-loop offload and fixture output guard - October 10, 2026
+
+Two verified findings were implemented (reviews/independent-audit-verification-20261010.md):
+
+- NEW-02: the core-fixture harness now refuses incomplete runner output.
+  `_section()` in tests/test_core_fixtures.py fails any existing section that
+  is not a list or whose row count differs from the frozen fixture, so the
+  seven oracle comparisons can no longer silently accept empty, truncated or
+  overproduced sections through their non-strict zip loops. 28 parameterized
+  regression tests drive each section's real comparison function against a
+  copied runner result with an empty, truncated, additional and non-list
+  section; the valid-output and missing-section pins are unchanged.
+- F-06: `POST /api/images/ingest` no longer blocks the event loop while
+  preparing ingestion: a single `build_ingest_catalog()` helper reads the
+  catalog and constructs the resolver inside one `run_in_threadpool` worker,
+  with the awaited call outside the archive-directory try/except so database
+  and resolver errors cannot be mislabeled as directory-creation failures. A
+  regression test invokes the real registered endpoint function with an empty
+  upload and asserts both operations ran once, off the event-loop thread, on
+  the same worker, with `advanced=True` and the exact catalog list.
+
+Validation: focused core-fixture block 55 passed; ingest/imglib block 91
+passed; check_js.py and check_encoding.py passed; full suite **645 passed,
+one existing Starlette/httpx warning** in 158.56 seconds (previous baseline
+616 plus 29 new tests). Logs under logs/assignment1-*. No version, tag or
+release artifact was created; BUGS.md listed neither issue, so no entries
+changed there.
+
 ## Workspace cleanup and prevention - October 10, 2026
 
 Removed 2137.58 MiB of accumulated test scratch, caches, compilation output,

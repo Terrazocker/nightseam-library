@@ -60,14 +60,31 @@ def _section(got, fixtures, name):
     The gating existed while the harness landed before Phase 2 ("concept not
     extracted yet"); the core is complete now, so a missing section can only mean
     a renamed, removed or no-longer-function export - and a silently skipped
-    fixture comparison is exactly what this file exists to prevent."""
+    fixture comparison is exactly what this file exists to prevent.
+
+    NEW-02: a section that EXISTS but is empty, truncated, overproduced or not a
+    list is equally unacceptable. Every comparison below zips expected against
+    actual, so a short section would silently drop trailing expected cases
+    instead of failing them; a non-list section would raise TypeError mid-test
+    instead of naming the real problem."""
     if name not in got:
         gone = (got.get("missing") or {}).get(name) or []
         pytest.fail(
             f"core/{name} fixtures were not produced - missing export(s): "
             f"{', '.join(gone) or 'unknown'}. A rename/removal must be an explicit "
             "decision, not a silent skip.")
-    return fixtures[name], got[name]
+    expected = fixtures[name]
+    actual = got[name]
+    if not isinstance(actual, list):
+        pytest.fail(
+            f"core/{name} fixture output must be a list, got "
+            f"{type(actual).__name__} - refusing a comparison that cannot check "
+            "row counts.")
+    if len(actual) != len(expected):
+        pytest.fail(
+            f"core/{name} fixture output has {len(actual)} row(s) but the fixture "
+            f"defines {len(expected)} - the comparison would silently skip rows.")
+    return expected, actual
 
 
 def test_a_missing_section_fails_instead_of_skipping():
@@ -155,3 +172,73 @@ def test_twilight_matches_the_oracle(fixtures, got):
             have_dt = _epoch(have[key])
             delta = abs((want - have_dt).total_seconds())
             assert delta <= tol, (c["site"], c["date"], key, delta, have[key], c[key])
+
+
+# ------------------------------------------------------------------ NEW-02
+# Incomplete runner output must be REJECTED, not zip-truncated away. Each case
+# invokes the section's real comparison function against a COPY of the runner
+# result with only that section replaced, proving the comparisons themselves
+# cannot silently accept incomplete output (the guard lives in _section, so
+# every comparison inherits it).
+
+_FIXTURE_SECTIONS = (
+    ("jd", test_jd_matches_the_oracle),
+    ("gmst", test_gmst_matches_the_oracle),
+    ("precession", test_precession_matches_the_oracle),
+    ("altaz", test_altaz_matches_the_oracle),
+    ("sun", test_sun_matches_the_oracle),
+    ("moon", test_moon_matches_the_oracle),
+    ("twilight", test_twilight_matches_the_oracle),
+)
+
+_SECTION_IDS = [name for name, _compare in _FIXTURE_SECTIONS]
+
+
+def _mutated_runner_result(got, name, rows):
+    """A COPY of the runner result with only 'name' replaced; the shared
+    module-scoped 'got' fixture is never mutated in place."""
+    mutated = dict(got)
+    mutated[name] = rows
+    return mutated
+
+
+def _assert_section_rejected(fixtures, got, name, compare, rows, counts=False):
+    """The comparison must raise pytest.fail.Exception naming the section; a
+    length mismatch must additionally name both row counts."""
+    with pytest.raises(pytest.fail.Exception) as excinfo:
+        compare(fixtures, _mutated_runner_result(got, name, rows))
+    message = str(excinfo.value)
+    assert name in message, message
+    if counts:
+        assert f"{len(rows)} row(s)" in message, message
+        assert f"defines {len(fixtures[name])}" in message, message
+
+
+@pytest.mark.parametrize("name,compare", _FIXTURE_SECTIONS, ids=_SECTION_IDS)
+def test_empty_section_output_is_rejected(fixtures, got, name, compare):
+    """NEW-02: an empty runner section must fail, not zip to zero iterations
+    and silently pass every expected case."""
+    _assert_section_rejected(fixtures, got, name, compare, [], counts=True)
+
+
+@pytest.mark.parametrize("name,compare", _FIXTURE_SECTIONS, ids=_SECTION_IDS)
+def test_truncated_section_output_is_rejected(fixtures, got, name, compare):
+    """NEW-02: a section missing its final row must fail, not silently skip the
+    last expected case."""
+    _assert_section_rejected(fixtures, got, name, compare,
+                             list(got[name])[:-1], counts=True)
+
+
+@pytest.mark.parametrize("name,compare", _FIXTURE_SECTIONS, ids=_SECTION_IDS)
+def test_overproduced_section_output_is_rejected(fixtures, got, name, compare):
+    """NEW-02: an additional runner row must fail, not pass unnoticed."""
+    rows = list(got[name])
+    rows.append(rows[-1] if rows else None)
+    _assert_section_rejected(fixtures, got, name, compare, rows, counts=True)
+
+
+@pytest.mark.parametrize("name,compare", _FIXTURE_SECTIONS, ids=_SECTION_IDS)
+def test_non_list_section_output_is_rejected(fixtures, got, name, compare):
+    """NEW-02: a non-list section (e.g. None from a changed runner contract)
+    must fail with a diagnostic naming the section, not raise TypeError."""
+    _assert_section_rejected(fixtures, got, name, compare, None)
