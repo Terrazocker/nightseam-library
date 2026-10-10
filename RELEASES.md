@@ -14,7 +14,8 @@ cleanup failures fail visibly. Pytest cache output is disabled. Browser tests
 own frozen descendants through a private Windows Job Object, including after
 launcher exit or harness crash; teardown verifies process/listener exit before
 removing logs/browser scratch. JS syntax scratch is likewise owned under logs/
-with strict cleanup. Housekeeping previews by default and refuses tracked or
+with strict cleanup. Frozen test extraction also uses private TEMP/TMP/TMPDIR
+inside browser scratch. Housekeeping previews by default and refuses tracked or
 linked paths, skips active/unknown owners and keeps three executable backups.
 Successful builds clean their compilation scratch after releasing an owner lock.
 Runtime logs already rotate with a 1 MiB limit and two backups.

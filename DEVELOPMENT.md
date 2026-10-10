@@ -57,6 +57,8 @@ failures; housekeeping covers abandoned JS scratch as well.
 The packaged browser gate uses `logs/browser/` and owns its executable and
 children through a private Windows Job Object (a process group on POSIX).
 Windows starts the executable suspended, assigns ownership, then resumes it.
+Its TEMP/TMP/TMPDIR point into private scratch so frozen extraction files are
+removed with the test data, even when the process tree is forcibly stopped.
 Teardown waits for the process tree and listener to exit before removing files;
 startup and cleanup failures are gate failures. A harness crash closes the job
 and terminates its Windows children. No unrelated application is terminated.

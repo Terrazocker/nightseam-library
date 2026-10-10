@@ -84,6 +84,8 @@ def test_desktop_start_failure_removes_its_private_scratch(tmp_path, monkeypatch
     def refused(*args, **kwargs):
         marker = Path(kwargs["cwd"]) / ".owner-pid"
         assert marker.read_text(encoding="utf-8") == str(os.getpid())
+        for name in ("TEMP", "TMP", "TMPDIR"):
+            assert kwargs["env"][name] == kwargs["cwd"]
         raise OSError("launch refused")
 
     monkeypatch.setattr(harness, "ProcessTree", refused)

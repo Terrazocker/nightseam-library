@@ -158,10 +158,17 @@ class DesktopServer:
                 "--idle-exit-hours", "0"]
         if self.planner:
             args.append("--planner")
+        # PyInstaller's onefile bootloader extracts into TEMP. Keep extraction
+        # inside owned scratch too, so killing the job cannot strand _MEI files
+        # in the user's system temp directory.
+        environment = dict(os.environ)
+        for name in ("TEMP", "TMP", "TMPDIR"):
+            environment[name] = str(self.tmp)
         self.tree = ProcessTree(
             args,
             cwd=str(self.tmp), stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, creationflags=_CREATE_NO_WINDOW)
+            stderr=subprocess.DEVNULL, creationflags=_CREATE_NO_WINDOW,
+            env=environment)
         self.proc = self.tree.proc
         self.base = f"http://127.0.0.1:{self.port}/"
         deadline = time.time() + timeout
