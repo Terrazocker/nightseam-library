@@ -1086,11 +1086,12 @@ def desktop_catalog_only_launch(c):
     finally:
         fallback_page.close()
 
+    # The planner retirement removed the handoff notice entirely: a stale
+    # ?planner-unavailable=1 query string must be ignored, not break the boot.
     c.goto("/catalog.html?planner-unavailable=1")
-    notice = c.page.locator(".catalog-launch-notice")
-    notice.wait_for(state="visible")
-    c.expect("Close that window" in notice.inner_text() and "--planner" in notice.inner_text(),
-             "planner mode mismatch should explain how to switch without a blank 404")
+    c.page.locator('body[data-window-chrome]').first.wait_for()
+    c.expect(c.page.locator(".catalog-launch-notice").count() == 0,
+             "the retired handoff notice must not reappear")
 
 
 @check("desktop-catalog-responsive-layout", "catalog")
