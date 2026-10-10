@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from .database import Database
 from .imglib import CatalogResolver, name_key
 from .ingest import (_archive_io, calibration_import_target, ingest_one, obj_slug,
-                     reindex_library, rename_archive_folder)
+                     reindex_library, rename_archive_folder, undo_archive_rename)
 from .paths import static_dir
 from .version import app_version
 
@@ -348,7 +348,14 @@ def create_app(db: Database) -> FastAPI:
             raise HTTPException(
                 500, "Could not move the archive folder - close any program "
                      "using those files and try again")
-        db.rename_images(name, new_name, otype, obj_slug(new_name), moved)
+        try:
+            db.rename_images(name, new_name, otype, obj_slug(new_name), moved)
+        except BaseException:
+            # F-22: the disk move already happened - undo it so the files are
+            # back where the (unchanged) database rows point, then surface the
+            # database failure instead of leaving a mixed state.
+            undo_archive_rename(Path(db.image_dir()), moved)
+            raise
         return {"ok": True, "name": new_name, "otype": otype}
 
     @app.get("/api/library/export")

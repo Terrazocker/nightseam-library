@@ -73,6 +73,35 @@ def test_retired_sky_brightness_setting_is_ignored(client):
 # and the derive engines - plus the frozen fixtures under tests/fixtures/.
 
 
+def test_library_edit_database_failure_undoes_the_disk_move(client, db, monkeypatch):
+    """F-22: if the database update fails AFTER the folder move completed, the
+    move is undone - the files are back where the unchanged rows point."""
+    from pathlib import Path
+
+    r = client.post("/api/images/ingest", files=[
+        ("files", ("unlisted.fit", unresolved_fits(), "application/octet-stream"))])
+    assert r.status_code == 200
+    lib_before = client.get("/api/library").json()
+    image_dir = Path(client.get("/api/state").json()["image_dir"])
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("database locked during rename")
+
+    monkeypatch.setattr(db, "rename_images", boom)
+    # TestClient re-raises unhandled server errors; the undo runs inside the
+    # route BEFORE the exception escapes, which is what this test pins.
+    with pytest.raises(RuntimeError, match="database locked during rename"):
+        client.post("/api/library/edit",
+                    json={"name": "TestObj42", "new_name": "My Nebula"})
+
+    lib = client.get("/api/library").json()
+    assert lib["objects"][0]["name"] == "TestObj42"
+    stored = lib["objects"][0]["images"][0]["file"]
+    assert (image_dir / stored).is_file()
+    assert stored == lib_before["objects"][0]["images"][0]["file"]
+    assert not (image_dir / "Andromeda").exists()
+
+
 def test_retired_planner_and_restore_routes_answer_404(client):
     """A stale client must fail loudly, not reach a half-alive route. The
     planner retirement removed whole route families; every one of them must

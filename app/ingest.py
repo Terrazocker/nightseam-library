@@ -618,6 +618,11 @@ def rename_archive_folder(archive: Path, old_name: str,
     def _rel(p: Path) -> str:
         return str(p.relative_to(archive)).replace("\\", "/")
 
+    # F-22: every completed move is journalled so a mid-merge failure can be
+    # UNDONE - without this, files already replaced into the destination stay
+    # there while the database keeps the old paths ("missing originals").
+    done: list[tuple[Path, Path]] = []
+
     try:
         if new.exists():
             for f in sorted(old.rglob("*")):
@@ -625,7 +630,8 @@ def rename_archive_folder(archive: Path, old_name: str,
                     continue
                 dest = _unique_path(new / f.relative_to(old))
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                f.replace(dest)
+                _move_one(f, dest)
+                done.append((f, dest))
                 moved[_rel(f)] = _rel(dest)
             for d in sorted([p for p in old.rglob("*") if p.is_dir()],
                             key=lambda p: len(p.parts), reverse=True):
@@ -633,13 +639,49 @@ def rename_archive_folder(archive: Path, old_name: str,
             old.rmdir()
         else:
             old.rename(new)
+            # F-22: the map contract is {old relative path: new relative
+            # path} - record the file's REAL origin (under old), not its
+            # new location, or the undo and db.rename_images cannot map it.
             for f in sorted(new.rglob("*")):
                 if f.is_file():
-                    moved[_rel(f)] = _rel(f)
+                    moved[_rel(old / f.relative_to(new))] = _rel(f)
     except OSError as exc:
-        log.warning("rename: could not move %s -> %s: %s", old, new, exc)
+        failures = undo_archive_rename(archive, moved)
+        for target, message in failures:
+            log.error("rename undo failed for %s: %s - run Reindex folders "
+                      "to rebuild the library rows", target, message)
+        log.warning("rename: could not move %s -> %s: %s (undone: %d/%d)",
+                    old, new, exc, len(moved) - len(failures), len(moved))
         return None
     return moved
+
+
+def _move_one(src: Path, dst: Path) -> None:
+    """One journaled rename move (module-level so tests can inject faults)."""
+    src.replace(dst)
+
+
+def undo_archive_rename(archive: Path,
+                        moved: dict[str, str]) -> list[tuple[str, str]]:
+    """Reverse a completed folder move, newest first (F-22).
+
+    Best-effort by design: every restorable file is put back, and anything that
+    cannot be restored is REPORTED (relative paths) instead of swallowed, so a
+    failed undo is visible and Reindex folders can rebuild the rows. Never
+    raises."""
+    failures: list[tuple[str, str]] = []
+    for old_rel, new_rel in reversed(list(moved.items())):
+        try:
+            dst = paths.safe_join(archive, new_rel)
+            src = paths.safe_join(archive, old_rel)
+            if dst is None or src is None:
+                failures.append((new_rel, "path escaped the archive root"))
+                continue
+            src.parent.mkdir(parents=True, exist_ok=True)
+            dst.replace(src)
+        except OSError as exc:
+            failures.append((new_rel, str(exc)))
+    return failures
 
 
 def _norm_rel(rel) -> str:

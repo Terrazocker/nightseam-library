@@ -909,6 +909,54 @@ def test_stale_stage_sweep_preserves_active_recent_live_and_unknown_files(tmp_pa
             ingest._remove_stage(stage)
 
 
+def test_rename_merge_failure_undoes_completed_moves(dedup_store, monkeypatch):
+    """F-22: a mid-merge failure must UNDO the moves it already completed -
+    files stay where the (unchanged) database rows point."""
+    db, archive = dedup_store
+    old_dir = archive / "Object A" / "2026-08-22_2200" / "lights"
+    new_dir = archive / "Object B" / "2026-08-22_2200" / "lights"
+    old_dir.mkdir(parents=True)
+    new_dir.mkdir(parents=True)
+    (old_dir / "a.fit").write_bytes(b"AAA")
+    (old_dir / "b.fit").write_bytes(b"BBB")
+    (new_dir / "a.fit").write_bytes(b"original in B")
+
+    calls = {"n": 0}
+    real_move = ingest._move_one
+
+    def second_move_fails(src, dst):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("disk locked mid-rename")
+        return real_move(src, dst)
+
+    monkeypatch.setattr(ingest, "_move_one", second_move_fails)
+
+    result = ingest.rename_archive_folder(archive, "Object A", "Object B")
+    assert result is None
+    assert (old_dir / "a.fit").read_bytes() == b"AAA"
+    assert (old_dir / "b.fit").read_bytes() == b"BBB"
+    assert sorted(p.name for p in new_dir.iterdir()) == ["a.fit"]
+    assert (new_dir / "a.fit").read_bytes() == b"original in B"
+
+
+def test_undo_archive_rename_restores_completed_moves(dedup_store):
+    """The journal undo reverses a completed move map, newest first."""
+    db, archive = dedup_store
+    old_dir = archive / "Object A" / "lights"
+    old_dir.mkdir(parents=True)
+    (old_dir / "a.fit").write_bytes(b"AAA")
+
+    moved = ingest.rename_archive_folder(archive, "Object A", "Object B")
+    assert moved
+    assert (archive / "Object B" / "lights" / "a.fit").read_bytes() == b"AAA"
+
+    failures = ingest.undo_archive_rename(archive, moved)
+    assert failures == []
+    assert (old_dir / "a.fit").read_bytes() == b"AAA"
+    assert not (archive / "Object B" / "lights" / "a.fit").exists()
+
+
 def test_external_publication_collision_retries_without_replacing_bytes(dedup_store, monkeypatch):
     db, archive = dedup_store
     original = ingest._promote_stage

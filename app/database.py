@@ -253,19 +253,26 @@ class Database:
                 "SELECT id FROM advanced_objects")}
             if have_std == standard and have_adv == set(ids) - standard:
                 return
-            self.conn.execute("DELETE FROM objects")
-            self.conn.execute("DELETE FROM advanced_objects")
-            for table, batch in (("objects", std_rows),
-                                 ("advanced_objects", adv_rows)):
-                self.conn.executemany(
-                    f"INSERT OR IGNORE INTO {table}(id,primary_name,messier,"
-                    f"ngcic,other,otype,ra_hours,dec_deg,vmag,size_am,"
-                    f"constellation,wiki,blurb,search) VALUES "
-                    f"(:id,:primary_name,:messier,:ngcic,:other,:otype,"
-                    f":ra_hours,:dec_deg,:vmag,:size_am,:constellation,"
-                    f":wiki,:blurb,:search)",
-                    batch)
-            self.conn.commit()
+            # F-11: the rebuild is several statements on the shared
+            # connection - a failure mid-way must not leave half a catalog for
+            # the next unrelated commit to publish.
+            try:
+                self.conn.execute("DELETE FROM objects")
+                self.conn.execute("DELETE FROM advanced_objects")
+                for table, batch in (("objects", std_rows),
+                                     ("advanced_objects", adv_rows)):
+                    self.conn.executemany(
+                        f"INSERT OR IGNORE INTO {table}(id,primary_name,messier,"
+                        f"ngcic,other,otype,ra_hours,dec_deg,vmag,size_am,"
+                        f"constellation,wiki,blurb,search) VALUES "
+                        f"(:id,:primary_name,:messier,:ngcic,:other,:otype,"
+                        f":ra_hours,:dec_deg,:vmag,:size_am,:constellation,"
+                        f":wiki,:blurb,:search)",
+                        batch)
+                self.conn.commit()
+            except BaseException:
+                self.conn.rollback()
+                raise
 
     def advanced_count(self) -> int:
         """How many rows `advanced_objects` holds (CD-04: this accessor was
@@ -282,11 +289,15 @@ class Database:
         Returns the number of scored entries."""
         from .popularity_data import POPULARITY
         with self.lock:
-            for table in ("objects", "advanced_objects"):
-                self.conn.executemany(
-                    f"UPDATE {table} SET popularity = ? WHERE id = ?",
-                    [(s, o) for o, s in POPULARITY.items()])
-            self.conn.commit()
+            try:
+                for table in ("objects", "advanced_objects"):
+                    self.conn.executemany(
+                        f"UPDATE {table} SET popularity = ? WHERE id = ?",
+                        [(s, o) for o, s in POPULARITY.items()])
+                self.conn.commit()
+            except BaseException:
+                self.conn.rollback()
+                raise
         return len(POPULARITY)
 
     def migrate_legacy_object_ids(self) -> int:
@@ -308,17 +319,21 @@ class Database:
         marks = ",".join("?" * len(olds))
         moved = 0
         with self.lock:
-            for table in ("images", "import_batches"):
-                if not self.conn.execute(
-                        f"SELECT 1 FROM {table} WHERE object_id IN ({marks}) "
-                        f"LIMIT 1", olds).fetchone():
-                    continue
-                for old in olds:
-                    cur = self.conn.execute(
-                        f"UPDATE {table} SET object_id=? WHERE object_id=?",
-                        (LEGACY_ID_MAP[old], old))
-                    moved += cur.rowcount or 0
-            self.conn.commit()
+            try:
+                for table in ("images", "import_batches"):
+                    if not self.conn.execute(
+                            f"SELECT 1 FROM {table} WHERE object_id IN ({marks}) "
+                            f"LIMIT 1", olds).fetchone():
+                        continue
+                    for old in olds:
+                        cur = self.conn.execute(
+                            f"UPDATE {table} SET object_id=? WHERE object_id=?",
+                            (LEGACY_ID_MAP[old], old))
+                        moved += cur.rowcount or 0
+                self.conn.commit()
+            except BaseException:
+                self.conn.rollback()
+                raise
         return moved
 
     def all_objects(self, advanced: bool = False) -> list[dict]:
@@ -492,28 +507,32 @@ class Database:
         target = name_key(old_name)           # module import graph acyclic
         moved = moved or {}
         with self.lock:
-            cur = self.conn.cursor()
-            rows = [dict(r) for r in cur.execute(
-                "SELECT id, file, object_name FROM images "
-                "WHERE object_id IS NULL").fetchall()]
-            ids = [r["id"] for r in rows if name_key(r["object_name"]) == target]
-            for i in ids:
-                cur.execute("UPDATE images SET object_name=?, otype=? WHERE id=?",
-                            (new_name, otype, i))
-            for r in rows:
-                if r["id"] not in ids:
-                    continue
-                if r["file"] in moved:
-                    new_file = moved[r["file"]]
-                else:
-                    parts = r["file"].split("/", 1)
-                    new_file = (f"{new_folder}/{parts[1]}"
-                                if len(parts) == 2 and parts[0] != new_folder
-                                else r["file"])
-                if new_file != r["file"]:
-                    cur.execute("UPDATE images SET file=? WHERE id=?",
-                                (new_file, r["id"]))
-            self.conn.commit()
+            try:
+                cur = self.conn.cursor()
+                rows = [dict(r) for r in cur.execute(
+                    "SELECT id, file, object_name FROM images "
+                    "WHERE object_id IS NULL").fetchall()]
+                ids = [r["id"] for r in rows if name_key(r["object_name"]) == target]
+                for i in ids:
+                    cur.execute("UPDATE images SET object_name=?, otype=? WHERE id=?",
+                                (new_name, otype, i))
+                for r in rows:
+                    if r["id"] not in ids:
+                        continue
+                    if r["file"] in moved:
+                        new_file = moved[r["file"]]
+                    else:
+                        parts = r["file"].split("/", 1)
+                        new_file = (f"{new_folder}/{parts[1]}"
+                                    if len(parts) == 2 and parts[0] != new_folder
+                                    else r["file"])
+                    if new_file != r["file"]:
+                        cur.execute("UPDATE images SET file=? WHERE id=?",
+                                    (new_file, r["id"]))
+                self.conn.commit()
+            except BaseException:
+                self.conn.rollback()
+                raise
 
     # ---------------- import history (batches) ----------------
 
