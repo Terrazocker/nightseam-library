@@ -27,6 +27,21 @@ if ($LASTEXITCODE -ne 0) { throw "Source checks failed" }
 $catalogExe = Join-Path $PSScriptRoot "dist\NightSeam.exe"
 $catalogRunning = @(Get-CimInstance Win32_Process -Filter "Name='NightSeam.exe'" | Where-Object { $_.ExecutablePath -eq $catalogExe })
 if ($catalogRunning.Count -gt 0) { throw "Close this catalog instance before replacing its executable" }
+$catalogBuildDir = Join-Path $PSScriptRoot "build"
+New-Item -ItemType Directory -Path $catalogBuildDir -Force | Out-Null
+$catalogBuildOwner = Join-Path $catalogBuildDir ".owner-pid"
+if (Test-Path -LiteralPath $catalogBuildOwner) {
+    $catalogOwnerId = (Get-Content -LiteralPath $catalogBuildOwner -Raw).Trim()
+    if ($catalogOwnerId -notmatch '^\d+$') { throw "Unknown build owner; inspect build/.owner-pid" }
+    if (Get-Process -Id ([int]$catalogOwnerId) -ErrorAction SilentlyContinue) { throw "Another build is active" }
+}
+# Keep an exclusive writer open so simultaneous builds cannot both claim it.
+$catalogOwnerStream = [System.IO.File]::Open($catalogBuildOwner, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::Read)
+try {
+$catalogOwnerBytes = [System.Text.Encoding]::UTF8.GetBytes([string]$PID)
+$catalogOwnerStream.SetLength(0)
+$catalogOwnerStream.Write($catalogOwnerBytes, 0, $catalogOwnerBytes.Length)
+$catalogOwnerStream.Flush()
 # Preserve the previous installed executable before a successful replacement.
 if (Test-Path -LiteralPath $catalogExe) {
     $backupName = "NightSeam.before-" + $catalogVersion + "-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".exe"
@@ -44,4 +59,12 @@ $catalogBake = "BAKED_VERSION = '$catalogVersion'`n"
     --add-data "$PSScriptRoot\static;static" --add-data "$PSScriptRoot\app\data;app\data" `
     --collect-all uvicorn --collect-all webview --hidden-import python_multipart "$PSScriptRoot\main.py"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $catalogExe)) { throw "Compilation failed" }
+} finally {
+    $catalogOwnerStream.Dispose()
+    Remove-Item -LiteralPath $catalogBuildOwner -ErrorAction Stop
+}
+# After successful compilation, retain three recovery executables and remove
+# regenerable build scratch. A failed build retains its diagnostics/backups.
+& $catalogPython (Join-Path $PSScriptRoot "scripts\clean_workspace.py") --apply --build-output --keep-backups 3
+if ($LASTEXITCODE -ne 0) { throw "Build succeeded but workspace cleanup failed" }
 Write-Host "Built $catalogExe ($catalogVersion)"

@@ -32,10 +32,11 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+from scripts.clean_workspace import remove_tree
 
 # the JS that actually ships: the desktop UI and the web twin (flat modules)
 ROOTS = [REPO / "static" / "js"]
@@ -146,23 +147,26 @@ def node_usable(node: str) -> str:
 
 
 def _scratch_dir() -> Path | None:
-    """A fresh throw-away directory, preferably inside the repo (logs/ is
-    gitignored; the platform temp dir is not writable for spawned processes
-    in the sandbox, so it is only the fallback)."""
-    for base in (REPO / "logs", Path(tempfile.gettempdir())):
+    """A fresh owned directory under ignored logs/, never a profile temp store."""
+    base = REPO / "logs"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    for i in range(100):
+        candidate = base / f"{SCRATCH_PREFIX}{os.getpid()}-{i}"
         try:
-            base.mkdir(parents=True, exist_ok=True)
-        except OSError:
+            candidate.mkdir()
+        except FileExistsError:
             continue
-        for i in range(100):
-            candidate = base / f"{SCRATCH_PREFIX}{os.getpid()}-{i}"
-            try:
-                candidate.mkdir()
-            except FileExistsError:
-                continue
-            except OSError:
-                break
-            return candidate
+        except OSError:
+            return None
+        try:
+            (candidate / ".owner-pid").write_text(str(os.getpid()), encoding="utf-8")
+        except OSError:
+            remove_tree(candidate)
+            raise
+        return candidate
     return None
 
 
@@ -265,7 +269,11 @@ def main(argv=None) -> int:
         print(f"check_js_syntax FATAL: cannot run node ({reason})")
         return 2
 
-    scratch = _scratch_dir()
+    try:
+        scratch = _scratch_dir()
+    except OSError as exc:
+        print(f"check_js_syntax FATAL: could not prepare owned scratch ({exc})")
+        return 2
     if scratch is None:
         print("check_js_syntax FATAL: no writable scratch directory")
         return 2
@@ -273,6 +281,7 @@ def main(argv=None) -> int:
     capture = scratch / CAPTURE_NAME
     errors = 0
     checked = 0
+    cleanup_error = None
     try:
         for i, src in enumerate(files):
             try:
@@ -286,7 +295,13 @@ def main(argv=None) -> int:
                 print(f"SYNTAX  {detail}")
                 errors += 1
     finally:
-        shutil.rmtree(scratch, ignore_errors=True)
+        try:
+            remove_tree(scratch)
+        except OSError as exc:
+            cleanup_error = exc
+            print(f"check_js_syntax FATAL: could not remove scratch {scratch} ({exc})")
+    if cleanup_error is not None:
+        return 2
     print(f"checked {checked} js module(s), {errors} syntax error(s)")
     return 1 if errors else 0
 

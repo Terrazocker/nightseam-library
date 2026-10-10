@@ -28,7 +28,6 @@ from app.database import Database
 from app.server import create_app
 
 ROOT = Path(__file__).resolve().parents[1]
-SANDBOX_PANOS = ROOT / "logs" / ".pytest-data" / "panos"
 REAL_PANOS = ROOT / "data" / "panos"
 PROBE = "never_touch_user_data_probe.jpg"
 
@@ -54,44 +53,32 @@ def _bundle() -> bytes:
 
 
 def test_a_bundle_import_keeps_the_pano_payload_out_of_the_real_data_dir(client):
+    import app.backup
     real = REAL_PANOS / PROBE
-    sand = SANDBOX_PANOS / PROBE
-    real.unlink(missing_ok=True)
-    sand.unlink(missing_ok=True)
-    try:
-        r = client.post("/api/import", files={
-            "file": ("bundle.zip", _bundle(), "application/zip")})
-        assert r.status_code == 200, r.text
-        assert not real.exists(), (
-            "a test wrote a panorama payload into the REPO's real data/panos - the "
-            "conftest data_dir redirect is not reaching app/backup.py")
-        assert sand.exists(), (
-            "the payload did not land in the sandbox either, so this test proves "
-            f"nothing about interception (expected {sand})")
-    finally:
-        real.unlink(missing_ok=True)
-        sand.unlink(missing_ok=True)
+    before = real.read_bytes() if real.exists() else None
+    sand = app.backup.data_dir() / "panos" / PROBE
+    r = client.post("/api/import", files={
+        "file": ("bundle.zip", _bundle(), "application/zip")})
+    assert r.status_code == 200, r.text
+    assert (real.read_bytes() if real.exists() else None) == before
+    assert sand.read_bytes() == b"PROBE-PAYLOAD"
 
 
-def test_WITHOUT_the_guard_the_same_import_would_pollute_the_real_dir(client, monkeypatch):
+def test_without_the_guard_the_payload_bypasses_the_sandbox(client, monkeypatch, tmp_path):
     """Mutation proof that the guard above is load-bearing.
 
     Undo just the `app/backup.py` half of the conftest redirect and the identical
-    import DOES drop the payload into the repo's real `data/panos` - which is
-    exactly the stray `ok.jpg` seen twice. The file is removed in `finally`, so
-    the mutation leaves no trace.
+    import drops the payload into a second private destination. Even this
+    mutation proof must never write or delete actual source data.
     """
     import app.backup
 
-    monkeypatch.setattr(app.backup, "data_dir", lambda: ROOT / "data")
-    real = REAL_PANOS / PROBE
-    real.unlink(missing_ok=True)
-    try:
-        r = client.post("/api/import", files={
-            "file": ("bundle.zip", _bundle(), "application/zip")})
-        assert r.status_code == 200, r.text
-        assert real.exists(), (
-            "undoing the app/backup.py redirect did NOT reproduce the write into "
-            f"{REAL_PANOS} - so the guard test above proves nothing")
-    finally:
-        real.unlink(missing_ok=True)
+    sand = app.backup.data_dir() / "panos" / PROBE
+    alternate = tmp_path / "guard-disabled"
+    (alternate / "panos").mkdir(parents=True)
+    monkeypatch.setattr(app.backup, "data_dir", lambda: alternate)
+    r = client.post("/api/import", files={
+        "file": ("bundle.zip", _bundle(), "application/zip")})
+    assert r.status_code == 200, r.text
+    assert (alternate / "panos" / PROBE).read_bytes() == b"PROBE-PAYLOAD"
+    assert not sand.exists()

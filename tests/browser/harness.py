@@ -27,10 +27,13 @@ from functools import partial
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from process_tree import ProcessTree
+
 ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = ROOT / "web"
 DEFAULT_EXE = ROOT / "dist" / "NightSeam.exe"
 ARTIFACTS = ROOT / "tests" / "browser" / "artifacts"
+SCRATCH = ROOT / "logs" / "browser"
 
 # Pinned wall clock: a real, non-degenerate late-summer night.  Passed as an
 # ISO string on purpose - Playwright's numeric `clock.install(time=...)` is
@@ -71,6 +74,18 @@ def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def _wait_listener_closed(port: int, timeout: float = 8.0):
+    deadline = time.monotonic() + timeout
+    while True:
+        with socket.socket() as listener:
+            listener.settimeout(0.2)
+            if listener.connect_ex(("127.0.0.1", port)) != 0:
+                return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"gate listener on port {port} survived teardown")
+        time.sleep(0.05)
 
 
 def _http(url: str, method: str = "GET", body: dict | None = None,
@@ -117,13 +132,25 @@ class DesktopServer:
         self.planner = planner
         self.tmp: Path | None = None
         self.proc: subprocess.Popen | None = None
+        self.tree: ProcessTree | None = None
         self.port = 0
         self.base = ""
 
     def start(self, timeout: float = 45.0) -> str:
         if not self.exe.is_file():
             raise RuntimeError(f"packed exe not found: {self.exe}")
-        self.tmp = Path(tempfile.mkdtemp(prefix="ns-browser-"))
+        if self.tmp is not None:
+            raise RuntimeError("gate server is already started")
+        SCRATCH.mkdir(parents=True, exist_ok=True)
+        self.tmp = Path(tempfile.mkdtemp(prefix="ns-browser-", dir=SCRATCH))
+        try:
+            (self.tmp / ".owner-pid").write_text(str(os.getpid()), encoding="utf-8")
+            return self._start(timeout)
+        except BaseException:
+            self.stop()
+            raise
+
+    def _start(self, timeout: float) -> str:
         exe = self.tmp / "NightSeam.exe"
         shutil.copy2(self.exe, exe)
         self.port = free_port()
@@ -131,10 +158,11 @@ class DesktopServer:
                 "--idle-exit-hours", "0"]
         if self.planner:
             args.append("--planner")
-        self.proc = subprocess.Popen(
+        self.tree = ProcessTree(
             args,
             cwd=str(self.tmp), stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, creationflags=_CREATE_NO_WINDOW)
+        self.proc = self.tree.proc
         self.base = f"http://127.0.0.1:{self.port}/"
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -158,14 +186,27 @@ class DesktopServer:
         return _http(self.base + path.lstrip("/"), method, body)
 
     def stop(self):
-        if self.proc is not None and self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
+        if self.tree is not None:
+            self.tree.stop()
+            self.tree = None
+            self.proc = None
+        if self.port:
+            _wait_listener_closed(self.port)
+            self.port = 0
         if self.tmp is not None:
-            shutil.rmtree(self.tmp, ignore_errors=True)
+            # Windows may briefly hold executable files after process exit.
+            # A persistent refusal is an infrastructure failure, never hidden.
+            for attempt in range(4):
+                try:
+                    shutil.rmtree(self.tmp)
+                    break
+                except FileNotFoundError:
+                    break
+                except OSError:
+                    if attempt == 3:
+                        raise
+                    time.sleep(0.2 * (attempt + 1))
+            self.tmp = None
 
 
 # ---------------------------------------------------------------- context

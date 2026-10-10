@@ -1,12 +1,13 @@
-import shutil
+import os
 import sys
-import uuid
+import tempfile
 from pathlib import Path
 
 import pytest
 
 # make the project root importable when running `pytest` from anywhere
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.clean_workspace import remove_tree
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -15,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def tmp_path(request):
     """A temp dir this sandbox can CREATE and DELETE (overrides pytest's own).
 
-    `pytest.ini` sets `--basetemp=.pytest-tmp`, and that directory can acquire an
+    The old root `.pytest-tmp` directory could acquire an
     owner-SID-only DACL in this environment: every `tmp_path` test then ERRORS at
     fixture cleanup with WinError 5 (an environment artifact, not a test
     failure), and the repository's own scratch dir cannot be removed. Keeping the
@@ -24,44 +25,30 @@ def tmp_path(request):
     """
     base = ROOT / "logs" / ".pytest-tmp"
     base.mkdir(parents=True, exist_ok=True)
-    d = base / uuid.uuid4().hex[:12]
-    d.mkdir()
+    d = Path(tempfile.mkdtemp(prefix="test-", dir=base))
+    (d / ".owner-pid").write_text(str(os.getpid()), encoding="utf-8")
+    original_cwd = Path.cwd()
     try:
         yield d
     finally:
-        shutil.rmtree(d, ignore_errors=True)
+        # monkeypatch.chdir is restored by its own later fixture teardown.
+        # Windows cannot remove the directory while this process stands in it.
+        if Path.cwd().is_relative_to(d):
+            os.chdir(original_cwd)
+        remove_tree(d)
 
 
 @pytest.fixture(autouse=True)
-def _never_touch_the_user_profile(monkeypatch):
-    """Keep the DEFAULT archive folder inside the repo for every test.
+def _never_touch_the_user_profile(monkeypatch, tmp_path):
+    """Isolate data, fallback archives and placement for every test.
 
-    `Database.image_dir()` falls back to `paths.default_archive_dir()`
-    (``~/Documents/NightSeam Images``) whenever a test's database has no
-    `image_dir` setting, and a restore then WRITES there - a test that forgot to
-    set the setting silently polluted the developer's real Documents folder
-    (found during review: m31.fit / x.fit / sub/pwn.bat had landed there).
-    Tests that want a specific archive still set `image_dir` themselves; this
-    only guarantees the fallback can never reach the user's profile.
-
-    The path is under `logs/` (gitignored, writable) and is NOT created here:
-    the writer creates it on demand, so this fixture can never fail a run in a
-    sandbox that cannot mkdir inside the pytest temp tree.
-
-    It also redirects the DATA dir. `app/paths.py::data_dir()` resolves to the
-    REPO's real `data/` and even mkdirs `data/panos`, so a test that imported a
-    bundle carrying a panorama payload wrote that payload into the developer's
-    data directory - it was found twice as a stray `data/panos/ok.jpg` (1 byte
-    during the 0.6.32 review, 8 bytes during the fix session). The timing was the
-    nasty part: the assertion guarding it (`test_api.py`) reads that same real
-    directory, so the pollution happened precisely when the test was FAILING.
-    `app/backup.py`, `app/server.py` and `app/images.py` bind `data_dir` with
-    `from .paths import data_dir`, so the module attribute must be patched in
-    each of them - patching `app.paths` alone would not reach the callers.
+    Patch bound imports as well as app.paths so restore/cache writes reach this
+    test's private directory. Tests may override archive settings explicitly;
+    the default can never reach a profile archive or either application store.
     """
     monkeypatch.setattr("app.paths.default_archive_dir",
-                        lambda: ROOT / "logs" / ".pytest-default-archive")
-    sandbox = ROOT / "logs" / ".pytest-data"
+                        lambda: tmp_path / "default-archive")
+    sandbox = tmp_path / "data"
 
     def _sandbox_placement() -> Path:
         return sandbox / "local" / "window-placement.json"
@@ -82,3 +69,23 @@ def _never_touch_the_user_profile(monkeypatch):
     if images is not None:
         monkeypatch.setattr(images, "CACHE_DIR", sandbox / "imgcache",
                             raising=False)
+    # Many test clients intentionally share Database instances across requests.
+    # Own their connections for this test and close them AFTER dependent client
+    # fixtures stop, BEFORE tmp_path teardown tries to delete SQLite files.
+    from app.database import Database
+    original_init = Database.__init__
+    connections = []
+
+    def owned_init(self, *args, **kwargs):
+        try:
+            original_init(self, *args, **kwargs)
+        finally:
+            if hasattr(self, "conn"):
+                connections.append(self.conn)
+
+    monkeypatch.setattr(Database, "__init__", owned_init)
+    try:
+        yield
+    finally:
+        for connection in connections:
+            connection.close()

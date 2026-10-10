@@ -18,11 +18,8 @@ app/_version_baked.py
 # old file enumerated artefacts (`data/*.db`, `data/*.csv`, ...) and therefore
 # missed `data/.export-<hex>.zip` (the spool of a GET /api/export that was
 # aborted) and `data/*.db-journal`, both of which hold user data. Ignore the
-# whole folder and re-include the one tracked placeholder.
+# whole folder. Catalog seed sources live in tracked app/data/.
 /data/
-!data/panos/
-data/panos/*
-!data/panos/.gitkeep
 # downloaded catalog inputs (OpenNGC etc.) are regenerable, not repo content:
 # scripts/build_adv_catalog.py fetches them, and a stray `git add -A` must not
 # commit a multi-MB third-party CSV. Covering `data/` above covers them.
@@ -44,10 +41,7 @@ tests/browser/artifacts/
 # makes them unreadable to the current user, so git cannot even traverse them
 # (`git add -A` aborts with "could not open directory"). They are throwaway
 # copies of repo files, never evidence.
-reviews/*/evidence/scratch/
-
-# DSH AgentTeams harness state (task/mailbox bookkeeping, not repo content)
-.agent-teams/
+/reviews/
 
 # Requested dated UI captures/mockups remain local review evidence.
 /image-catalog-reference/current-ui-*/

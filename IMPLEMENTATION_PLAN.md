@@ -27,11 +27,22 @@ These tasks remain open. Numbers refer to the shared status report's items 3-7.
 - Later performance work: profile representative real archives before changing
   sequential import/reindex batching; retain cancellation, archive locking,
   duplicate identity and transactional publication.
-- Later browser-test tooling: resolve the confirmed orphaned frozen child in
-  BUGS.md; assert harness-owned process/listener teardown and move test scratch
-  under ignored logs/.
 - Later dependency maintenance: review the Starlette/httpx test warning without
   broad dependency changes during this validation/repository pass.
 
 Item 5 (website elevation semantics) remains in the website roadmap. Confirmed
 bugs remain in BUGS.md; deferral does not mark acceptance gaps resolved.
+
+## Completed workspace upkeep - October 10, 2026
+
+- Remove accumulated disposable test/build output; retain data, current release,
+  build environment and split recovery evidence.
+- Isolate test data per test, close test database connections, restore scratch
+  working directories and make cleanup failures visible.
+- Own the packaged browser process tree and verify its listener exits before
+  removing private scratch under logs/.
+- Add safe preview/apply housekeeping, protect active owners and tracked/linked
+  paths, and retain three executable backups after successful builds.
+
+The repeatable commands and handoff routine are in DEVELOPMENT.md. Actual
+validation outcomes are recorded in RELEASES.md.

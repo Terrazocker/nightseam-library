@@ -6,17 +6,13 @@ the working tree, and check_js.py reported OK - its three checkers only match
 text (import paths, DOM ids, identifiers), nothing parsed JavaScript, so the
 broken module was found by a manual `node --check` instead of by the gate.
 
-No tmp_path anywhere: the sandbox's temp-dir ACL makes tmp_path tests error
-(see AGENTS.md / pytest.ini). Scratch lives in the gitignored logs/ and is
-always removed again - the checker's own scratch too, on the failure path.
+Tests use the repository's owned tmp_path fixture. Checker scratch stays under
+ignored logs/; persistent cleanup refusals fail the gate instead of hiding files.
 """
 
 import importlib.util
 import os
-import shutil
 import sys
-import tempfile
-import uuid
 from pathlib import Path
 
 import pytest
@@ -50,28 +46,16 @@ needs_node = pytest.mark.skipif(
 
 
 @pytest.fixture()
-def scratch():
-    """A repo-local scratch dir (logs/ is gitignored), always removed."""
-    base = ROOT / "logs"
-    base.mkdir(parents=True, exist_ok=True)
-    d = base / f"test-js-syntax-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+def scratch(tmp_path):
+    """Per-test JS input, removed by the strict owned tmp_path fixture."""
+    d = tmp_path / "js-syntax-input"
     d.mkdir()
-    try:
-        yield d
-    finally:
-        shutil.rmtree(d, ignore_errors=True)
+    return d
 
 
 def leftovers():
-    """Scratch the checker failed to clean up (repo scratch + temp fallback)."""
-    names = []
-    for base in (ROOT / "logs", Path(tempfile.gettempdir())):
-        try:
-            names += [n for n in os.listdir(base)
-                      if n.startswith(SYN.SCRATCH_PREFIX)]
-        except OSError:
-            pass
-    return sorted(names)
+    """Scratch the checker failed to remove from its sole permitted store."""
+    return sorted(p.name for p in (ROOT / "logs").glob(SYN.SCRATCH_PREFIX + "*"))
 
 
 # --------------------------------------------------------------------------
@@ -169,6 +153,39 @@ def test_no_scratch_files_survive_a_run(scratch, capsys):
     capsys.readouterr()
 
     assert leftovers() == []
+
+
+def test_checker_scratch_is_owned_and_stays_in_logs():
+    directory = SYN._scratch_dir()
+    try:
+        assert directory.parent == ROOT / "logs"
+        assert (directory / ".owner-pid").read_text(encoding="utf-8") == str(os.getpid())
+    finally:
+        SYN.remove_tree(directory)
+
+
+def test_cleanup_refusal_fails_an_otherwise_successful_gate(scratch, monkeypatch, capsys):
+    good = scratch / "ok.js"
+    good.write_text(GOOD_JS, encoding="utf-8")
+    actual_remove = SYN.remove_tree
+    refused = []
+
+    def locked(directory):
+        refused.append(directory)
+        raise PermissionError("checker scratch is locked")
+
+    monkeypatch.setattr(SYN, "find_node", lambda: "node")
+    monkeypatch.setattr(SYN, "node_usable", lambda node: "")
+    monkeypatch.setattr(SYN, "check_one", lambda *args: (True, ""))
+    monkeypatch.setattr(SYN, "remove_tree", locked)
+    try:
+        assert SYN.main(["--path", str(good)]) == 2
+        output = capsys.readouterr().out
+        assert "FATAL" in output and "could not remove scratch" in output
+        assert refused[0].is_dir()
+    finally:
+        for directory in refused:
+            actual_remove(directory)
 
 
 # --------------------------------------------------------------------------

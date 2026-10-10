@@ -49,6 +49,12 @@ archive remains read-only. No remote repository is configured by this split.
   never a skip; this machine may need elevated browser execution.
 - Build: powershell -ExecutionPolicy Bypass -File build.ps1. Never kill a user's
   application to run a gate. Back up an executable before replacement.
+- Housekeeping: python scripts/clean_workspace.py previews disposable output;
+  add --apply to clean, --build-output for build scratch/retired candidates.
+  Apply housekeeping before handoff and verify Git status. Preserve data,
+  archives, releases and recovery evidence; never use git clean -fdx here.
+  Test/tool cleanup failures must fail visibly. Successful builds keep three
+  executable backups and remove build scratch automatically.
 - VERSION owns the project version. The clean initial commit is tagged v0.1.0.
   Do not fake a clean frozen bake or inherit old combined v0.6.x tags. Inspect
   scripts/check_release.py and scripts/make_release.py for local artifact gates.

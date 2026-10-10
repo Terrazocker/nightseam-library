@@ -1,18 +1,16 @@
 # Current NightSeam Catalog findings
 
-## Browser-test teardown - confirmed October 5, 2026
+The browser-test process-tree and silent pytest-cleanup findings were fixed on
+October 10, 2026. See RELEASES.md for validation and DEVELOPMENT.md for upkeep.
 
-The packaged browser harness can leave a headless frozen child running after
-terminating its recorded parent. Separation verification found an orphan from
-this pass's browser gate on private port 8232, with a missing parent and an
-executable in its ns-browser temporary directory. The exact confirmed test child
-was stopped; the normal catalog executable and library files were untouched.
+## Validation environment cache - October 10, 2026
 
-Deferred tooling fix: tear down the harness-owned Windows process tree, verify
-its listener/children have exited, and then clean its temporary directory. Keep
-test scratch under ignored logs/ and never terminate an unrelated user process.
-The passing browser assertions remain valid; this finding concerns cleanup and
-resource leakage, not a dependency on the website.
+A literal `%SystemDrive%/ProgramData/Microsoft/Windows/Caches/` directory appeared
+at the checkout root during concurrent validation/audit work. It contained only
+three Windows cache databases (about 0.94 MiB) and was removed after validating
+its exact location, contents and absence of links. Its creating process is not
+confirmed. Watch for recurrence during browser validation; do not generalize
+cleanup to actual ProgramData or any application database.
 
 ## Acceptance still open
 

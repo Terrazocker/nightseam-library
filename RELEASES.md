@@ -1,5 +1,38 @@
 # Independent catalog release record
 
+## Workspace cleanup and prevention - October 10, 2026
+
+Removed 2137.58 MiB of accumulated test scratch, caches, compilation output,
+retired build candidates and excess executable backups in the initial cleanup,
+with no removal failures. Subsequent housekeeping removed aborted validation
+scratch/captures. Source/packaged data, external archive paths, the current
+release, build environment, UI references and split recovery evidence remain.
+
+Tests now use per-test data/archive directories, close owned SQLite connections
+before removal and leave scratch working directories before teardown. Persistent
+cleanup failures fail visibly. Pytest cache output is disabled. Browser tests
+own frozen descendants through a private Windows Job Object, including after
+launcher exit or harness crash; teardown verifies process/listener exit before
+removing logs/browser scratch. JS syntax scratch is likewise owned under logs/
+with strict cleanup. Housekeeping previews by default and refuses tracked or
+linked paths, skips active/unknown owners and keeps three executable backups.
+Successful builds clean their compilation scratch after releasing an owner lock.
+Runtime logs already rotate with a 1 MiB limit and two backups.
+
+Validation: final full suite **616 passed, one existing Starlette/httpx warning**
+in 156.74 seconds; JS/encoding/core/import/DOM gates passed; development build
+completed and automatic housekeeping passed; local release integrity check
+with --allow-dirty --no-stage reported zero errors. Packaged browser gate
+**10/10 passed** with elevated execution and left no private scratch/listener.
+The sandboxed browser attempt reported 9/10 because its export download was
+canceled; this was treated as failure and rerun with elevated browser execution.
+Earlier strict teardown runs exposed open SQLite handles and a scratch current
+directory; both were fixed before the passing final suite. Validation logs live
+under logs/workspace-*. No version/tag or public release was created.
+The concurrently created workspace audit was preserved in ignored
+reviews/workspace-audit-20261010.md at the user's request. A malformed root
+Windows cache directory was also removed; its unconfirmed origin is in BUGS.md.
+
 ## Separation verification - October 5, 2026
 
 Confirmed separate Git roots/object stores, project-owned build/version/core
