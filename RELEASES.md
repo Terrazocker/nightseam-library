@@ -1,5 +1,24 @@
 # Independent catalog release record
 
+## Scoring parity and D1 drivers revived - October 11, 2026
+
+- F-19: the removed scoring-characterization driver came back as
+  tests/js/scoring_parity.mjs + tests/test_scoring_parity.py. The batched
+  engine is proven bit-identical to the frozen characterization goldens
+  (tests/fixtures/scoring_goldens.json: 697 objects x 2 sites, inputs baked
+  into the fixture) on every displayed field and the transit index, with only
+  the owner-authorized precess-once drift (<=2e-5) allowed on the continuous
+  score doubles; a mutation proof on a COPY of core/scoring.js confirms a
+  perturbed coefficient fails the parity. The orphaned D1 driver
+  (tests/js/core_d1.mjs) is wired too: the world-azimuth bin contract runs
+  against core/horizon.js. Missing node is a HARD failure, never a skip.
+  The goldens stay FROZEN - nothing regenerates them.
+
+Validation: full suite **445 passed, one existing Starlette/httpx warning** in
+91.13 s (three new parity/D1 tests); check_core.py, check_encoding.py,
+check_js.py and the source release guard all passed. Logs under logs/round2-*.
+No version, tag or release artifact was created.
+
 ## Server hardening round - October 11, 2026
 
 - F-09: middleware ORDER fixed - guard_host is now registered last (outermost),
