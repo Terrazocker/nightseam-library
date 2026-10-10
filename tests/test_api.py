@@ -102,6 +102,32 @@ def test_library_edit_database_failure_undoes_the_disk_move(client, db, monkeypa
     assert not (image_dir / "Andromeda").exists()
 
 
+def test_f15_oversized_strings_are_rejected_not_truncated(client, tmp_path, monkeypatch):
+    """F-15: the remaining write fields reject oversized input with a clean 400
+    - never a silent truncate (a cut image_dir would name a DIFFERENT folder)
+    and never a multi-kilobyte archive folder name."""
+    r = client.post("/api/images/ingest", files=[
+        ("files", ("unlisted.fit", unresolved_fits(), "application/octet-stream"))])
+    assert r.status_code == 200
+    r = client.post("/api/library/edit",
+                    json={"name": "TestObj42", "new_name": "x" * 121})
+    assert r.status_code == 400 and "120" in r.json()["detail"]
+    assert client.post("/api/library/edit",
+                       json={"name": "TestObj42", "new_name": "x" * 120}
+                       ).status_code == 200
+
+    # archive path: reject, never cut
+    r = client.post("/api/settings", json={"image_dir": str(tmp_path / ("d" * 1025))})
+    assert r.status_code == 400 and "1024" in r.json()["detail"]
+
+    # open_folder rel: oversized input is refused before the filesystem
+    monkeypatch.setattr("os.startfile", lambda p: None)
+    assert client.post("/api/library/open_folder",
+                       json={"rel": "x" * 513}).status_code == 400
+    assert client.post("/api/library/open_folder",
+                       json={"rel": "x" * 512}).status_code == 404  # in-bounds
+
+
 def test_retired_planner_and_restore_routes_answer_404(client):
     """A stale client must fail loudly, not reach a half-alive route. The
     planner retirement removed whole route families; every one of them must

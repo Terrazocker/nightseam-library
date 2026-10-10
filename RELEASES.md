@@ -1,5 +1,20 @@
 # Independent catalog release record
 
+## F-15 length caps on the remaining write fields - October 11, 2026
+
+- /api/library/edit: object names are ARCHIVE FOLDER names (obj_slug strips
+  unsafe characters but has no length bound). The server now rejects
+  name/new_name over 120 characters - the UI's maxlength=80 is the real
+  contract and the stored object_name column is capped at 120 at ingest.
+- /api/settings: an image_dir over 1024 characters is REJECTED, never
+  truncated - a silently cut path would name a different folder.
+- /api/library/open_folder: a rel over 512 characters is refused before it
+  reaches the filesystem.
+
+Validation: full suite **446 passed, one existing Starlette/httpx warning** in
+87.85 s (one new caps test); encoding, core, JS and source-release gates all
+passed. Logs under logs/round3-*. No version, tag or release artifact.
+
 ## Scoring parity and D1 drivers revived - October 11, 2026
 
 - F-19: the removed scoring-characterization driver came back as

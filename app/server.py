@@ -240,6 +240,10 @@ def create_app(db: Database) -> FastAPI:
                 raise HTTPException(400, "size_unit must be arcmin, arcsec or deg")
             db.set_setting("size_unit", body.size_unit)
         if body.image_dir is not None:
+            # F-15: reject (never truncate) an oversized archive path - a
+            # silently cut path would name a DIFFERENT folder.
+            if len(body.image_dir.strip()) > 1024:
+                raise HTTPException(400, "image_dir must be 1024 characters or fewer")
             db.set_setting("image_dir", body.image_dir.strip() or "")
         return {"ok": True}
 
@@ -331,9 +335,10 @@ def create_app(db: Database) -> FastAPI:
         # hand-rolled check missed (control characters, device names) - a raw
         # NUL used to escape as a 500 instead of a clean 400. The archive root
         # itself stays openable via "." (safe_join refuses the root, so that
-        # case is handled before it).
+        # case is handled before it). F-15: reject an oversized rel cheaply
+        # before it reaches the filesystem.
         rel = body.rel.strip().replace("\\", "/").strip("/")
-        if not rel or any(p == ".." for p in rel.split("/")):
+        if not rel or len(rel) > 512 or any(p == ".." for p in rel.split("/")):
             raise HTTPException(400, "bad folder path")
         base = Path(db.image_dir()).resolve()
         if rel == ".":
@@ -367,10 +372,19 @@ def create_app(db: Database) -> FastAPI:
     @serialize_archive
     def api_library_edit(body: LibraryEditIn):
         """Rename/retype an unresolved library object (object_id IS NULL)."""
+        # F-15: names become ARCHIVE FOLDER names (obj_slug keeps letters,
+        # digits, spaces, _ and - but has no length bound) - the UI's
+        # maxlength=80 is the real contract, and the stored object_name column
+        # is capped at 120 at ingest. Reject oversized names instead of
+        # creating paths that cannot be addressed on Windows.
         name = body.name.strip()
         if not name:
             raise HTTPException(400, "name required")
+        if len(name) > 120:
+            raise HTTPException(400, "name must be 120 characters or fewer")
         new_name = (body.new_name or "").strip() or name
+        if len(new_name) > 120:
+            raise HTTPException(400, "new_name must be 120 characters or fewer")
         otype = body.otype or None
         if otype is not None and otype not in (
                 "galaxy", "globular", "open_cluster", "nebula", "planetary",
