@@ -60,14 +60,20 @@ sparkle(d, 128, 122, 92, (255, 209, 102), outline=(214, 160, 60))
 # small white companion sparkle
 sparkle(d, 196, 74, 30, (233, 238, 250))
 
-out_ico = ROOT / "assets" / "app.ico"
-out_ico.parent.mkdir(parents=True, exist_ok=True)
-sizes = [(16, 16), (24, 24), (32, 32), (48, 48),
-         (64, 64), (128, 128), (256, 256)]
-img.save(out_ico, format="ICO", sizes=sizes)
 
-fav = ROOT / "static" / "favicon.ico"
-fav.write_bytes(out_ico.read_bytes())
+def main():
+    out_ico = ROOT / "assets" / "app.ico"
+    out_ico.parent.mkdir(parents=True, exist_ok=True)
+    sizes = [(16, 16), (24, 24), (32, 32), (48, 48),
+             (64, 64), (128, 128), (256, 256)]
+    img.save(out_ico, format="ICO", sizes=sizes)
 
-print(f"wrote {out_ico} ({out_ico.stat().st_size} bytes)")
-print(f"wrote {fav} ({fav.stat().st_size} bytes)")
+    fav = ROOT / "static" / "favicon.ico"
+    fav.write_bytes(out_ico.read_bytes())
+
+    print(f"wrote {out_ico} ({out_ico.stat().st_size} bytes)")
+    print(f"wrote {fav} ({fav.stat().st_size} bytes)")
+
+
+if __name__ == "__main__":
+    main()

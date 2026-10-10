@@ -41,7 +41,17 @@ export async function api(path, opts) {
     if (!o.silent) toast(`Request failed: ${msg}`);
     throw err;
   }
-  return r.json();
+  // F-23: a 2xx with an empty or non-JSON body used to surface as a bare
+  // SyntaxError with no status and no toast - normalize it to the same
+  // handled-error path.
+  try {
+    return await r.json();
+  } catch (e) {
+    const err = new Error("server returned a malformed response");
+    err.status = r.status;
+    if (!o.silent) toast(err.message);
+    throw err;
+  }
 }
 
 export const parseUTC = iso => new Date(iso + "Z");

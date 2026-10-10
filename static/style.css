@@ -1,54 +1,10 @@
 :root {
-  --bg: #0B1115;
-  --bg2: #152027;
-  --panel: #10181B;
-  --panel2: #152027;
-  --raised: #152027;
-  --border: #293840;
-  --border-soft: #1E2B31;
-  --border2: #304049;
-  --text: #E7ECE8;
-  --dim: #9CAEB1;
-  --faint: #9CAEB1;
-  --accent: #F9C85D;
-  --accent2: #E8A948;
-  --accent-ink: #101316;
-  --good: #5BC68D;
-  --warn: #E8A948;
-  --bad: #C45B52;
-  --gold: #F9C85D;
-  --check: #F9C85D;
-  --check-ink: #101316;
-  --hover: #152027;
-  --thumb1: #26314c;
-  --thumb2: #10141d;
-  --sky1: #0B1115;
-  --sky2: #10181B;
-  --chart-bg: #0B1115;
-  --chip-bg: #152027;
-  --chip-border: #293840;
-  --tooltip-bg: #10181B;
-  --scroll-thumb: #293840;
-  --star-off: #3a4258;
-  --track: #2a3247;
-  --toast-info: #101a2a;
-  --toast-err: #241318;
-  --toast-err-text: #ffd9d9;
-  --backdrop: #000a;
-  --shadow-lg: #000a;
-  --shadow-md: #000b;
-  --shadow-xl: #000c;
-  --moon: #E7ECE8;
-  --legend-ceil: #9CAEB1;
+  /* Workbench role values live in themes.css under
+     html[data-theme="workbench"] (F-17: this block used to duplicate them all
+     with drifted values). Only defaults themes.css does not carry stay here. */
   --scheme: dark;
   --font-ui: "Segoe UI", system-ui, sans-serif;
   --font-mono: Consolas, "Cascadia Mono", monospace;
-  --r-sm: 6px;
-  --r-md: 8px;
-  --r-lg: 10px;
-  --r-xl: 12px;
-  --r-2xl: 14px;
-  --r-pill: 99px;
 }
 
 * { box-sizing: border-box; }
@@ -958,11 +914,6 @@ html[data-theme="workbench"] #detailModal.detail-docked .chart-legend { grid-tem
 .library-session-facts dt, .library-frame-rollup span { color: var(--dim); }
 .library-session-facts dd, .library-frame-rollup b { text-align: right; font-family: var(--font-mono); font-size: 12px; }
 .library-filter-rollup { margin-top: 10px; line-height: 1.6; }
-.library-hero { display: grid; grid-template-columns: minmax(190px, 220px) minmax(0, 1fr); align-items: center; gap: 18px; min-height: 122px; padding: 12px 16px; border: 1px solid var(--border); background: var(--panel); }
-.library-hero h1 { margin: 2px 0 4px; font-size: clamp(22px, 2vw, 30px); }
-.library-hero p { margin: 0; }
-.library-hero-identity .library-hero-common { color: var(--text); font-size: 16px; font-weight: 600; }
-.library-hero-common span { margin-left: 5px; color: var(--dim); font-size: 11px; font-weight: 400; }
 .library-summary { display: grid; flex: 1 1 280px; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; min-width: 0; }
 .library-metric { display: grid; align-content: center; gap: 4px; min-width: 0; padding: 0; border: 0; background: transparent; }
 .library-metric span { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
@@ -1085,7 +1036,6 @@ body.catalog-only .library-map-facts dd { margin: 0; text-align: right; font: 11
   .library-session-rail { order: 3; }
   .library-workspace { order: 2; }
   .library-object-rail { order: 1; }
-  .library-hero { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .library-summary { grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); }
   .library-session-table-wrap { max-height: 54vh; min-height: 150px; }
   .library-object-list { display: grid; flex: none; }

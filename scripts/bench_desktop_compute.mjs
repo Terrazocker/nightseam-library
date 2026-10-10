@@ -16,9 +16,20 @@ import { resolve } from "node:path";
 const C = await import(pathToFileURL(
   resolve(fileURLToPath(new URL("../core", import.meta.url)), "index.js")).href);
 
-const catalogPath = process.argv[2]
-  || resolve(fileURLToPath(new URL("..", import.meta.url)), "web", "catalog.json");
-const catalog = JSON.parse(readFileSync(catalogPath, "utf8"));
+const catalogPath = process.argv[2];
+if (!catalogPath) {
+  console.error("bench: pass a catalog JSON path - the old default "
+    + "(web/catalog.json) does not exist in this repository");
+  process.exit(2);
+}
+const catalog = JSON.parse((() => {
+  try {
+    return readFileSync(catalogPath, "utf8");
+  } catch (err) {
+    console.error(`bench: cannot read ${catalogPath}: ${err.message}`);
+    process.exit(2);
+  }
+})());
 const curated = catalog.filter((o) => !o._adv);
 const advanced = catalog.filter((o) => o._adv);
 

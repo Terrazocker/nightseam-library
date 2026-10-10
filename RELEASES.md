@@ -1,5 +1,41 @@
 # Independent catalog release record
 
+## Rename recovery and hardening batch - October 10, 2026
+
+Follow-up hardening on the retired-planner tree (0ca1b2c era work):
+
+- F-22: archive folder renames now JOURNAL every completed move and UNDO on a
+  mid-merge failure; a database failure after the move undoes the disk move in
+  the route. The undo reports (never swallows) files it could not restore, and
+  Reindex folders remains the recovery path. Found and fixed along the way: the
+  plain-rename branch violated the documented {old: new} map contract (it
+  recorded the new path as the key) - masked for years because
+  db.rename_images derived same-slug paths as a fallback.
+- F-11: seed_catalog, apply_popularity, migrate_legacy_object_ids and
+  rename_images wrap their multi-statement writes in rollback-on-exception, so
+  a mid-sequence failure can no longer be published by the next unrelated
+  commit.
+- F-17: style.css no longer duplicates the Workbench role tokens (the drifted
+  :root copies are gone; only fonts and the pre-theme color scheme stay) and
+  the dead .library-hero rules (with the only viewport-proportional font size)
+  are removed.
+- F-20: build_core.py refuses to bake over a corrupt manifest instead of
+  silently resetting the token; bench_desktop_compute.mjs fails with a clear
+  message instead of a missing-file traceback; make_icon.py writes only under
+  a __main__ guard.
+- F-23: util.js api() normalizes a malformed 2xx body into the handled error
+  path instead of a bare SyntaxError.
+
+Validation: full suite **440 passed, one existing Starlette/httpx warning** in
+86.87 s (three new rename/undo tests); check_js.py, check_encoding.py,
+check_core.py, check_dom_ids.py and the source release guard all passed. The
+packaged browser gate ran **10/10** against a fresh build of the retirement
+commit (0.1.0-g24dfeaef era) after one real catch-and-fix: the browser gate
+caught a sky-map legend crash (state.js lost the disabledTypes field in the
+retirement) that the pytest suite could not see. A further rebuild is needed
+so the exe matches this batch. Logs under logs/assignment2-*. No version, tag
+or public release was created.
+
 ## Planner retirement - October 10, 2026
 
 The retained maintenance planner was retired (IMPLEMENTATION_PLAN item 6,

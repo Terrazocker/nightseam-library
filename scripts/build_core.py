@@ -143,13 +143,22 @@ def main() -> int:
     previous = None
     old_hash = None
     if MANIFEST.is_file():
+        # F-20: a PRESENT but corrupt manifest must refuse the bake - silently
+        # treating it as fresh reset the token to 1 and dropped the previous
+        # link, so the retention policy lost its history anchor.
         try:
             old = json.loads(MANIFEST.read_text(encoding="utf-8"))
+            if not isinstance(old, dict) or "hash" not in old \
+                    or "token" not in old:
+                raise ValueError("manifest is missing hash/token")
             token = int(old.get("token", 1))
             old_hash = old.get("hash") or None
             previous = old.get("previous") or None
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as exc:
+            print(f"build_core: refusing to bake over a corrupt manifest "
+                  f"({exc}) - restore or delete core/core.manifest.json "
+                  f"deliberately, then retry")
+            return 1
     previous = previous_for_bake(
         old_hash, previous, hash_,
         retire_model_bearing_previous=args.retire_model_bearing_previous)
