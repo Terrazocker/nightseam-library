@@ -1,5 +1,24 @@
 # Independent catalog release record
 
+## Packaged verification of partial-review implementation - October 11, 2026
+
+Built clean source commit cad47686 as **NightSeam 0.1.0-gcad47686**, using the
+existing locked Windows x64 CPython 3.12 build environment. Dependency preflight,
+source guards and compilation passed; no dependencies were installed. The
+previous executable was backed up and verified before replacement. Automatic
+housekeeping removed **50.28 MiB** with zero failures and retained three recovery
+executables.
+
+The packaged private-data browser gate passed **10/10**, including the new
+partial-import response/chunk-stop regression. The local artifact guard reported
+**zero errors**. Evidence: logs/partial-review-fixes-20261011/build-cad4768.log,
+browser-cad4768.log and release-cad4768.log. User data and external archives were
+preserved; VERSION, tags and public release artifacts were unchanged.
+
+This final documentation revision is rebuilt for handoff, with build/browser/
+artifact results recorded in final-*.log in the same ignored evidence directory
+and in reviews/partial-review-fixes-20261011.md. No public release is implied.
+
 ## Verified partial-review implementation - October 11, 2026
 
 Implemented the substantiated issues in reviews/partial-review-verification-20261011.md:
