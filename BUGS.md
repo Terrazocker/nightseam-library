@@ -24,11 +24,14 @@ cleanup to actual ProgramData or any application database.
   repair records without a trustworthy prior fingerprint. Ambiguous matches
   remain unchanged and require manual review; no missing record is discarded.
 
-- The twelve-hour adjacent-capture rule can combine consecutive observing
-  nights with a short daytime gap. This is the current policy, not a calendar-
-  night guarantee. A future night-boundary option needs an observatory timezone
-  and explicit calibration/daytime semantics. Existing folder labels are not
-  migrated when later imports extend a logical session.
+- Solar session boundaries require reliable capture times and location. Missing
+  location is visibly Unassigned location by UTC date; unsupported explicit time
+  scales and ambiguous/invalid dates are Undated. These are unresolved metadata,
+  not verified observing nights. A fallback location helps only when both header
+  coordinates are absent. Real sunrise/set can differ from the conventional
+  -0.833-degree horizon because of terrain, elevation and atmospheric conditions.
+  Continuous polar phases are explicitly split by UTC date. Reindex refreshes
+  membership without moving files; old physical folder labels can remain.
 
 - CSV formula protection targets spreadsheet viewing. Import/resave behavior
   differs among spreadsheet applications; JSON retains exact original values.

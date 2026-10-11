@@ -90,7 +90,7 @@ def test_main_accepts_locked_environment(monkeypatch, capsys):
     monkeypatch.setattr(CHECK, "inventory_errors", lambda pins: [])
     monkeypatch.setattr(CHECK, "closure_errors", lambda pins: [])
     assert CHECK.main() == 0
-    assert "40 exact pins" in capsys.readouterr().out
+    assert "41 exact pins" in capsys.readouterr().out
 
 
 def test_unsupported_python_rejected(monkeypatch):

@@ -17,7 +17,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 LOCK = REPO / "requirements-build-lock.txt"
 ROOT_PACKAGES = {"fastapi", "uvicorn", "python-multipart", "pywebview",
-                 "pytest", "httpx", "httpx2", "pillow", "pyinstaller"}
+                 "pytest", "httpx", "httpx2", "pillow", "pyinstaller", "mini-racer"}
 PIN = re.compile(r"([A-Za-z0-9][A-Za-z0-9_.-]*)==([A-Za-z0-9][A-Za-z0-9.!+_-]*)")
 
 

@@ -785,6 +785,14 @@ body.catalog-only .archive-path-row button {
   font: inherit;
 }
 body.catalog-only .archive-path-row button { text-align: center; }
+body.catalog-only .observing-site-fields {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: .5rem .7143rem;
+}
+body.catalog-only .observing-site-fields input { min-width: 0; width: 100%; }
+body.catalog-only .observing-site-fields button { grid-column: 2; justify-self: end; }
 body.catalog-only .archive-copy {
   max-width: 34rem;
   margin: .8571rem 0 0;

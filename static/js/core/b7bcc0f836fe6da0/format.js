@@ -1,7 +1,7 @@
 /*
  * NightSeam core - display formatting and chart presentation helpers (pure).
  *
- * Single implementation for both shells (Phase 2, concept 1). No DOM, storage,
+ * Single implementation (Phase 2, concept 1). No DOM, storage,
  * network or build tokens. Catalog sizes are ARCMINUTES and are rendered in one
  * user-chosen unit; `escape` is injected by shells that build HTML strings so
  * the core stays DOM-free.
@@ -52,8 +52,8 @@ export function framePct(sizeAm, fovWArcmin) {
   return Math.round(100 * sizeAm / fovWArcmin);
 }
 
-/** All-sky chart magnitude limit - the ONE rule behind the desktop "#skyMag"
- *  slider and the web chart's equivalent control. An object with a magnitude
+/** All-sky chart magnitude limit - the ONE rule behind the catalog's
+ *  "#skyMag" slider. An object with a magnitude
  *  shows when vmag <= limit; one WITHOUT a magnitude shows only at the
  *  slider's maximum. Sun/Moon, field stars and the min-alt ring are untouched. */
 export function magVisible(vmag, limit, maxLimit) {

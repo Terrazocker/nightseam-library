@@ -82,6 +82,12 @@ CREATE TABLE IF NOT EXISTS images (
     exposure REAL,
     date_obs TEXT,
     session_date_obs TEXT,
+    site_lat REAL,
+    site_lon REAL,
+    session_key TEXT,
+    session_kind TEXT,
+    session_start TEXT,
+    session_end TEXT,
     filter TEXT,
     telescope TEXT,
     imagetyp TEXT,
@@ -193,6 +199,9 @@ class Database:
         # reindex. Keep existing duplicate rows intact; this is not a UNIQUE
         # constraint and never deletes user files.
         for column, kind in (("session_date_obs", "TEXT"),
+                             ("site_lat", "REAL"), ("site_lon", "REAL"),
+                             ("session_key", "TEXT"), ("session_kind", "TEXT"),
+                             ("session_start", "TEXT"), ("session_end", "TEXT"),
                              ("content_sha256", "TEXT"), ("file_size", "INTEGER"),
                              ("file_mtime_ns", "INTEGER")):
             try:
@@ -454,14 +463,22 @@ class Database:
                 return default
 
     def set_setting(self, key: str, value):
-        if key == "theme":
-            value = normalize_theme(value)
-        with (self.archive_lock if key == "image_dir" else nullcontext()), self.lock:
-            self.conn.execute(
-                "INSERT INTO settings(key,value) VALUES(?,?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (key, json.dumps(value)))
-            self.conn.commit()
+        self.update_settings({key: value})
+
+    def update_settings(self, changes: dict):
+        """Publish a validated settings request atomically."""
+        values = [(key, json.dumps(normalize_theme(value) if key == "theme" else value))
+                  for key, value in changes.items()]
+        archive_settings = any(key in ("image_dir", "observing_site") for key in changes)
+        with (self.archive_lock if archive_settings else nullcontext()), self.lock:
+            try:
+                self.conn.executemany(
+                    "INSERT INTO settings(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value", values)
+                self.conn.commit()
+            except BaseException:
+                self.conn.rollback()
+                raise
 
     def image_dir(self) -> str:
         """User-chosen image archive folder, or the default when unset."""
@@ -488,8 +505,9 @@ class Database:
         c = self.conn.execute(
             "INSERT INTO images(file,orig_name,object_id,object_name,"
             "ra_hours,dec_deg,exposure,date_obs,session_date_obs,filter,telescope,imagetyp,"
-            "ingested_at,content_sha256,file_size,file_mtime_ns) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "ingested_at,content_sha256,file_size,file_mtime_ns,"
+            "site_lat,site_lon,session_key,session_kind,session_start,session_end) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (rec["file"], rec["orig_name"], rec.get("object_id"),
              rec["object_name"], finite_or_none(rec.get("ra_hours")),
              finite_or_none(rec.get("dec_deg")),
@@ -497,12 +515,15 @@ class Database:
              normalize_session_date_obs(rec.get("session_date_obs")),
              rec.get("filter"), rec.get("telescope"), rec.get("imagetyp"),
              rec["ingested_at"], rec.get("content_sha256"),
-             rec.get("file_size"), rec.get("file_mtime_ns")))
+             rec.get("file_size"), rec.get("file_mtime_ns"),
+             finite_or_none(rec.get("site_lat")), finite_or_none(rec.get("site_lon")),
+             rec.get("session_key"), rec.get("session_kind"),
+             rec.get("session_start"), rec.get("session_end")))
         return c.lastrowid
 
     def apply_reindex_plan(self, expected_images: list[dict], additions: list[dict],
                            fingerprints: list[tuple], relinks: list[tuple], *,
-                           cancel_check=None) -> None:
+                           cancel_check=None, session_updates=()) -> None:
         """Apply a filesystem scan atomically if its entire input is unchanged.
 
         Fingerprints are (id, digest, size, mtime_ns); relinks additionally
@@ -539,6 +560,18 @@ class Database:
                     self.conn.execute(
                         "UPDATE images SET file=?,content_sha256=?,file_size=?,file_mtime_ns=? WHERE id=?",
                         (file, digest, size, mtime_ns, img_id))
+                for rec in session_updates:
+                    if cancel_check is not None:
+                        cancel_check()
+                    if rec["id"] not in ids:
+                        raise ValueError("Reindex session update refers to an unknown image")
+                    self.conn.execute(
+                        "UPDATE images SET site_lat=?,site_lon=?,session_key=?,session_kind=?,"
+                        "session_start=?,session_end=?,date_obs=CASE WHEN ? THEN ? ELSE date_obs END WHERE id=?",
+                        (finite_or_none(rec.get("site_lat")), finite_or_none(rec.get("site_lon")),
+                         rec.get("session_key"), rec.get("session_kind"),
+                         rec.get("session_start"), rec.get("session_end"), "date_obs" in rec,
+                         rec.get("date_obs"), rec["id"]))
                 for rec in additions:
                     if cancel_check is not None:
                         cancel_check()

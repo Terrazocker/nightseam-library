@@ -53,7 +53,8 @@ $catalogBake = "BAKED_VERSION = '$catalogVersion'`n"
     --specpath "$PSScriptRoot\dist" --distpath "$PSScriptRoot\dist" --workpath "$PSScriptRoot\build" `
     --name NightSeam --icon "$PSScriptRoot\assets\app.ico" `
     --add-data "$PSScriptRoot\static;static" --add-data "$PSScriptRoot\app\data;app\data" `
-    --collect-all uvicorn --collect-all webview --hidden-import python_multipart "$PSScriptRoot\main.py"
+    --add-data "$PSScriptRoot\NOTICE;." --add-data "$PSScriptRoot\LICENSE;." `
+    --collect-all uvicorn --collect-all webview --collect-all py_mini_racer --hidden-import python_multipart "$PSScriptRoot\main.py"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $catalogExe)) { throw "Compilation failed" }
 } finally {
     $catalogOwnerStream.Dispose()

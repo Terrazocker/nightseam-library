@@ -35,17 +35,31 @@ files without usable frame-type headers, import each type separately: select
 ## How separate imports join sessions
 
 NightSeam identifies an object from **OBJECT**, the filename or coordinates.
-For each object, it sorts the entire stored library by capture timestamp
-(**DATE-OBS**, falling back to **DATE**). Consecutive frames separated by
-**less than 12 hours** belong to one capture session, including across midnight
-and separate uploads. A gap of exactly 12 hours starts a new session. Missing
-or unusable dates form an **undated** session for that object.
+For each object and observing location, **sunset through the next sunrise is
+one Night session**. **Sunrise through sunset is one Day session**. Capture
+gaps and upload order do not define the boundaries. A capture exactly at sunrise
+belongs to Day; one exactly at sunset belongs to Night.
 
 For example, M31 lights captured at 22:00 and more M31 lights at 01:00 join the
 same session even when uploaded on different days. Filter and frame type do
-not split that session. A different object is grouped separately. The grouping
-uses consecutive gaps, so a continuously connected session can span more than
-12 hours in total.
+not split that session. A different object is grouped separately. Even a winter
+night longer than twelve hours remains one session. Automatically imported
+daytime flats belong to Day; use a selected night's **+ Flats** action when you
+want to attach them explicitly to that night instead.
+
+**SITELAT/SITELONG** in the FITS header supply the observing location. For files
+without either field, enter their known latitude and longitude in **Observing
+location fallback**, then **Save**. Header location takes priority; invalid or
+incomplete header coordinates remain **Unassigned location**, grouped by UTC
+capture date. Leave both fallback fields blank and save to clear the setting.
+Stored locations are retained when the fallback later changes. Continuous
+polar day/night uses explicitly labelled UTC-date intervals.
+
+**DATE-OBS** is the capture time. A timestamp without an offset is UTC;
+explicit offsets are converted to UTC and fractional seconds are preserved.
+Missing or invalid timestamps, ambiguous slash dates and unsupported explicit
+**TIMESYS** values form **Undated** sessions. **DATE**, the file-creation field,
+is never used as a capture-time substitute. Original files remain unchanged.
 
 The archive stores copies in:
 
@@ -56,17 +70,20 @@ The archive stores copies in:
 <archive>/<object>/<session>/bias/
 ```
 
-Session folders normally use `YYYY-MM-DD_HHMM` in the machine's local zone, or
-`undated`. Importing an earlier capture later can change the logical start of
-a session and create another folder; existing files are not moved. One logical
-Library session can therefore refer to multiple folders. **Recent imports** is
+New session folders use the fixed UTC solar boundary and an identity suffix,
+such as `night_2026-08-22_181703_<identity>`. Unresolved folders use
+`unassigned_YYYY-MM-DD` or `undated`. Earlier captures from the same interval
+use the same folder. Reindex refreshes old logical membership without moving
+existing files, so one Library session can still refer to multiple older folders.
+**Recent imports** is
 upload history, so separate upload actions can remain separate entries even
 when Library combines their capture sessions.
 
 ## Reindex an existing archive
 
 **Reindex folders** reads the saved Archive folder; select the root above the
-object folders. It indexes exposure files already arranged in either of these
+object folders. It refreshes capture/session metadata from headers and indexes
+exposure files already arranged in either of these
 supported layouts:
 
 ```text

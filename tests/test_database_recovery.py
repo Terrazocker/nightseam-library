@@ -277,3 +277,66 @@ def test_import_history_failure_rolls_back_only_history_and_keeps_committed_imag
     assert db.image(image_id) is not None
     # A following transaction must work without a sacrificial failing call.
     db.apply_reindex_plan(db.images(), [], [], [])
+
+
+
+def test_session_fields_round_trip_and_transactional_backfill(tmp_path):
+    from app.solar import session_metadata
+    db = Database(tmp_path / "sessions.sqlite")
+    metadata = session_metadata("2026-08-22T23:00:00Z", 52.52, 13.405)
+    identifier = db.add_image(rec(date_obs="2026-08-22T23:00:00", site_lat=52.52, site_lon=13.405, **metadata))
+    record = db.image(identifier)
+    assert record["site_lat"] == 52.52 and record["site_lon"] == 13.405
+    assert all(record[key] == value for key, value in metadata.items())
+    before = db.images()
+    updated = {"id":identifier, "date_obs":None, "site_lat":None, "site_lon":None,
+               **session_metadata(None, None, None)}
+    db.apply_reindex_plan(before, [], [], [], session_updates=[updated])
+    after = db.image(identifier)
+    assert all(after[key] == value for key, value in updated.items())
+    assert after["file"] == before[0]["file"]
+
+
+def test_reindex_session_update_failure_rolls_back_prior_fingerprint_and_relink(tmp_path):
+    db = Database(tmp_path / "sessions.sqlite")
+    identifier = db.add_image(rec())
+    before = db.images()
+    with pytest.raises(ValueError, match="unknown image"):
+        db.apply_reindex_plan(before, [], [(identifier,"a"*64,10,20)],
+                              [(identifier,"Relink/lights/a.fit","a"*64,10,20)],
+                              session_updates=[{"id":identifier,"session_key":"undated"},
+                                               {"id":identifier+100,"session_key":"undated"}])
+    assert db.images() == before
+
+
+def test_legacy_image_table_gains_nullable_session_columns_without_rewriting(tmp_path):
+    path = tmp_path / "legacy.sqlite"
+    connection = sqlite3.connect(path)
+    connection.execute("CREATE TABLE images(id INTEGER PRIMARY KEY,file TEXT,orig_name TEXT,object_id TEXT,"
+                       "object_name TEXT,ra_hours REAL,dec_deg REAL,exposure REAL,date_obs TEXT,"
+                       "filter TEXT,telescope TEXT,ingested_at TEXT)")
+    connection.execute("INSERT INTO images VALUES(1,'Original/lights/a.fit','a.fit',NULL,'Target',"
+                       "NULL,NULL,60,'2026-08-22T23:00:00',NULL,NULL,'original')")
+    connection.commit()
+    connection.close()
+    db = Database(path)
+    record = db.image(1)
+    assert record["file"] == "Original/lights/a.fit" and record["date_obs"] == "2026-08-22T23:00:00"
+    assert all(record[key] is None for key in ("site_lat","site_lon","session_key","session_kind","session_start","session_end"))
+
+
+def test_settings_failure_rolls_back_entire_request(tmp_path):
+    db = Database(tmp_path / "settings.sqlite")
+    with closing(db.conn):
+        db.update_settings({"size_unit": "arcmin", "observing_site": None})
+        db.conn.execute("CREATE TRIGGER reject_site BEFORE UPDATE ON settings "
+                        "WHEN NEW.key='observing_site' "
+                        "BEGIN SELECT RAISE(ABORT,'site failure'); END")
+        db.conn.commit()
+        with pytest.raises(sqlite3.IntegrityError, match="site failure"):
+            db.update_settings({"size_unit": "deg", "observing_site": {"latitude": 50, "longitude": 8}})
+        assert db.setting("size_unit") == "arcmin"
+        assert db.setting("observing_site") is None
+        assert not db.conn.in_transaction
+        db.set_setting("size_unit", "deg")
+        assert db.setting("size_unit") == "deg"

@@ -1,5 +1,55 @@
 # Independent catalog release record
 
+## Solar night/day sessions - October 11, 2026
+
+The user-selected session policy replaces twelve-hour capture gaps: each object's
+night runs sunset to next sunrise, and its day runs sunrise to sunset at the
+capture location. Exact UTC intervals and site identity make grouping and new
+folder names independent of upload order, host timezone and long winter gaps.
+FITS coordinates take priority over the new observing-location fallback. Missing
+location remains visibly Unassigned location; unreliable capture time remains
+Undated. DATE-OBS preserves fractions and explicit offsets; DATE is not a capture
+fallback and ambiguous dates/unsupported explicit time scales are not guessed.
+
+Explicit calibration keeps its own capture instant/site and the chosen logical
+target. Transactional reindex backfills solar metadata without moving files and
+keeps calibration with its target when previously missing location is supplied.
+Integration fixes cover the removed calibration date-helper call, atomic settings
+requests, invalid unrelated legacy anchor dates and calibration backfill. Duplicates
+retain their original records, classes and associations.
+
+core/solar_sessions.js uses existing shared astronomy functions, with extrema
+refinement for brief grazing phases. app/solar.py executes its generated bake in
+embedded mini-racer 0.14.1; no Node runtime or duplicate Python astronomy was added.
+The build closure now has 41 verified pins. Original MiniRacer/V8/ICU notices are
+included in NOTICE and the executable. Authorized core regeneration produced hash
+2cd86208d501eff7, token 48, retaining b7bcc0f836fe6da0. Existing astronomy reference
+fixtures are unchanged.
+
+Final full suite: **635 passed in 151.91 seconds** on the locked build interpreter
+after the final application changes. Focused archive/database checks passed
+**122 tests**; the source JS/import/DOM/encoding/core guards pass, with the same two
+existing advisory names. The source release guard reports **zero errors**.
+An earlier full run exposed an omitted core-guard export registration; it was fixed
+and independently rerun. Reproduced settings/reindex regressions pass after repair.
+
+Read-only inspection classified all **4,354** provided Seestar headers into **five
+nights**. All contain observing coordinates. A private-copy import/reindex of
+12 representative files preserved complete records and IDs, with zero additions,
+repairs, failures or conflicts on reindex; original sample sizes/mtimes were
+unchanged. These samples contain lights/stacks, so calibration uses private
+synthetic regression data. No actual source/packaged library was reindexed.
+
+The development candidate compiled and passed **11/11** private packaged browser
+checks, including real uploads using embedded solar calculations. The final clean
+source revision is rebuilt for handoff; the strengthened final packaged check also
+exercises calibration location backfill. Final build/browser/artifact outcomes and
+commit identity are retained in logs/solar-sessions-20261011/final-*.log and
+reviews/solar-session-implementation-20261011.md. Candidate housekeeping removed
+74.23 MiB with zero failures and retained three executable backups. VERSION, tags,
+user data, external archives and D:/seestar originals are preserved. No public
+release or website deployment is implied.
+
 ## Final full-byte deduplication follow-up - October 11, 2026
 
 A final review reproduced another cache edge case: an externally replaced

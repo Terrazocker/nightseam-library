@@ -4,6 +4,81 @@ from harness import check
 from time import monotonic
 
 
+@check("desktop-catalog-solar-sessions", "catalog")
+def desktop_catalog_solar_sessions(c):
+    """Exercise packaged V8, actual uploads and the observing-location form."""
+    def capture(stamp, identity, object_name='M31', site=None):
+        cards = [("SIMPLE", "T"), ("OBJECT", repr(object_name)), ("EXPTIME", "60"),
+                 ("DATE-OBS", repr(stamp)), ("IMAGETYP", "'LIGHT'")]
+        if site:
+            cards += [('SITELAT', str(site[0])), ('SITELONG', str(site[1]))]
+        header = "".join(f"{key:<8}= {value}".ljust(80) for key, value in cards)
+        header += "END".ljust(80)
+        return header.ljust(2880).encode("ascii") + identity.encode("ascii")
+
+    c.goto()
+    c.page.locator('#catalog-tab-import').click()
+    c.page.locator('#siteLat').fill('52.52')
+    c.page.locator('#siteLon').fill('13.405')
+    with c.page.expect_response(lambda response: response.url.endswith('/api/settings')
+                                and response.status == 200):
+        c.page.locator('#btnSiteSave').click()
+    c.page.locator('#toasts .toast').filter(has_text='Observing location saved.').wait_for()
+    with c.page.expect_file_chooser() as picked:
+        c.page.locator('#btnTopIngest').click()
+    picked.value.set_files([
+        {"name": name + ".fit", "mimeType": "application/octet-stream",
+         "buffer": capture(stamp, name)}
+        for name, stamp in [('late', '2026-12-22T06:00:00Z'),
+                            ('early', '2026-12-21T16:00:00Z'),
+                            ('day', '2026-12-22T12:00:00Z')]])
+    c.page.wait_for_function("() => !document.querySelector('#btnTopIngest').disabled")
+    library = c.page.request.get(c.url('/api/library')).json()
+    obj = next(obj for obj in library['objects'] if obj['object_id'] == 'ngc224')
+    c.expect_eq(obj['n_sessions'], 2, 'a fourteen-hour winter night and following day must remain separate')
+    night, day = obj['sessions']
+    c.expect_eq([night['session_kind'], day['session_kind']], ['night', 'day'])
+    c.expect_eq(night['n_images'], 2, 'reverse import order must preserve whole-night membership')
+    c.expect_eq([night['start'], night['end']], ['2026-12-21T16:00:00', '2026-12-22T06:00:00'])
+    c.expect(night['session_start'] < night['start'] and night['session_end'] > night['end'],
+             'packaged solar windows must cover both captures')
+    c.page.locator('#catalog-tab-library').click()
+    c.page.locator('#librarySessions tr.library-session').first.wait_for()
+    c.expect_eq(c.page.locator('#librarySessions tr.library-session').count(), 2)
+    c.expect_in('Night', c.page.locator('#librarySessions').inner_text())
+    c.expect_in('Day', c.page.locator('#librarySessions').inner_text())
+
+    # Supplying a previously missing location must carry an explicit flat along
+    # with its chosen target, even when its own capture date/site differ.
+    response = c.page.request.post(c.url('/api/settings'), data={'observing_site': None})
+    c.expect_eq(response.status, 200)
+    def upload(stamp, identity, **fields):
+        response = c.page.request.post(c.url('/api/images/ingest'), multipart={
+            'files': {'name': identity + '.fit', 'mimeType': 'application/octet-stream',
+                      'buffer': capture(stamp, identity, 'M42', (40, -74) if fields else None)},
+            **fields})
+        c.expect_eq(response.status, 200)
+        result = response.json()['results'][0]
+        c.expect(result['ok'], 'real packaged calibration upload must succeed')
+        return result
+    anchor = upload('2026-08-22T23:00:00Z', 'unassigned-anchor')
+    c.expect_eq(anchor['session_kind'], 'unassigned')
+    upload('2026-09-15T12:00:00Z', 'attached-flat', frame='flat', session_anchor_id=str(anchor['id']))
+    response = c.page.request.post(c.url('/api/settings'), data={
+        'observing_site': {'latitude': 52.52, 'longitude': 13.405}})
+    c.expect_eq(response.status, 200)
+    response = c.page.request.post(c.url('/api/library/reindex'))
+    c.expect_eq(response.status, 200)
+    obj = next(obj for obj in c.page.request.get(c.url('/api/library')).json()['objects']
+               if obj['object_id'] == 'ngc1976')
+    c.expect_eq(obj['n_sessions'], 1, 'location backfill must preserve an explicit attachment')
+    c.expect_eq(obj['sessions'][0]['session_kind'], 'night')
+    flat = next(image for image in obj['images'] if image['imagetyp'] == 'flat')
+    c.expect_eq(flat['date_obs'], '2026-09-15T12:00:00')
+    c.expect_eq([flat['site_lat'], flat['site_lon']], [40, -74])
+    c.assert_clean()
+
+
 def _selected_session_actions(c):
     """Legacy folders use explicit targets; real chooser events reach uploads."""
     import re

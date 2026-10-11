@@ -19,7 +19,7 @@ from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from .database import Database
 from .imglib import CatalogResolver, name_key
@@ -123,9 +123,22 @@ async def _reindex_with_disconnect(db, request):
 
 # ------------------------------------------------------------------ models
 
+class ObservingSiteIn(BaseModel):
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
+
+    @field_validator("latitude", "longitude", mode="before")
+    @classmethod
+    def reject_boolean(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("Coordinates must be numbers, not booleans")
+        return value
+
+
 class SettingsIn(BaseModel):
     image_dir: Optional[str] = None
     size_unit: Optional[str] = None
+    observing_site: ObservingSiteIn | None = None
 
 
 class LibraryEditIn(BaseModel):
@@ -230,21 +243,28 @@ def create_app(db: Database) -> FastAPI:
             "version": APP_VERSION,
             "image_dir": db.image_dir(),
             "size_unit": db.setting("size_unit", "arcmin"),
+            "observing_site": db.setting("observing_site"),
         }
 
     @app.post("/api/settings")
     @serialize_archive
     def api_set_settings(body: SettingsIn):
+        changes = {}
         if body.size_unit is not None:
             if body.size_unit not in ("arcmin", "arcsec", "deg"):
                 raise HTTPException(400, "size_unit must be arcmin, arcsec or deg")
-            db.set_setting("size_unit", body.size_unit)
+            changes["size_unit"] = body.size_unit
         if body.image_dir is not None:
             # F-15: reject (never truncate) an oversized archive path - a
             # silently cut path would name a DIFFERENT folder.
             if len(body.image_dir.strip()) > 1024:
                 raise HTTPException(400, "image_dir must be 1024 characters or fewer")
-            db.set_setting("image_dir", body.image_dir.strip() or "")
+            changes["image_dir"] = body.image_dir.strip() or ""
+        if "observing_site" in body.model_fields_set:
+            changes["observing_site"] = (body.observing_site.model_dump()
+                                         if body.observing_site is not None else None)
+        if changes:
+            db.update_settings(changes)
         return {"ok": True}
 
     # ---------------- image archive ----------------

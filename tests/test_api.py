@@ -57,6 +57,26 @@ def test_settings_rejects_bad_size_unit(client):
     assert r.status_code == 400
 
 
+def test_observing_site_roundtrip_and_clear(client):
+    site = {"latitude": 50.0383, "longitude": 7.81667}
+    assert client.post("/api/settings", json={"observing_site": site}).status_code == 200
+    assert client.get("/api/state").json()["observing_site"] == site
+    assert client.post("/api/settings", json={"size_unit": "deg"}).status_code == 200
+    assert client.get("/api/state").json()["observing_site"] == site
+    assert client.post("/api/settings", json={"observing_site": None}).status_code == 200
+    assert client.get("/api/state").json()["observing_site"] is None
+
+
+@pytest.mark.parametrize("invalid", [{"size_unit": "parsecs"}, {"image_dir": "x" * 1025},
+                                    {"observing_site": {"latitude": 91, "longitude": 0}},
+                                    {"observing_site": {"latitude": True, "longitude": 0}}])
+def test_rejected_settings_leave_all_values_unchanged(client, invalid):
+    before = client.get("/api/state").json()
+    change = {"size_unit": "deg", "observing_site": {"latitude": 50, "longitude": 8}, **invalid}
+    assert client.post("/api/settings", json=change).status_code in (400, 422)
+    assert client.get("/api/state").json() == before
+
+
 def test_retired_sky_brightness_setting_is_ignored(client):
     """Old clients may still submit the removed preference; it must not be
     exposed or stored again."""
@@ -917,6 +937,8 @@ def m31_at(date_obs: str) -> bytes:
         ("OBJECT", "'M 31                     ' / Andromeda"),
         ("EXPTIME", "300.0"),
         ("DATE-OBS", f"'{date_obs}'"),
+        ("SITELAT", "50.0383"),
+        ("SITELONG", "7.81667"),
         ("FILTER", "'L'"),
         ("NAXIS", "2"),
         ("RA", "0.712"),
@@ -930,6 +952,8 @@ def m31_frame(date_obs: str, imagetyp: str, exposure: float = 60.0) -> bytes:
         ("OBJECT", "'M 31                     ' / Andromeda"),
         ("EXPTIME", str(exposure)),
         ("DATE-OBS", f"'{date_obs}'"),
+        ("SITELAT", "50.0383"),
+        ("SITELONG", "7.81667"),
         ("IMAGETYP", f"'{imagetyp}'"),
         ("NAXIS", "2"),
         ("RA", "0.712"),
@@ -954,7 +978,7 @@ def test_import_batches_recorded(client):
     assert batches[1]["n_files"] == 2
     assert batches[1]["total_exposure"] == 600.0
     assert batches[1]["slug"] == "Andromeda Galaxy"
-    assert batches[1]["session"] == "2026-08-22_2000"
+    assert batches[1]["session"].startswith("night_2026-08-22_")
     assert batches[1]["object_id"] == "ngc224"
     assert batches[1]["image_dir"] == str(tmp_archive(client))
 
@@ -997,7 +1021,7 @@ def test_selected_session_calibration_keeps_capture_date_and_object(client, db, 
     assert record["session_date_obs"] == normalize_session_date_obs(anchor_date)
     parts = record["file"].split("/")
     assert len(parts) == 4 and parts[0] == "M31"
-    assert parts[1] == ("custom-session" if layout == "modern" else "2026-08-22_2314")
+    assert parts[1] == ("custom-session" if layout == "modern" else "unassigned_2026-08-22")
     assert parts[-2] == {"dark": "darks", "flat": "flats", "bias": "bias"}[frame]
     assert (base / record["file"]).read_bytes() == payload
     assert path.read_bytes() == m31_fits()
@@ -1171,7 +1195,7 @@ def test_rejected_requests_do_not_advance_the_idle_timer(client):
 
 def test_ingest_session_folders(client):
     """Frames from different nights land in different session sub-folders;
-    frames within 12 h share one session folder."""
+    daylight frames belong to their own solar interval."""
     files = [
         ("f1.fit", m31_at("2026-08-22T20:00:00"), "application/octet-stream"),
         ("f2.fit", m31_at("2026-08-23T13:00:00"), "application/octet-stream"),
@@ -1185,7 +1209,8 @@ def test_ingest_session_folders(client):
     assert all(len(p) == 4 and p[0] == "Andromeda Galaxy" and p[-2] == "lights"
                for p in parts)
     s1, s2, s3 = (p[1] for p in parts)
-    assert s1 == s3 and s1 != s2 and s2.endswith("_1300")
+    assert s1 == s3 and s1 != s2
+    assert s1.startswith("night_") and s2.startswith("day_")
     lib = client.get("/api/library").json()
     g = lib["objects"][0]
     assert g["n_sessions"] == 2
@@ -1215,7 +1240,7 @@ def test_ingest_builds_one_catalog_resolver_per_request(client, monkeypatch):
 
 def test_unresolved_ingest_does_not_join_differently_resolved_same_name(
         client, db):
-    from app.fits import date_epoch
+    from app.solar import session_metadata
     from app.ingest import session_folder_name
 
     old_date = "2026-08-22T23:00:00"
@@ -1234,7 +1259,7 @@ def test_unresolved_ingest_does_not_join_differently_resolved_same_name(
     result = response.json()["results"][0]
     assert result["ok"] and result["object"]["id"] is None
     assert result["stored"].replace("\\", "/").split("/")[1] == \
-        session_folder_name(date_epoch("2026-08-23T01:00:00"))
+        session_folder_name(session_metadata("2026-08-23T01:00:00"))
 
 
 def test_library_session_rollups(client):

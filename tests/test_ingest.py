@@ -198,15 +198,15 @@ def test_naive_session_anchor_normalization_is_utc_independent_of_local_zone(
         "2026-08-22T20:00:00.123456Z"
 
 
-def test_fractional_session_attachment_cannot_bridge_exact_twelve_hour_boundary(dedup_store):
+def test_fractional_session_attachment_keeps_day_night_membership(dedup_store):
     from app import imglib
     db, archive = dedup_store
     earlier = db.add_image({"file": "Target/first/lights/a.fit", "orig_name": "a.fit",
                             "object_name": "Target", "imagetyp": "light",
-                            "date_obs": "2026-08-22T08:00:00.900000", "ingested_at": ""})
+                            "date_obs": "2026-08-22T08:00:00.900000", "site_lat":52.52, "site_lon":13.405, "ingested_at": ""})
     anchor = db.add_image({"file": "Target/second/lights/b.fit", "orig_name": "b.fit",
                            "object_name": "Target", "imagetyp": "light",
-                           "date_obs": "2026-08-22T20:00:00.900000", "ingested_at": ""})
+                           "date_obs": "2026-08-22T20:00:00.900000", "site_lat":52.52, "site_lon":13.405, "ingested_at": ""})
     target = ingest.calibration_import_target(db, archive, anchor, "dark")
     assert target["session_date_obs"] == "2026-08-22T20:00:00.900000Z"
     result = _import(db, archive, _capture(), "calibration.fit", frame_override="dark",
@@ -322,21 +322,23 @@ def test_classify_unknown_defaults_to_light():
 
 # ---------------------------------------------------------------- session_folder_name
 
-def test_session_folder_formats_local_time():
-    # 2026-08-22 23:14 UTC depends on the machine zone, but the shape is fixed
-    name = session_folder_name(time.mktime((2026, 8, 22, 23, 14, 0, 0, 0, -1)))
-    assert len(name) == 15               # YYYY-MM-DD_HHMM
-    assert name[4] == "-" and name[7] == "-" and name[10] == "_"
-    assert name[:10].count("-") == 2
+def test_session_folder_uses_fixed_utc_interval_and_site_identity():
+    from app.solar import session_metadata
+    metadata = session_metadata("2026-08-22T23:14:00Z", 52.52, 13.405)
+    name = session_folder_name(metadata)
+    assert name.startswith("night_2026-08-22_")
+    assert name == session_folder_name(session_metadata("2026-08-23T01:00:00Z", 52.52, 13.405))
+    assert name != session_folder_name(session_metadata("2026-08-22T23:14:00Z", 40, -74))
 
 
 def test_session_folder_undated():
-    assert session_folder_name(None) == "undated"
+    from app.solar import session_metadata
+    assert session_folder_name(session_metadata(None, None, None)) == "undated"
 
 
-def test_session_folder_zero_epoch():
-    # epoch 0 = 1970-01-01 00:00 UTC -> local may shift the date, shape stays
-    assert len(session_folder_name(0.0)) == 15
+def test_session_folder_without_site_is_visibly_unassigned_utc_date():
+    from app.solar import session_metadata
+    assert session_folder_name(session_metadata("2026-08-22T23:00:00Z", None, None)) == "unassigned_2026-08-22"
 
 
 def test_images_for_object_returns_only_matching_rows_in_id_order(tmp_path):
@@ -387,7 +389,7 @@ def test_unresolved_session_lookup_excludes_existing_resolved_id(tmp_path):
         })
         selected = _session_dir(
             db, archive, "Mystery", None, "Mystery", "2026-08-23T01:00:00")
-        assert selected.name == session_folder_name(date_epoch("2026-08-23T01:00:00"))
+        assert selected.name == "unassigned_2026-08-23"
     finally:
         db.conn.close()
 
@@ -1451,3 +1453,152 @@ def test_upload_checks_current_bytes_despite_different_cached_digest(dedup_store
     assert db.image(first["id"])["content_sha256"] == hashlib.sha256(actual_bytes).hexdigest()
     assert original.read_bytes() == actual_bytes
     assert len(list(archive.rglob("*.fit"))) == 1
+
+
+
+def _site_capture(stamp, pixels=b"private pixels", location=(52.52, 13.405), extra=()):
+    cards = [("SIMPLE", "T"), ("OBJECT", "'Private target'"),
+             ("DATE-OBS", repr(stamp)), ("IMAGETYP", "'LIGHT'")]
+    if location is not None:
+        cards += [("SITELAT", str(location[0])), ("SITELONG", str(location[1]))]
+    return make_fits(cards + list(extra)) + pixels
+
+
+def test_import_solar_sessions_are_stable_across_order_and_winter_gaps(dedup_store):
+    db, archive = dedup_store
+    late = _import(db, archive, _site_capture("2026-12-22T06:00:00Z", b"late"), "late.fit")
+    early = _import(db, archive, _site_capture("2026-12-21T16:00:00Z", b"early"), "early.fit")
+    day = _import(db, archive, _site_capture("2026-12-22T12:00:00Z", b"day"), "day.fit")
+    next_night = _import(db, archive, _site_capture("2026-12-22T16:00:00Z", b"next"), "next.fit")
+    assert all(result["ok"] for result in (late, early, day, next_night))
+    assert late["session_key"] == early["session_key"]
+    assert Path(late["stored"]).parts[1] == Path(early["stored"]).parts[1]
+    assert early["session_kind"] == late["session_kind"] == "night"
+    assert day["session_kind"] == "day" and next_night["session_kind"] == "night"
+    assert next_night["session_key"] != late["session_key"]
+    sessions = ingest.imglib.compute_sessions(db.images())
+    assert [session["session_kind"] for session in sessions] == ["night", "day", "night"]
+    assert set(sessions[0]["image_ids"]) == {early["id"], late["id"]}
+    assert sessions[0]["start"] == "2026-12-21T16:00:00"
+    assert sessions[0]["end"] == "2026-12-22T06:00:00"
+    assert sessions[0]["session_start"] < sessions[0]["start"]
+    assert sessions[0]["session_end"] > sessions[0]["end"]
+
+
+def test_explicit_calibration_copies_session_but_preserves_own_site_and_capture(dedup_store):
+    db, archive = dedup_store
+    first = _import(db, archive, _site_capture("2026-08-22T23:00:00Z"))
+    target = ingest.calibration_import_target(db, archive, first["id"], "dark")
+    calibration = _import(db, archive,
+                          _site_capture("2026-09-15T12:00:00Z", b"calibration", (40, -74)),
+                          "calibration.fit", frame_override="dark", session_target=target)
+    assert calibration["ok"]
+    rec = db.image(calibration["id"])
+    assert (rec["site_lat"], rec["site_lon"]) == (40, -74)
+    assert rec["date_obs"] == "2026-09-15T12:00:00"
+    assert all(rec[key] == db.image(first["id"])[key] for key in ingest.imglib.SESSION_FIELDS)
+    chosen = ingest.imglib.session_for_anchor(db.images(), first["id"])
+    assert set(chosen["image_ids"]) == {first["id"], calibration["id"]}
+    before = dict(rec)
+    ingest.reindex_library(db, archive)
+    assert db.image(calibration["id"]) == before
+
+
+@pytest.mark.parametrize("header_location", [None, ("nan", 13), (52, "infinity")])
+def test_default_site_only_applies_when_header_location_is_absent(dedup_store, header_location):
+    db, archive = dedup_store
+    db.set_setting("observing_site", {"latitude":52.52, "longitude":13.405})
+    result = _import(db, archive, _site_capture("2026-08-22T23:00:00Z", location=header_location))
+    assert result["ok"]
+    if header_location is None:
+        assert (result["site_lat"], result["site_lon"]) == (52.52, 13.405)
+        assert result["session_kind"] == "night"
+    else:
+        assert result["site_lat"] is result["site_lon"] is None
+        assert result["session_kind"] == "unassigned"
+        assert "unassigned_" in result["stored"]
+
+
+def test_reindex_backfills_header_site_and_solar_metadata_without_moving_files(dedup_store):
+    db, archive = dedup_store
+    first = _import(db, archive, _site_capture("2026-08-22T23:00:00Z"))
+    original = db.image(first["id"])
+    db.conn.execute("UPDATE images SET site_lat=NULL,site_lon=NULL,session_key=NULL,session_kind=NULL,"
+                    "session_start=NULL,session_end=NULL,date_obs=? WHERE id=?",
+                    ("2026-08-22T20:00:00", first["id"]))
+    db.conn.commit()
+    before_bytes = (archive / original["file"]).read_bytes()
+    result = ingest.reindex_library(db, archive)
+    assert result["added"] == result["repaired"] == 0 and result["skipped"] == 1
+    updated = db.image(first["id"])
+    assert updated["date_obs"] == "2026-08-22T23:00:00"
+    assert all(updated[key] == original[key] for key in ("site_lat", "site_lon", *ingest.imglib.SESSION_FIELDS))
+    assert updated["file"] == original["file"] and (archive / original["file"]).read_bytes() == before_bytes
+
+
+def test_duplicate_preserves_original_session_when_default_site_changes(dedup_store):
+    db, archive = dedup_store
+    content = _site_capture("2026-08-22T23:00:00Z", location=None)
+    first = _import(db, archive, content)
+    before = db.image(first["id"])
+    db.set_setting("observing_site", {"latitude":52.52, "longitude":13.405})
+    duplicate = _import(db, archive, content, "copy.fit", frame_override="dark")
+    assert duplicate["skipped"] and duplicate["id"] == first["id"]
+    assert db.image(first["id"]) == before and duplicate["session_kind"] == "unassigned"
+
+
+def test_reindex_session_backfill_and_fingerprints_roll_back_on_addition_error(dedup_store):
+    db, archive = dedup_store
+    first = _import(db, archive, _site_capture("2026-08-22T23:00:00Z"))
+    db.conn.execute("UPDATE images SET site_lat=NULL,site_lon=NULL,session_key=NULL,session_kind=NULL,"
+                    "session_start=NULL,session_end=NULL,content_sha256=NULL WHERE id=?", (first["id"],))
+    db.conn.execute("CREATE TRIGGER refuse_reindex_insert BEFORE INSERT ON images "
+                    "BEGIN SELECT RAISE(ABORT,'refuse addition'); END")
+    db.conn.commit()
+    target = archive / "Manual/lights/new.fit"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(_site_capture("2026-08-22T23:00:00Z", b"new"))
+    before = db.images()
+    with pytest.raises(sqlite3.IntegrityError, match="refuse addition"):
+        ingest.reindex_library(db, archive)
+    assert db.images() == before
+
+
+def test_reindex_older_attachment_ignores_invalid_unrelated_anchor_date(dedup_store):
+    db, archive = dedup_store
+    first = _import(db, archive, _site_capture("2026-08-22T23:00:00Z"))
+    target = ingest.calibration_import_target(db, archive, first["id"], "flat")
+    attached = _import(db, archive, _site_capture("2026-09-15T12:00:00Z", b"flat", (40, -74)),
+                       "flat.fit", frame_override="flat", session_target=target)
+    other = _import(db, archive, _site_capture("2026-09-16T12:00:00Z", b"other"), "other.fit")
+    # Older parsers stored impossible ISO dates; attachment backfill must still
+    # find its valid anchor when another ordinary record has one of those dates.
+    db.conn.execute("UPDATE images SET date_obs='2026-13-31T12:00:00' WHERE id=?", (other["id"],))
+    db.conn.execute("UPDATE images SET session_key=NULL,session_kind=NULL,session_start=NULL,"
+                    "session_end=NULL WHERE id=?", (attached["id"],))
+    db.conn.commit()
+    ingest.reindex_library(db, archive)
+    assert db.image(attached["id"])["session_key"] == db.image(first["id"])["session_key"]
+    assert db.image(other["id"])["date_obs"] == "2026-09-16T12:00:00"
+
+
+@pytest.mark.parametrize("legacy_anchor", [False, True])
+def test_reindex_location_backfill_keeps_explicit_calibration_with_target(dedup_store, legacy_anchor):
+    db, archive = dedup_store
+    first = _import(db, archive, _site_capture("2026-08-22T23:00:00Z", location=None))
+    if legacy_anchor:
+        db.conn.execute("UPDATE images SET session_key=NULL,session_kind=NULL,session_start=NULL,"
+                        "session_end=NULL WHERE id=?", (first["id"],))
+        db.conn.commit()
+    target = ingest.calibration_import_target(db, archive, first["id"], "flat")
+    flat = _import(db, archive, _site_capture("2026-09-15T12:00:00Z", b"flat", (40, -74)),
+                   "flat.fit", frame_override="flat", session_target=target)
+    db.set_setting("observing_site", {"latitude": 52.52, "longitude": 13.405})
+    ingest.reindex_library(db, archive)
+    anchor, attached = db.image(first["id"]), db.image(flat["id"])
+    assert anchor["session_kind"] == "night"
+    assert attached["session_key"] == anchor["session_key"]
+    assert attached["date_obs"] == "2026-09-15T12:00:00"
+    assert (attached["site_lat"], attached["site_lon"]) == (40, -74)
+    ingest.reindex_library(db, archive)
+    assert db.image(flat["id"]) == attached

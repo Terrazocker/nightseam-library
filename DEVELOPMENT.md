@@ -57,13 +57,30 @@ If filesystem recovery is refused,
 the API reports incomplete recovery and logs the affected relative paths;
 inspect those paths and recover the archive before using Reindex folders.
 
-Automatic import session lookup uses the same object identity as the library:
-catalog ID for resolved objects, normalized name for unresolved objects only.
-Physical object slugs may still differ for historical spelling aliases. The
-twelve-hour adjacent-capture gap remains the session policy; it is not a local
-calendar-night boundary. Later/backdated imports do not rename existing session
-folders. Legacy slash timestamps retain the documented MM/DD fallback when the
-first field is at most twelve; ISO capture timestamps avoid that ambiguity.
+Sessions group each object's captures by observing location and actual solar
+interval: sunset through the next sunrise is one night; sunrise through sunset
+is one day. Membership is half-open, so a capture exactly at sunrise starts the
+day and one exactly at sunset starts the night. The shared core uses geometric
+solar-center altitude -0.833 degrees, without terrain or elevation corrections.
+Coordinates are rounded to 0.001 degrees for stable site identity. Continuous
+polar phases use explicitly labelled polar day/night UTC-date intervals.
+Catalog IDs identify resolved objects; normalized names identify unresolved
+objects. Different targets retain separate Library groups even on the same night.
+
+FITS SITELAT/SITELONG take priority. The Import pane's observing-location fallback
+applies only when both header coordinates are absent. Invalid or incomplete
+header locations remain visibly Unassigned location, grouped by UTC capture date.
+Set the fallback only for files known to originate at that location. Clearing it
+does not erase already recorded capture locations. Reindex folders reads headers
+and refreshes old session metadata transactionally without moving exposure files.
+New folder identities use the fixed solar boundary and a hash of the full key,
+so import order, gaps longer than twelve hours and host timezone cannot change them.
+
+DATE-OBS without an offset denotes UTC; explicit offsets are normalized to UTC
+and fractions are retained. An absent TIMESYS defaults to UTC. Unsupported
+explicit time scales, ambiguous slash dates, date-only values and invalid dates
+remain Undated; DATE (file creation) is never substituted for capture time.
+Original FITS bytes are preserved. There is no locale-dependent date guess.
 
 Uploads report validation failures per file and can continue. Database errors
 stop the remaining request and later UI chunks, preserving earlier confirmed
@@ -78,9 +95,12 @@ for programmatic metadata exchange. Spreadsheet import/resave behavior varies.
 
 `POST /api/images/ingest` may receive a positive `session_anchor_id` for an
 existing image, with dark/flat/bias frame type. The server revalidates the target
-under the archive lock. Nullable `session_date_obs` stores logical membership:
+under the archive lock. Stored `session_key`, `session_kind`, `session_start` and
+`session_end` define exact interval membership. An explicit calibration attachment
+copies those fields from the validated target while preserving its own capture
+date and location. Nullable `session_date_obs` also records the logical anchor:
 NULL uses the original timestamp, empty text targets an undated session, and an
-ISO UTC date targets a dated session. `date_obs` remains original. Library
+ISO UTC date targets a dated session. `date_obs` remains the capture instant. Library
 sessions publish exact `image_ids`; calibration dates do not extend the capture
 interval. Duplicate files retain their previous association and location.
 
@@ -103,8 +123,12 @@ closure in requirements-build-lock.txt. build.ps1 checks installed versions and
 dependency closure before any build/backup mutation, including httpx2 and the
 compiler. It never installs packages automatically. The existing build
 environment already matches the lock. For a new environment, follow the manual
-setup printed by scripts/check_build_dependencies.py. Runtime lower bounds
-remain in requirements.txt; the lock describes tested artifacts, not byte-for-
+setup printed by scripts/check_build_dependencies.py. Embedded mini-racer 0.14.1
+executes the generated shared JavaScript solar core in headless and packaged runs;
+Node is not a runtime dependency and Python contains no duplicate astronomy math.
+V8 contexts close after cache misses; the bounded cache contains plain records.
+The complete artifact closure now has 41 pins. Runtime requirements live in
+requirements.txt; the lock describes tested artifacts, not byte-for-
 byte reproducibility across OS or Python patch versions.
 
 ## Workspace upkeep

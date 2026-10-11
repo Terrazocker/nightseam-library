@@ -180,7 +180,8 @@ def _duplicate_result(name: str, rec: dict) -> dict:
                        "name": rec.get("object_name"),
                        "designation": imglib.designation_of(None, rec)},
             **{key: rec.get(key) for key in
-               ("exposure", "date_obs", "session_date_obs", "filter", "telescope", "imagetyp")}}
+               ("exposure", "date_obs", "session_date_obs", "filter", "telescope", "imagetyp",
+                "site_lat", "site_lon", *imglib.SESSION_FIELDS)}}
 
 
 def _missing_original(db: Database, archive: Path, digest: str,
@@ -257,26 +258,58 @@ def classify_frame(imagetyp: str | None) -> str:
     return "light"          # unknown types default to lights
 
 
-def session_folder_name(epoch: float | None) -> str:
-    """On-disk session folder: 'YYYY-MM-DD_HHMM' in the machine-local zone,
-    or 'undated' for frames without a parseable DATE-OBS."""
-    if epoch is None:
+def session_folder_name(metadata) -> str:
+    """A stable UTC interval folder, independent of import order or host zone."""
+    kind = metadata["session_kind"]
+    if kind == "undated":
         return "undated"
-    return datetime.fromtimestamp(epoch).strftime("%Y-%m-%d_%H%M")
+    start = metadata.get("session_start")
+    if kind == "unassigned":
+        return "unassigned_" + start[:10]
+    stamp = datetime.fromisoformat(start.replace("Z", "+00:00"))
+    identity = hashlib.sha256(metadata["session_key"].encode("utf-8")).hexdigest()[:16]
+    return f"{kind}_{stamp:%Y-%m-%d_%H%M%S}_{identity}"
+
+
+def _header_session(db: Database, header: dict, date_obs, target=None) -> dict:
+    """Preserve measured location; explicit calibration copies membership only."""
+    from .solar import session_metadata
+    latitude, longitude = fitsio.parse_site_coordinates(header)
+    if "SITELAT" not in header and "SITELONG" not in header:
+        default = db.setting("observing_site")
+        if isinstance(default, dict):
+            latitude, longitude = fitsio.parse_site_coordinates(
+                {"SITELAT": default.get("latitude"), "SITELONG": default.get("longitude")})
+    metadata = session_metadata(date_obs, latitude, longitude)
+    if target is not None:
+        metadata = {key: target.get(key) for key in imglib.SESSION_FIELDS}
+    return {"site_lat": latitude, "site_lon": longitude, **metadata}
 
 
 def _session_dir(db: Database, archive: Path, slug: str, object_id,
                  object_name: str, date_obs: str | None,
-                 session_override: str | None = None) -> Path:
-    """<archive>/<slug>/<session>/ - the session the frame joins (mirrors
-    imglib.compute_sessions), so different nights get different folders.
-    An explicit `session` upload target (calibration buttons) wins."""
+                 session_override: str | None = None, metadata=None) -> Path:
+    """Pick the immutable interval label; existing captures cannot move it."""
     if session_override:
         return archive / slug / session_override
-    existing = db.images_for_object(object_id, object_name)
-    joined = imglib.session_for_image(existing, {"date_obs": date_obs})
-    start = imglib.date_epoch(joined.get("start")) if joined else None
-    return archive / slug / session_folder_name(start)
+    if metadata is None:
+        metadata = _header_session(db, {}, date_obs)
+    return archive / slug / session_folder_name(metadata)
+
+
+def _reindex_session_metadata(db: Database, rec: dict, header: dict) -> dict:
+    # A missing header location may use the originally stored observing site;
+    # a later default-site setting must not rewrite measured capture metadata.
+    if ("SITELAT" not in header and "SITELONG" not in header and
+            rec.get("site_lat") is not None and rec.get("site_lon") is not None):
+        header = {**header, "SITELAT": rec["site_lat"], "SITELONG": rec["site_lon"]}
+    captured = fitsio.capture_date_obs(header)
+    logical_date = captured if rec.get("session_date_obs") is None else rec["session_date_obs"]
+    metadata = _header_session(db, header, logical_date)
+    metadata["date_obs"] = captured
+    if rec.get("session_date_obs") is not None and rec.get("session_key"):
+        metadata.update({key: rec.get(key) for key in imglib.SESSION_FIELDS})
+    return metadata
 
 
 def calibration_import_target(db: Database, archive: Path, anchor_id: int,
@@ -309,16 +342,17 @@ def calibration_import_target(db: Database, archive: Path, anchor_id: int,
         if selected is None:
             raise ValueError("Selected session no longer exists. Select a session again.")
         stamp = selected.get("start")
-        epoch = imglib.date_epoch(stamp)
+        epoch = fitsio.date_epoch(stamp)
         session_date = normalize_session_date_obs(stamp) if epoch is not None else ""
         # Keep a modern session's existing folder. Legacy Object/lights anchors
         # gain the canonical Object/session/frame layout without moving files.
-        session = parts[1] if len(parts) == 4 else session_folder_name(epoch)
+        session = parts[1] if len(parts) == 4 else session_folder_name(selected)
         if paths.safe_join(archive, f"{parts[0]}/{session}/{FRAME_TYPES[frame]}") is None:
             raise ValueError("Selected session has an unsafe calibration folder.")
         return {"anchor_id": anchor_id, "anchor": imglib.public_image_record(anchor),
                 "slug": parts[0], "session": session,
-                "session_date_obs": session_date}
+                "session_date_obs": session_date,
+                **{key: selected[key] for key in imglib.SESSION_FIELDS}}
 
 
 def _unique_path(path: Path) -> Path:
@@ -409,7 +443,7 @@ async def ingest_one(db: Database, catalog: list[dict], archive: Path,
         if isinstance(v, (int, float)) and v >= 0:
             exposure = float(v)
             break
-    date_obs = fitsio.parse_date_obs(hdr.get("DATE-OBS") or hdr.get("DATE"))
+    date_obs = fitsio.capture_date_obs(hdr)
     filt = str(hdr.get("FILTER") or "").strip() or None
     tel = str(hdr.get("TELESCOP") or hdr.get("INSTRUME") or "").strip() or None
     frame = classify_frame(hdr.get("IMAGETYP"))
@@ -429,7 +463,7 @@ async def ingest_one(db: Database, catalog: list[dict], archive: Path,
         return await _archive_io(
             _finalize_import, db, archive, stage, digest, name, object_id,
             object_name, ra_h, dec_d, exposure, date_obs, filt, tel, frame,
-            session_override, row, on_import, enforce_archive_root, session_target)
+            session_override, row, on_import, enforce_archive_root, session_target, hdr)
     except OSError as exc:
         log.warning("ingest: cannot write %s: %s", archive, exc)
         return {"file": name, "ok": False,
@@ -442,7 +476,7 @@ async def ingest_one(db: Database, catalog: list[dict], archive: Path,
 def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
                      ra_h, dec_d, exposure, date_obs, filt, tel, frame,
                      session_override, row, on_import=None,
-                     enforce_archive_root=False, session_target=None):
+                     enforce_archive_root=False, session_target=None, header=None):
     target = None
     committed = promoted = False
     try:
@@ -484,10 +518,11 @@ def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
                 result = _duplicate_result(name, existing)
                 result.update(skipped=False, restored=True, reason="original_restored")
                 return result
+            metadata = _header_session(db, header or {}, date_obs, session_target)
             slug = session_target["slug"] if session_target else obj_slug(object_name)
             session = (archive / slug / session_target["session"] if session_target else
                        _session_dir(db, archive, slug, object_id,
-                                    object_name, date_obs, session_override))
+                                    object_name, date_obs, session_override, metadata))
             target = _archive_target(archive, name, slug, session, frame)
             for attempt in range(8):
                 if session_target and paths.safe_join(
@@ -508,6 +543,7 @@ def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
             stat = target.stat()
             try:
                 img_id = db.add_image({
+                    **metadata,
                     "file": stored, "orig_name": name, "object_id": object_id,
                     "object_name": object_name, "ra_hours": ra_h, "dec_deg": dec_d,
                     "exposure": exposure, "date_obs": date_obs, "filter": filt,
@@ -519,6 +555,7 @@ def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
                 })
                 committed = True
                 result = {
+                    **metadata,
                     "file": name, "ok": True, "id": img_id,
                     "object": {"id": object_id, "name": object_name,
                                "designation": imglib.designation_of(
@@ -809,6 +846,20 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
     result["found"] = len(candidates)
     fingerprints = {}
     measured_paths = {}
+    header_states = {}
+
+    def read_header(target):
+        _check_reindex_cancelled(cancel_event)
+        before = target.stat()
+        with target.open("rb") as source:
+            header = fitsio.read_fits_header(source.read(HEADER_READ))
+        after = target.stat()
+        state = (before.st_size, before.st_mtime_ns)
+        if state != (after.st_size, after.st_mtime_ns):
+            raise ValueError("Archive changed during reindex. No library records were changed.")
+        if header:
+            header_states[target] = state
+        return header
 
     def measure(target):
         _check_reindex_cancelled(cancel_event)
@@ -831,10 +882,18 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
         return measured
 
     new = {}
+    session_updates = {}
     for rel, target in candidates:
         _check_reindex_cancelled(cancel_event)
         recorded = known.get(_norm_rel(rel))
         if recorded:
+            try:
+                header = read_header(target)
+            except OSError:
+                header = None
+            if header:
+                for rec in recorded:
+                    session_updates[rec["id"]] = _reindex_session_metadata(db, rec, header)
             stat = target.stat()
             needs_hash = any(not rec.get("content_sha256") or
                              rec.get("file_size") != stat.st_size or
@@ -850,8 +909,7 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
             result["skipped"] += 1
             continue
         try:
-            with target.open("rb") as source:
-                header = fitsio.read_fits_header(source.read(HEADER_READ))
+            header = read_header(target)
         except OSError:
             header = None
         if not header:
@@ -903,6 +961,8 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
                 continue
             rel, _, _, measured = destinations[0]
             relinks.append((stale[0]["id"], rel, *measured))
+            session_updates[stale[0]["id"]] = _reindex_session_metadata(
+                db, stale[0], destinations[0][2])
             result["repaired"] += 1
             continue
         if matching_live:
@@ -933,11 +993,13 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
             if isinstance(value, (int, float)) and value >= 0:
                 exposure = float(value)
                 break
+        captured = fitsio.capture_date_obs(hdr)
         additions.append({
+            **_header_session(db, hdr, captured),
             "file": rel, "orig_name": target.name, "object_id": object_id,
             "object_name": object_name, "ra_hours": ra_h, "dec_deg": dec_d,
             "exposure": exposure,
-            "date_obs": fitsio.parse_date_obs(hdr.get("DATE-OBS") or hdr.get("DATE")),
+            "date_obs": captured,
             "filter": str(hdr.get("FILTER") or "").strip() or None,
             "telescope": str(hdr.get("TELESCOP") or hdr.get("INSTRUME") or "").strip() or None,
             "imagetyp": FRAME_DIRS[parts[-2].lower()],
@@ -950,6 +1012,12 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
 
     # Files can also change outside this process's archive lock. Refuse a plan
     # whose measured input has disappeared, moved outside the archive or changed.
+    for target, state in header_states.items():
+        _check_reindex_cancelled(cancel_event)
+        current = paths.safe_join(archive, target.relative_to(archive).as_posix())
+        stat = target.stat()
+        if current != target or (stat.st_size, stat.st_mtime_ns) != state:
+            raise ValueError("Archive changed during reindex. No library records were changed.")
     for target, measured in measured_paths.items():
         _check_reindex_cancelled(cancel_event)
         if measured is None:
@@ -961,7 +1029,46 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
         stat = target.stat()
         if (stat.st_size, stat.st_mtime_ns) != measured[1:]:
             raise ValueError("Archive changed during reindex. No library records were changed.")
+    # Refresh explicit attachments from their ordinary target's metadata, not
+    # from the calibration's own location. Prefer the exact logical anchor;
+    # otherwise require one unique refreshed interval in the prior membership.
+    # This also keeps an unassigned attachment with its night when the original
+    # observing location is supplied later through header/default backfill.
+    for rec in expected:
+        metadata = session_updates.get(rec["id"])
+        if metadata is None or rec.get("session_date_obs") is None:
+            continue
+        anchor_date = normalize_session_date_obs(rec["session_date_obs"])
+        anchors, prior_members = [], []
+        for anchor in expected:
+            if anchor.get("session_date_obs") is not None:
+                continue
+            if rec.get("session_key"):
+                if imglib.image_session_metadata(anchor)["session_key"] != rec["session_key"]:
+                    continue
+                prior_members.append(session_updates.get(anchor["id"]) or
+                                     imglib.image_session_metadata(anchor))
+            if (anchor.get("object_id") != rec.get("object_id") or
+                    (rec.get("object_id") is None and imglib.name_key(anchor["object_name"]) !=
+                     imglib.name_key(rec["object_name"]))):
+                continue
+            try:
+                candidate_date = normalize_session_date_obs(anchor.get("date_obs") or "")
+            except ValueError:
+                # Old capture parsers accepted impossible ISO dates. A broken
+                # unrelated record cannot invalidate a valid explicit target.
+                continue
+            if candidate_date == anchor_date:
+                anchors.append(session_updates.get(anchor["id"]) or
+                               imglib.image_session_metadata(anchor))
+        anchors = anchors or prior_members
+        if len({anchor["session_key"] for anchor in anchors}) == 1:
+            metadata.update({key: anchors[0][key] for key in imglib.SESSION_FIELDS})
+    planned_sessions = [{"id": rec["id"], **session_updates[rec["id"]]}
+                        for rec in expected if rec["id"] in session_updates and
+                        any(rec.get(key) != value for key, value in session_updates[rec["id"]].items())]
     _check_reindex_cancelled(cancel_event)
     db.apply_reindex_plan(expected, additions, list(fingerprints.values()), relinks,
-                          cancel_check=lambda: _check_reindex_cancelled(cancel_event))
+                          cancel_check=lambda: _check_reindex_cancelled(cancel_event),
+                          session_updates=planned_sessions)
     return result

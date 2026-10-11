@@ -44,6 +44,8 @@ export function applyArchiveUI() {
   $("#archiveInfo").textContent = dir;
   $("#archiveInfo").title = "Image archive: " + dir;
   $("#archiveInfo").classList.toggle("hidden", !dir);
+  $("#siteLat").value = S.cfg?.observing_site?.latitude ?? "";
+  $("#siteLon").value = S.cfg?.observing_site?.longitude ?? "";
 }
 
 /* ---------------- import pane ---------------- */
@@ -61,7 +63,7 @@ function elapsedLabel(ms) {
 }
 
 function lockArchiveActions() {
-  const selectors = "#btnTopIngest, #btnIngest, #btnTopReindex, #btnArcReindex, #btnTopExport, #btnClearResults, #btnArcSave, #btnArcBrowse, #arcDir, [data-frame-override], [data-library-add], [data-imp]";
+  const selectors = "#btnTopIngest, #btnIngest, #btnTopReindex, #btnArcReindex, #btnTopExport, #btnClearResults, #btnArcSave, #btnArcBrowse, #arcDir, #siteLat, #siteLon, #btnSiteSave, [data-frame-override], [data-library-add], [data-imp]";
   const controls = [...document.querySelectorAll(selectors)];
   const previous = controls.map(control => control.disabled);
   controls.forEach(control => { control.disabled = true; });
@@ -517,7 +519,7 @@ function renderLibrarySessions(object, sessions, activeSession) {
     return;
   }
   list.innerHTML = sessions.map((s, i) => {
-    const when = s.undated ? "No date recorded" : `${fmtDT(s.start)} – ${fmtDT(s.end)}`;
+    const when = `${s.label || "Session"} · ` + (s.undated ? "No date recorded" : `${fmtDT(s.start)} – ${fmtDT(s.end)}`);
     const filters = Object.keys(s.filters || {}).filter((name) => name !== "?").join(" · ");
     const folders = sessionFolderPaths(object, s);
     const typeCount = (needle) => Object.entries(s.types || {}).reduce((sum, [name, value]) =>
@@ -547,7 +549,9 @@ function renderLibrarySessions(object, sessions, activeSession) {
   const folders = sessionFolderPaths(object, activeSession);
   $("#libraryFrameCount").textContent = `${activeSession.n_images} frames`;
   $("#librarySessionDetail").innerHTML = `<p class="session-date">${esc(activeSession.undated ? "No date recorded" : `${fmtDT(activeSession.start)} – ${fmtDT(activeSession.end)}`)}</p>
-    <dl class="library-session-facts"><div><dt>Total exposure</dt><dd>${esc(fmtDur(activeSession.exposure))}</dd></div>
+    <dl class="library-session-facts"><div><dt>Session</dt><dd>${esc(activeSession.label || "Session")}</dd></div>
+    ${activeSession.session_start && activeSession.session_end ? `<div><dt>Session window</dt><dd>${esc(fmtDT(activeSession.session_start))} – ${esc(fmtDT(activeSession.session_end))}</dd></div>` : ""}
+    <div><dt>Total exposure</dt><dd>${esc(fmtDur(activeSession.exposure))}</dd></div>
     <div><dt>Light integration</dt><dd>${esc(fmtDur(lightExposure))}</dd></div></dl>
     <div class="library-frame-rollup">${typeRows || '<p class="hint">No frame-type rollup recorded.</p>'}</div>
     <p class="library-filter-rollup"><span class="hint">Filters</span><br>${filterText || "No filter recorded"}</p>
@@ -640,6 +644,23 @@ export function bindArchive() {
       S.cfg = await api("/api/state");
       applyArchiveUI();
       toast("Archive folder saved.", "info", 3000);
+    } catch (err) { /* api() already toasted */ }
+  });
+  $("#btnSiteSave").addEventListener("click", async () => {
+    const latText = $("#siteLat").value.trim();
+    const lonText = $("#siteLon").value.trim();
+    const latitude = Number(latText), longitude = Number(lonText);
+    if ((latText || lonText) && (!latText || !lonText || !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180)) {
+      toast("Enter both coordinates: latitude −90 to 90 and longitude −180 to 180.", "err", 5000);
+      return;
+    }
+    try {
+      await api("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ observing_site: latText ? { latitude, longitude } : null }) });
+      S.cfg = await api("/api/state");
+      applyArchiveUI();
+      toast(latText ? "Observing location saved. Reindex existing exposures to refresh sessions." : "Observing location fallback cleared.", "info", 5000);
     } catch (err) { /* api() already toasted */ }
   });
   $("#btnArcReindex").addEventListener("click", async () => {
