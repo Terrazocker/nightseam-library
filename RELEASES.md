@@ -1,5 +1,31 @@
 # Independent catalog release record
 
+## Packaged verification of audit fixes - October 11, 2026
+
+Built the verified clean source commit 9ecf9435 as a local development executable
+reporting **NightSeam 0.1.0-g9ecf9435**. The first Windows PowerShell subprocess
+could not load Get-FileHash and stopped during backup verification before
+compilation; the previous executable remained intact. Retrying build.ps1 via
+the installed PowerShell 7 (`pwsh -NoProfile -ExecutionPolicy Bypass -File
+build.ps1 -AllowDirty`) succeeded, with an executable backup before replacement.
+No dependencies were installed.
+
+Packaged private-data browser gate: **10/10 passed** with elevated execution,
+including export, launch, archive errors, import/dedup, responsive layout and
+map checks. The local artifact guard (`check_release.py --allow-dirty --no-stage`)
+reported **0 errors**. Browser scratch was removed, version-probe scratch was
+empty and removed, and the malformed root Windows cache did not recur.
+Successful build housekeeping removed **73.17 MiB**, with no cleanup failures,
+and retained three recovery executables. Application data, configured external
+archives and existing release artifacts were preserved.
+
+These outcomes are in logs/fix-review-20261011/build-9ecf943-pwsh.log,
+browser-9ecf943.log and release-9ecf943.log; the failed attempt is preserved as
+build-9ecf943.log. The final documentation-only revision is rebuilt for handoff;
+its artifact identity and repeated packaged gate evidence are kept in final-*.log
+in that same ignored evidence directory. This is local development validation:
+VERSION, tags and public release artifacts were not changed.
+
 ## Verified audit follow-up - October 11, 2026
 
 Closed the five findings in reviews/agent-changes-review-20261011.md:
