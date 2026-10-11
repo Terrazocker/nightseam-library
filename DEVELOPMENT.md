@@ -21,6 +21,10 @@ app/ingest.py parses exposure headers, matches objects, stages/copies files,
 hashes complete bytes for global duplicate identity and reindexes archive trees.
 app/imglib.py derives objects and capture sessions for the interface.
 app/paths.py contains safe path and writable/resource-directory boundaries.
+Dedup comparisons read the current complete bytes of same-size originals even
+if their cached digest differs: external restores can preserve size and mtime.
+This can add I/O for new content. Reindex measures each original at most once
+per scan and keeps cached fingerprints for unchanged known-only scans.
 Recovery is file-first: exposure bytes stay in the archive. SQLite keeps a
 compatible rolling `nightseam.db.backup` plus up to five dated pre-migration
 and five post-open snapshots beside the database. SQLite's backup API includes

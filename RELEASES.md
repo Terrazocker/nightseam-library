@@ -1,5 +1,23 @@
 # Independent catalog release record
 
+## Final full-byte deduplication follow-up - October 11, 2026
+
+A final review reproduced another cache edge case: an externally replaced
+original with unchanged size and modification time could be skipped as a
+candidate because its cached digest differed from newly imported/discovered
+bytes. Reindex and upload now compare current complete bytes of same-size
+originals. Reindex hashes an original at most once per plan; known-only scans
+retain their caching optimization. New-content comparisons can require more I/O
+to preserve complete-byte identity rather than trusting negative cache hints.
+
+Both private regressions pass, including the single-new-digest reindex case.
+Focused archive/session tests: **113 passed**. Final full suite on the locked
+build interpreter: **574 passed in 141.00 seconds**, after these last code changes.
+Evidence: logs/partial-review-fixes-20261011/full-tests-final.log. The final source
+revision is built and checked with private packaged data for handoff; final
+build/browser/artifact evidence is retained in final-*.log and the implementation
+report alongside the earlier successful packaged verification below.
+
 ## Packaged verification of partial-review implementation - October 11, 2026
 
 Built clean source commit cad47686 as **NightSeam 0.1.0-gcad47686**, using the

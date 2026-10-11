@@ -1402,7 +1402,9 @@ def test_reindex_cancel_while_waiting_for_publication_lock(dedup_store, monkeypa
 
 
 
-def test_reindex_updated_live_digest_remains_available_to_later_candidates(dedup_store):
+@pytest.mark.parametrize("include_cached_digest_copy", [False, True])
+def test_reindex_updated_live_digest_remains_available_to_later_candidates(
+        dedup_store, include_cached_digest_copy):
     db, archive = dedup_store
     old_bytes, actual_bytes = _capture(b"pixels-A"), _capture(b"pixels-B")
     first = _import(db, archive, old_bytes)
@@ -1416,13 +1418,36 @@ def test_reindex_updated_live_digest_remains_available_to_later_candidates(dedup
     db.conn.commit()
     manual = archive / "Manual/lights"
     manual.mkdir(parents=True)
-    (manual / "a-old.fit").write_bytes(old_bytes)
+    if include_cached_digest_copy:
+        (manual / "a-old.fit").write_bytes(old_bytes)
     (manual / "b-actual.fit").write_bytes(actual_bytes)
     outcome = ingest.reindex_library(db, archive)
-    assert outcome == {"found": 3, "added": 1, "skipped": 2, "failed": 0,
+    extra = int(include_cached_digest_copy)
+    assert outcome == {"found": 2 + extra, "added": extra, "skipped": 2, "failed": 0,
                        "repaired": 0, "conflicts": 0}
-    assert len(db.images()) == 2
+    assert len(db.images()) == 1 + extra
     assert db.image(first["id"])["file"] == first["stored"]
     assert db.image(first["id"])["content_sha256"] == hashlib.sha256(actual_bytes).hexdigest()
     assert sum(row["content_sha256"] == hashlib.sha256(actual_bytes).hexdigest()
                for row in db.images()) == 1
+
+
+
+def test_upload_checks_current_bytes_despite_different_cached_digest(dedup_store):
+    db, archive = dedup_store
+    old_bytes, actual_bytes = _capture(b"pixels-A"), _capture(b"pixels-B")
+    first = _import(db, archive, old_bytes)
+    original = archive / first["stored"]
+    before = original.stat()
+    original.write_bytes(actual_bytes)
+    os.utime(original, ns=(before.st_atime_ns, before.st_mtime_ns))
+    record = db.image(first["id"])
+    assert record["content_sha256"] == hashlib.sha256(old_bytes).hexdigest()
+    assert (original.stat().st_size, original.stat().st_mtime_ns) == (
+        record["file_size"], record["file_mtime_ns"])
+    repeated = _import(db, archive, actual_bytes, "restored-copy.fit")
+    assert repeated["skipped"] and repeated["id"] == first["id"]
+    assert repeated["stored"] == first["stored"] and len(db.images()) == 1
+    assert db.image(first["id"])["content_sha256"] == hashlib.sha256(actual_bytes).hexdigest()
+    assert original.read_bytes() == actual_bytes
+    assert len(list(archive.rglob("*.fit"))) == 1

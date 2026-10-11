@@ -159,10 +159,8 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
         if stat.st_size != size or not original.is_file():
             continue
         cached = rec.get("content_sha256")
-        unchanged = (rec.get("file_size") == stat.st_size and
-                     rec.get("file_mtime_ns") == stat.st_mtime_ns)
-        if cached and cached != digest and unchanged:
-            continue
+        # Restores and external tools can preserve size/mtime while replacing
+        # bytes. A different cached digest must not reject a same-size original.
         measured = _fingerprint_file(original)
         if measured is None:
             continue
@@ -866,18 +864,16 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
         digest, size, _ = measured
         new.setdefault((digest, size), []).append((rel, target, header, measured))
 
-    # Index the snapshot once. Unchanged cached mismatches need no reread;
-    # possible positive matches still require proof from their current bytes.
+    # Index the snapshot once. A cached digest can be stale even when a restore
+    # preserves size and mtime. For new files, every unmeasured live original of
+    # the same size needs current-byte proof; after one read it moves into the
+    # measured identity index. Scans containing only known paths stay cached.
     live_by_identity, uncertain_by_size = {}, {}
     for rec, target, stat in live.values():
         cached = fingerprints.get(rec["id"])
         entry = (rec, target, stat)
         if cached:
             live_by_identity.setdefault(cached[1:3], []).append(entry)
-        elif (rec.get("content_sha256") and rec.get("file_size") == stat.st_size
-              and rec.get("file_mtime_ns") == stat.st_mtime_ns):
-            identity = (rec["content_sha256"], stat.st_size)
-            live_by_identity.setdefault(identity, []).append(entry)
         else:
             uncertain_by_size.setdefault(stat.st_size, []).append(entry)
 
@@ -895,12 +891,7 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
                 if cached[1:3] == identity:
                     matching_live.append(rec)
                 continue
-            # A matching cache is a candidate, never proof of current bytes.
-            unchanged = (rec.get("file_size") == stat.st_size and
-                         rec.get("file_mtime_ns") == stat.st_mtime_ns)
             if stat.st_size != size:
-                continue
-            if unchanged and rec.get("content_sha256") not in (None, "", digest):
                 continue
             actual = fingerprint_live(rec, target)
             if actual is not None and actual[:2] == identity:
