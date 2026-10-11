@@ -1,15 +1,14 @@
-"""Bake core/ to content-hashed URLs for both shells.
+"""Bake the project-owned core/ snapshot to local content-hashed URLs.
 
 The core is authored once in core/*.js and copied to
-  web/core/<hash>/            (served by the static web host)
-  static/js/core/<hash>/      (bundled into the desktop exe via static/)
-plus a stable entry stub in each tree (web/core.js, static/js/core.js) whose
+  static/js/core/<hash>/      (bundled into the catalog exe via static/)
+plus a stable entry stub at static/js/core.js whose
 explicit export list is derived from core/index.js. A core change therefore
-produces new URLs; the stub's cache token must be bumped by hand and is
-enforced by scripts/check_core.py.
+produces new URLs and increments the manifest token automatically. The guard
+scripts/check_core.py checks source/bake byte identity, stub hash and retention.
 
-Byte identity is line-ending normalized (core.autocrlf=true on Windows), so a
-CRLF checkout and an LF checkout hash the same.
+Byte identity is line-ending normalized, so a CRLF checkout and an LF checkout
+hash the same.
 
 Usage: python scripts/build_core.py
 """
@@ -27,7 +26,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CORE = ROOT / "core"
 MANIFEST = CORE / "core.manifest.json"
-WEB_DIR = ROOT / "web"
 STATIC_JS = ROOT / "static" / "js"
 STUB_NAME = "core.js"
 
@@ -126,6 +124,27 @@ def prune_baked_dirs(dest_root: Path, keep: set[str]) -> list[str]:
     return removed
 
 
+def prior_manifest_values(manifest: object) -> tuple[str, int, str | None]:
+    """Validate retention anchors before any existing bake can be changed."""
+    if not isinstance(manifest, dict):
+        raise ValueError("manifest must be an object")
+    old_hash = manifest.get("hash")
+    if (not isinstance(old_hash, str)
+            or re.fullmatch(r"[0-9a-f]{16}", old_hash) is None):
+        raise ValueError("manifest hash must be 16 lowercase hexadecimal characters")
+    token = manifest.get("token")
+    # bool is an int subclass; coercing strings/floats also loses provenance.
+    if type(token) is not int or token <= 0:
+        raise ValueError("manifest token must be a positive integer")
+    previous = manifest.get("previous")
+    if previous is not None and (
+            not isinstance(previous, str)
+            or re.fullmatch(r"[0-9a-f]{16}", previous) is None):
+        raise ValueError("manifest previous must be null or a 16-character "
+                         "lowercase hexadecimal hash")
+    return old_hash, token, previous
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -148,12 +167,7 @@ def main() -> int:
         # link, so the retention policy lost its history anchor.
         try:
             old = json.loads(MANIFEST.read_text(encoding="utf-8"))
-            if not isinstance(old, dict) or "hash" not in old \
-                    or "token" not in old:
-                raise ValueError("manifest is missing hash/token")
-            token = int(old.get("token", 1))
-            old_hash = old.get("hash") or None
-            previous = old.get("previous") or None
+            old_hash, token, previous = prior_manifest_values(old)
         except (OSError, ValueError) as exc:
             print(f"build_core: refusing to bake over a corrupt manifest "
                   f"({exc}) - restore or delete core/core.manifest.json "

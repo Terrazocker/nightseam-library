@@ -957,6 +957,141 @@ def test_undo_archive_rename_restores_completed_moves(dedup_store):
     assert not (archive / "Object B" / "lights" / "a.fit").exists()
 
 
+def test_rename_merge_refused_destination_undoes_prior_moves(
+        dedup_store, monkeypatch):
+    _, archive = dedup_store
+    first = archive / "Object A/first/lights/a.fit"
+    second = archive / "Object A/second/lights/b.fit"
+    first.parent.mkdir(parents=True)
+    second.parent.mkdir(parents=True)
+    first.write_bytes(b"first bytes")
+    second.write_bytes(b"second bytes")
+    (archive / "Object B").mkdir()
+    real_safe_join = ingest.paths.safe_join
+
+    def refuse_second_destination(root, relative):
+        if relative == "Object B/second/lights/b.fit":
+            return None
+        return real_safe_join(root, relative)
+
+    monkeypatch.setattr(ingest.paths, "safe_join", refuse_second_destination)
+    assert ingest.rename_archive_folder(archive, "Object A", "Object B") is None
+    assert first.read_bytes() == b"first bytes"
+    assert second.read_bytes() == b"second bytes"
+    assert not (archive / "Object B/first/lights/a.fit").exists()
+    assert not (archive / "Object B/second").exists()
+
+
+def test_whole_folder_rename_enumeration_failure_leaves_originals(
+        dedup_store, monkeypatch):
+    _, archive = dedup_store
+    original = archive / "Object A" / "lights" / "a.fit"
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"original bytes")
+    real_rglob = Path.rglob
+
+    def failed_enumeration(path, *args, **kwargs):
+        if path == original.parents[1]:
+            yield original
+            raise OSError("cannot enumerate the remaining original files")
+        yield from real_rglob(path, *args, **kwargs)
+
+    undo_maps = []
+    real_undo = ingest.undo_archive_rename
+
+    def record_undo(root, moved):
+        undo_maps.append(dict(moved))
+        return real_undo(root, moved)
+
+    monkeypatch.setattr(Path, "rglob", failed_enumeration)
+    monkeypatch.setattr(ingest, "undo_archive_rename", record_undo)
+    assert ingest.rename_archive_folder(archive, "Object A", "Object B") is None
+    assert original.read_bytes() == b"original bytes"
+    assert not (archive / "Object B").exists()
+    assert all(not moved for moved in undo_maps)
+
+
+def test_whole_folder_undo_restores_empty_and_unmapped_children(dedup_store):
+    _, archive = dedup_store
+    old = archive / "Object A"
+    (old / "empty" / "child").mkdir(parents=True)
+    (old / "a.fit").write_bytes(b"original")
+    moved = ingest.rename_archive_folder(archive, "Object A", "Object B")
+    # A later unknown child must be restored with the directory too; the file
+    # map is not the complete rollback record for a whole-directory move.
+    (archive / "Object B" / "unknown.bin").write_bytes(b"keep unknown bytes")
+    assert ingest.undo_archive_rename(archive, moved) == []
+    assert (old / "empty" / "child").is_dir()
+    assert (old / "a.fit").read_bytes() == b"original"
+    assert (old / "unknown.bin").read_bytes() == b"keep unknown bytes"
+    assert not (archive / "Object B").exists()
+
+
+def test_whole_folder_undo_refuses_occupied_origin(dedup_store):
+    _, archive = dedup_store
+    old = archive / "Object A"
+    old.mkdir()
+    (old / "a.fit").write_bytes(b"original")
+    moved = ingest.rename_archive_folder(archive, "Object A", "Object B")
+    old.mkdir()
+    (old / "untouched.bin").write_bytes(b"new occupant")
+    failures = ingest.undo_archive_rename(archive, moved)
+    assert failures == [("Object B", "original directory is occupied; refusing to overwrite it")]
+    assert (old / "untouched.bin").read_bytes() == b"new occupant"
+    assert (archive / "Object B" / "a.fit").read_bytes() == b"original"
+
+
+def test_whole_folder_rename_does_not_enumerate_after_publication(
+        dedup_store, monkeypatch):
+    _, archive = dedup_store
+    original = archive / "Object A" / "lights" / "a.fit"
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"original bytes")
+    published = False
+    real_rename = Path.rename
+    real_rglob = Path.rglob
+
+    def publish(src, dst):
+        nonlocal published
+        result = real_rename(src, dst)
+        published = True
+        return result
+
+    def enumerate_before_publication(path, *args, **kwargs):
+        assert not published, "filesystem enumeration occurred after publication"
+        yield from real_rglob(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "rename", publish)
+    monkeypatch.setattr(Path, "rglob", enumerate_before_publication)
+    assert ingest.rename_archive_folder(archive, "Object A", "Object B") == {
+        "Object A/lights/a.fit": "Object B/lights/a.fit"}
+    assert published
+    assert (archive / "Object B/lights/a.fit").read_bytes() == b"original bytes"
+
+
+def test_failed_whole_folder_publication_never_undoes_planned_paths(
+        dedup_store, monkeypatch):
+    _, archive = dedup_store
+    original = archive / "Object A" / "lights" / "a.fit"
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"original bytes")
+    undo_maps = []
+
+    def failed_rename(src, dst):
+        raise OSError("original folder is locked")
+
+    def record_undo(root, moved):
+        undo_maps.append(dict(moved))
+        return []
+
+    monkeypatch.setattr(Path, "rename", failed_rename)
+    monkeypatch.setattr(ingest, "undo_archive_rename", record_undo)
+    assert ingest.rename_archive_folder(archive, "Object A", "Object B") is None
+    assert original.read_bytes() == b"original bytes"
+    assert not (archive / "Object B").exists()
+    assert all(not moved for moved in undo_maps)
+
+
 def test_external_publication_collision_retries_without_replacing_bytes(dedup_store, monkeypatch):
     db, archive = dedup_store
     original = ingest._promote_stage

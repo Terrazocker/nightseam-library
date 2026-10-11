@@ -594,14 +594,31 @@ def _copy_spooled_upload(archive, target, source, first_chunk, digest):
     return str(target.relative_to(archive)).replace("\\", "/")
 
 
+class ArchiveRenameRecoveryError(OSError):
+    """A failed rename left files that could not be returned to their origins."""
+
+    def __init__(self, failures: list[tuple[str, str]]):
+        super().__init__("archive rename recovery is incomplete")
+        self.failures = failures
+
+
+class ArchiveRenameMap(dict[str, str]):
+    """File mapping with an independent undo record for an entire directory."""
+
+    def __init__(self, *, whole_directory: tuple[str, str] | None = None):
+        super().__init__()
+        self.whole_directory = whole_directory
+
+
 def rename_archive_folder(archive: Path, old_name: str,
                           new_name: str) -> dict[str, str] | None:
     """Move <archive>/<old slug> to <archive>/<new slug>, merging if the new
     folder already exists. Returns the map of moved frames ({old relative path:
     new relative path}, forward slashes) - `{}` when there was nothing to move -
-    or None when the move could not be completed, in which case the caller must
-    NOT rewrite the stored paths, or every frame of the group would point at a
-    folder that does not exist.
+    or None when the move was refused or failed with complete undo. The caller
+    must NOT rewrite stored paths on None. An incomplete undo raises
+    ArchiveRenameRecoveryError carrying the unrestored relative paths; the
+    caller must report that recovery is incomplete and preserve the bytes.
 
     A frame whose name already exists in the destination is UNIQUIFIED
     (`Light_001.fit` -> `Light_001_2.fit`), exactly like `_archive_target` does
@@ -609,11 +626,14 @@ def rename_archive_folder(archive: Path, old_name: str,
     destroyed those pixels while the DB kept two rows aliasing one file
     (PY-01, blocker). The returned map is what the caller feeds to
     `db.rename_images`, so the stored paths name the files that really exist."""
-    old = archive / obj_slug(old_name)
-    new = archive / obj_slug(new_name)
+    archive = archive.resolve()
+    old = paths.safe_join(archive, obj_slug(old_name))
+    new = paths.safe_join(archive, obj_slug(new_name))
+    if old is None or new is None:
+        return None
     if old == new or not old.is_dir():
         return {}
-    moved: dict[str, str] = {}
+    moved = ArchiveRenameMap()
 
     def _rel(p: Path) -> str:
         return str(p.relative_to(archive)).replace("\\", "/")
@@ -621,37 +641,45 @@ def rename_archive_folder(archive: Path, old_name: str,
     # F-22: every completed move is journalled so a mid-merge failure can be
     # UNDONE - without this, files already replaced into the destination stay
     # there while the database keeps the old paths ("missing originals").
-    done: list[tuple[Path, Path]] = []
-
     try:
         if new.exists():
             for f in sorted(old.rglob("*")):
                 if not f.is_file():
                     continue
                 dest = _unique_path(new / f.relative_to(old))
+                source_rel, dest_rel = _rel(f), _rel(dest)
+                # Validate resolved confinement, but move the lexical entries
+                # so a symlink's target is never substituted for the entry.
+                if paths.safe_join(archive, source_rel) is None or \
+                        paths.safe_join(archive, dest_rel) is None:
+                    raise OSError("archive rename path escapes the archive root")
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 _move_one(f, dest)
-                done.append((f, dest))
-                moved[_rel(f)] = _rel(dest)
+                moved[source_rel] = dest_rel
             for d in sorted([p for p in old.rglob("*") if p.is_dir()],
                             key=lambda p: len(p.parts), reverse=True):
                 d.rmdir()
             old.rmdir()
         else:
-            old.rename(new)
-            # F-22: the map contract is {old relative path: new relative
-            # path} - record the file's REAL origin (under old), not its
-            # new location, or the undo and db.rename_images cannot map it.
-            for f in sorted(new.rglob("*")):
+            # Discover every file BEFORE moving the directory. An enumeration
+            # error must leave the original tree intact, and a failed rename
+            # must not attempt to undo a merely planned map.
+            planned = ArchiveRenameMap(whole_directory=(_rel(old), _rel(new)))
+            for f in sorted(old.rglob("*")):
                 if f.is_file():
-                    moved[_rel(old / f.relative_to(new))] = _rel(f)
+                    planned[_rel(f)] = _rel(new / f.relative_to(old))
+            old.rename(new)
+            moved = planned
     except OSError as exc:
         failures = undo_archive_rename(archive, moved)
         for target, message in failures:
-            log.error("rename undo failed for %s: %s - run Reindex folders "
-                      "to rebuild the library rows", target, message)
+            log.error("rename undo failed for %s: %s - inspect and preserve "
+                      "the affected files, resolve the filesystem problem, "
+                      "then run Reindex folders", target, message)
         log.warning("rename: could not move %s -> %s: %s (undone: %d/%d)",
                     old, new, exc, len(moved) - len(failures), len(moved))
+        if failures:
+            raise ArchiveRenameRecoveryError(failures) from exc
         return None
     return moved
 
@@ -667,8 +695,24 @@ def undo_archive_rename(archive: Path,
 
     Best-effort by design: every restorable file is put back, and anything that
     cannot be restored is REPORTED (relative paths) instead of swallowed, so a
-    failed undo is visible and Reindex folders can rebuild the rows. Never
-    raises."""
+    failed undo is visible. A whole-directory move is reversed independently
+    of its file map, preserving empty directories and unrecorded children.
+    Never raises."""
+    whole_directory = getattr(moved, "whole_directory", None)
+    if whole_directory is not None:
+        old_rel, new_rel = whole_directory
+        try:
+            src = paths.safe_join(archive, old_rel)
+            dst = paths.safe_join(archive, new_rel)
+            if src is None or dst is None:
+                return [(new_rel, "path escaped the archive root")]
+            if src.exists() or src.is_symlink():
+                return [(new_rel, "original directory is occupied; refusing to overwrite it")]
+            dst.rename(src)
+        except OSError as exc:
+            return [(new_rel, str(exc))]
+        return []
+
     failures: list[tuple[str, str]] = []
     for old_rel, new_rel in reversed(list(moved.items())):
         try:

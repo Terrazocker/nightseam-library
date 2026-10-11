@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -19,12 +20,14 @@ from pydantic import BaseModel
 
 from .database import Database
 from .imglib import CatalogResolver, name_key
-from .ingest import (_archive_io, calibration_import_target, ingest_one, obj_slug,
+from .ingest import (ArchiveRenameRecoveryError, _archive_io,
+                     calibration_import_target, ingest_one, obj_slug,
                      reindex_library, rename_archive_folder, undo_archive_rename)
-from .paths import safe_join, static_dir
+from .paths import safe_join, safe_rel, static_dir
 from .version import app_version
 
 APP_VERSION = app_version()
+log = logging.getLogger(__name__)
 
 
 # per-request upload caps, checked against Content-Length before the body is
@@ -191,34 +194,6 @@ def create_app(db: Database) -> FastAPI:
             return JSONResponse({"detail": "cross-site request rejected"},
                                 status_code=403)
         return await call_next(request)
-        if limit is not None:
-            try:
-                declared = int(request.headers.get("content-length") or 0)
-            except ValueError:
-                declared = 0
-            if declared > limit:
-                return JSONResponse(
-                    {"detail": f"upload too large (max "
-                               f"{limit // (1024 * 1024)} MB per request)"},
-                    status_code=413)
-        resp = await call_next(request)
-        # SP-02: the privileged localhost origin must not accept remote script.
-        # Attach the policy to every HTML document the server serves (the SPA
-        # shell and FastAPI's own error pages; a 4xx/5xx body is HTML and needs
-        # it just as much, since a cross-site <script> tag can read nothing from
-        # a JSON response anyway but the browser still runs what it loads).
-        ctype = (resp.headers.get("content-type") or "").lower()
-        if ctype.startswith("text/html"):
-            resp.headers.setdefault("Content-Security-Policy", CSP_HEADER)
-        # the UI ships as plain files served from the exe/source bundle; a
-        # stale cached index.html next to fresh ES modules breaks the app
-        # (missing DOM ids). Never cache the UI shell or its assets - including
-        # themes.css, which carries the Workbench component overrides.
-        if request.url.path in ("/", "/index.html", "/catalog.html", "/style.css",
-                                "/themes.css", "/favicon.ico") or \
-                request.url.path.startswith("/js/"):
-            resp.headers["Cache-Control"] = "no-store"
-        return resp
 
     # ---------------- state / settings ----------------
 
@@ -390,16 +365,44 @@ def create_app(db: Database) -> FastAPI:
                 "galaxy", "globular", "open_cluster", "nebula", "planetary",
                 "supernova_remnant", "star_cloud", "asterism"):
             raise HTTPException(400, f"unknown type: {otype}")
-        rows = [i for i in db.images()
+        images = db.images()
+        rows = [i for i in images
                 if not i["object_id"]
                 and name_key(i["object_name"]) == name_key(name)]
         if not rows:
             raise HTTPException(404, "Object not found in library")
+        archive = Path(db.image_dir())
+        source_slug = obj_slug(name).casefold()
+        if source_slug != obj_slug(new_name).casefold():
+            # Different logical objects can share a physical slug (Obj! and
+            # Obj?), including resolved objects. Refuse a whole-folder move
+            # before touching any bytes when another group's row lives there.
+            for image in images:
+                rel = safe_rel(image.get("file"))
+                if rel is None or rel.split("/", 1)[0].casefold() != source_slug:
+                    continue
+                same_group = (not image["object_id"] and
+                              name_key(image["object_name"]) == name_key(name))
+                if not same_group:
+                    raise HTTPException(
+                        409, "Cannot rename this archive folder: it contains "
+                             "files belonging to another object group")
         # PY-01: the move returns the REAL destination of every frame. A rename
         # into a folder that already holds a same-named frame used to `replace`
         # it (two rows aliasing one file, the replaced pixels gone); the frame is
         # uniquified now and the stored path is updated to where it really is.
-        moved = rename_archive_folder(Path(db.image_dir()), name, new_name)
+        try:
+            moved = rename_archive_folder(archive, name, new_name)
+        except ArchiveRenameRecoveryError as exc:
+            log.exception("Archive folder rename failed with incomplete recovery")
+            raise HTTPException(
+                500, "Archive rename failed and recovery is incomplete. "
+                     "Database records were not changed. Inspect and preserve "
+                     "the affected archive files, resolve the filesystem "
+                     "problem, then run Reindex folders to reconcile the "
+                     "library with the files on disk; "
+                     "unrestored paths: " +
+                     ", ".join(path for path, _ in exc.failures)) from exc
         if moved is None:
             # the folder could not be moved (files open in another program):
             # leave the stored paths alone rather than pointing them at a
@@ -409,11 +412,22 @@ def create_app(db: Database) -> FastAPI:
                      "using those files and try again")
         try:
             db.rename_images(name, new_name, otype, obj_slug(new_name), moved)
-        except BaseException:
+        except BaseException as exc:
             # F-22: the disk move already happened - undo it so the files are
             # back where the (unchanged) database rows point, then surface the
             # database failure instead of leaving a mixed state.
-            undo_archive_rename(Path(db.image_dir()), moved)
+            failures = undo_archive_rename(archive, moved)
+            if failures:
+                log.exception("Database update failed after archive rename")
+                for path, message in failures:
+                    log.error("Archive rename undo failed for %s: %s", path, message)
+                raise HTTPException(
+                    500, "Archive rename database update failed and recovery "
+                         "is incomplete. Inspect and preserve the affected "
+                         "archive files, resolve the filesystem problem, then "
+                         "run Reindex folders to reconcile the library with "
+                          "the files on disk; unrestored "
+                          "paths: " + ", ".join(path for path, _ in failures)) from exc
             raise
         return {"ok": True, "name": new_name, "otype": otype}
 

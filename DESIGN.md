@@ -25,7 +25,7 @@ blur, glow, starfields, decorative gradients, or translucent panels.
 | Chart grid | `#304049` |
 | Secondary line | `#73B6DB` |
 
-Keep these semantic roles in `static/themes.css` and and the
+Keep these semantic roles in `static/themes.css` and the
 canvas adapters. Data-driven colors such as catalog type colors remain data, not
 interface theme tokens.
 
@@ -80,9 +80,10 @@ with quiet leader lines so dense groups remain understandable.
 
 ## Implementation boundaries
 
-Both shells share astronomy, planning, visibility, scoring, horizon geometry,
-and panorama history through `core/`. UI modules may format and arrange those
-results but must not add a second calculation path. Keep storage paths safe,
-backups staged before writes, and panorama strokes/profile precedence intact.
+The catalog uses the project-owned calculation snapshot in `core/`. Retained
+planning, visibility, scoring and horizon modules keep their numerical contracts;
+the planning shell and panorama editing UI were retired on October 10, 2026.
+UI modules may format and arrange core results but must not add a second
+calculation path. Keep storage paths safe and backups staged before writes.
 Edit authored source modules and rebuild generated core trees with
 `scripts/build_core.py`; never hand-edit generated core files.

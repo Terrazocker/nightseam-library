@@ -1,5 +1,5 @@
-/* Catalog-only desktop boot. The legacy planner shell keeps its own entry
-   point in main.js; this shell binds only the FITS archive and its map. */
+/* Desktop catalog boot: binds the exposure archive and its map.
+   The planning shell was retired on October 10, 2026. */
 
 import { $, toast, initFocusTrap } from "./util.js";
 import { S } from "./state.js";

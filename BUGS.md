@@ -14,6 +14,13 @@ cleanup to actual ProgramData or any application database.
 
 ## Acceptance still open
 
+- Filesystem refusal can prevent archive rename undo after a database failure.
+  Fault-injection tests reproduce this recovery limit. The API now reports
+  incomplete recovery and logs the affected paths instead of hiding it behind
+  a generic error. Preserve files at both locations, resolve the filesystem
+  problem and inspect the logged paths before Reindex folders. Reindex reconciles
+  library records with the current archive; it does not reverse a failed move.
+
 - Verify native scaled/mixed-DPI displays, monitor removal, Windows Snap,
   taskbar/system menu and keyboard move/resize on real hardware. Existing
   simulated regression tests do not establish those hardware results.

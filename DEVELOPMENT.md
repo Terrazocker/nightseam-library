@@ -26,6 +26,16 @@ a rolling `nightseam.db.backup` next to the database (taken with SQLite's own
 backup API under the connection lock), and **Reindex folders** rebuilds library
 rows from the archive.
 
+Library renames preserve logical object groups. If different names share a
+sanitized archive folder, a rename that would move that folder is refused with
+HTTP 409 before any file or database change; an edit that keeps the same folder
+may proceed. Directory enumeration finishes before a whole-folder move; its
+undo moves the directory back independently of the file map, including empty
+folders and unrecorded children. Database failures trigger filesystem undo.
+If filesystem recovery is refused,
+the API reports incomplete recovery and logs the affected relative paths;
+inspect those paths and recover the archive before using Reindex folders.
+
 `POST /api/images/ingest` may receive a positive `session_anchor_id` for an
 existing image, with dark/flat/bias frame type. The server revalidates the target
 under the archive lock. Nullable `session_date_obs` stores logical membership:

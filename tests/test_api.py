@@ -99,7 +99,154 @@ def test_library_edit_database_failure_undoes_the_disk_move(client, db, monkeypa
     stored = lib["objects"][0]["images"][0]["file"]
     assert (image_dir / stored).is_file()
     assert stored == lib_before["objects"][0]["images"][0]["file"]
-    assert not (image_dir / "Andromeda").exists()
+    assert not (image_dir / "My Nebula").exists()
+
+
+def _add_rename_image(db, archive, name, relative, payload, object_id=None):
+    path = archive / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+    db.add_image({"file": relative, "orig_name": path.name,
+                  "object_name": name, "object_id": object_id,
+                  "ingested_at": "2026-10-11T00:00:00Z"})
+    return path
+
+
+@pytest.mark.parametrize("other_object_id", [None, "ngc224"])
+@pytest.mark.parametrize("other_folder", ["Obj", "oBJ"])
+def test_library_rename_refuses_shared_slug_without_changing_rows_or_bytes(
+        client, db, tmp_path, other_object_id, other_folder):
+    archive = tmp_path / "archive"
+    first = _add_rename_image(db, archive, "Obj!", "Obj/session/lights/a.fit", b"A")
+    second = _add_rename_image(
+        db, archive, "Obj?", f"{other_folder}/session/lights/b.fit", b"B",
+        object_id=other_object_id)
+    before = db.images()
+    response = client.post("/api/library/edit", json={"name": "Obj!", "new_name": "Other"})
+    assert response.status_code == 409
+    assert "another object group" in response.json()["detail"]
+    assert db.images() == before
+    assert first.read_bytes() == b"A" and second.read_bytes() == b"B"
+    assert not (archive / "Other").exists()
+
+
+def test_library_edit_same_slug_keeps_other_group_files_in_place(client, db, tmp_path):
+    archive = tmp_path / "archive"
+    first = _add_rename_image(db, archive, "Obj!", "Obj/session/lights/a.fit", b"A")
+    second = _add_rename_image(db, archive, "Obj?", "Obj/session/lights/b.fit", b"B")
+    other_before = db.images()[1]
+    response = client.post("/api/library/edit", json={"name": "Obj!", "new_name": "Obj#"})
+    assert response.status_code == 200
+    assert db.images()[0]["object_name"] == "Obj#"
+    assert db.images()[1] == other_before
+    assert first.read_bytes() == b"A" and second.read_bytes() == b"B"
+
+
+def test_library_rename_allows_legacy_spellings_in_the_same_logical_group(
+        client, db, tmp_path):
+    archive = tmp_path / "archive"
+    _add_rename_image(db, archive, "Obj!", "Obj/session/lights/a.fit", b"A")
+    _add_rename_image(db, archive, " O b j! ", "Obj/session/lights/b.fit", b"B")
+    response = client.post("/api/library/edit", json={"name": "Obj!", "new_name": "Other"})
+    assert response.status_code == 200
+    assert all(row["object_name"] == "Other" for row in db.images())
+    assert (archive / "Other/session/lights/a.fit").read_bytes() == b"A"
+    assert (archive / "Other/session/lights/b.fit").read_bytes() == b"B"
+
+
+def test_library_database_failure_reports_failed_undo_with_original_diagnostics(
+        client, db, tmp_path, monkeypatch, caplog):
+    from pathlib import Path
+
+    archive = tmp_path / "archive"
+    old = _add_rename_image(db, archive, "Old", "Old/session/lights/a.fit", b"original")
+    before = db.images()
+    db.conn.execute("CREATE TRIGGER reject_rename_file BEFORE UPDATE OF file ON images "
+                    "BEGIN SELECT RAISE(ABORT, 'injected database update failure'); END")
+    db.conn.commit()
+    new = archive / "New/session/lights/a.fit"
+    real_rename = Path.rename
+
+    def failed_undo(src, dst):
+        if src == archive / "New":
+            raise OSError("injected locked original destination")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(Path, "rename", failed_undo)
+    response = client.post("/api/library/edit", json={"name": "Old", "new_name": "New"})
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert "recovery is incomplete" in detail and "Reindex folders" in detail
+    assert "resolve the filesystem problem" in detail
+    assert "unrestored paths: New" in detail
+    assert db.images() == before and not db.conn.in_transaction
+    assert not old.exists() and new.read_bytes() == b"original"
+    assert any(record.exc_info and
+               "injected database update failure" in str(record.exc_info[1])
+               for record in caplog.records)
+    assert "undo failed for New:" in caplog.text
+    assert "injected locked original destination" in caplog.text
+
+
+def test_library_database_failure_reports_occupied_whole_directory_origin(
+        client, db, tmp_path, monkeypatch):
+    archive = tmp_path / "archive"
+    _add_rename_image(db, archive, "Old", "Old/session/lights/a.fit", b"original")
+    before = db.images()
+
+    def failed_database_update(*args, **kwargs):
+        (archive / "Old").mkdir()
+        (archive / "Old/untouched.bin").write_bytes(b"new occupant")
+        raise RuntimeError("database update failed")
+
+    monkeypatch.setattr(db, "rename_images", failed_database_update)
+    response = client.post("/api/library/edit", json={"name": "Old", "new_name": "New"})
+    assert response.status_code == 500
+    assert "recovery is incomplete" in response.json()["detail"]
+    assert "Reindex folders" in response.json()["detail"]
+    assert db.images() == before
+    assert (archive / "Old/untouched.bin").read_bytes() == b"new occupant"
+    assert (archive / "New/session/lights/a.fit").read_bytes() == b"original"
+
+
+def test_library_merge_failure_reports_incomplete_file_undo(
+        client, db, tmp_path, monkeypatch, caplog):
+    from pathlib import Path
+    from app import ingest
+
+    archive = tmp_path / "archive"
+    first = _add_rename_image(db, archive, "Old", "Old/session/lights/a.fit", b"A")
+    second = _add_rename_image(db, archive, "Old", "Old/session/lights/b.fit", b"B")
+    (archive / "New").mkdir()
+    before = db.images()
+    real_move = ingest._move_one
+    real_replace = Path.replace
+    calls = 0
+
+    def failed_second_move(src, dst):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected forward move failure")
+        return real_move(src, dst)
+
+    def failed_undo(src, dst):
+        if src == archive / "New/session/lights/a.fit":
+            raise OSError("injected file recovery failure")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(ingest, "_move_one", failed_second_move)
+    monkeypatch.setattr(Path, "replace", failed_undo)
+    response = client.post("/api/library/edit", json={"name": "Old", "new_name": "New"})
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert "recovery is incomplete" in detail and "Reindex folders" in detail
+    assert "New/session/lights/a.fit" in detail
+    assert db.images() == before
+    assert not first.exists() and second.read_bytes() == b"B"
+    assert (archive / "New/session/lights/a.fit").read_bytes() == b"A"
+    assert "injected forward move failure" in caplog.text
+    assert "injected file recovery failure" in caplog.text
 
 
 def test_f15_oversized_strings_are_rejected_not_truncated(client, tmp_path, monkeypatch):

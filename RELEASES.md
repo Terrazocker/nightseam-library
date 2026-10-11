@@ -1,5 +1,42 @@
 # Independent catalog release record
 
+## Verified audit follow-up - October 11, 2026
+
+Closed the five findings in reviews/agent-changes-review-20261011.md:
+
+- R-01: whole-folder renames enumerate before moving and retain an independent
+  directory undo record. Undo restores empty folders and unrecorded children,
+  and refuses to overwrite an occupied original directory. A failed forward
+  move never undoes a merely planned map.
+- R-02: both filesystem and database failures report incomplete undo explicitly.
+  Logs preserve the original exception and identify unrestored relative paths.
+  Recovery guidance requires inspecting/preserving files and resolving the
+  filesystem problem before Reindex folders reconciles the library.
+- R-05: moving a folder shared by another logical group returns HTTP 409 before
+  changing files or rows, including resolved objects and Windows case aliases.
+  Same-folder edits and legacy spellings within one logical group remain valid.
+  Merge writes validate source and final destination confinement.
+- R-03: scoring parity validates nonempty cases, input/output cardinality and
+  finite required numeric fields in expected, batch and split results. Copied-core
+  mutations now reject empty/truncated output and NaN/Infinity/missing scores.
+  Golden fixtures, formulas and existing numerical tolerances were unchanged.
+- R-04: the core builder validates current/previous hash shape and positive
+  integer tokens without coercion before pruning or writing. Private-copy
+  regressions prove invalid manifests leave bytes, timestamps and directories
+  unchanged, while first bake and legitimate retention still work.
+
+Removed unreachable middleware and the unused rename journal. Corrected current
+design/boot documentation, the authored-core versus bake validation description,
+and the prior NUL-path result. BUGS.md records the remaining filesystem refusal
+and manual hardware/accessibility acceptance limits.
+
+Validation: full suite **512 passed, one existing Starlette/httpx warning** in
+114.21 s. Focused selections passed (26 archive/API, 17 scoring, 37 manifest;
+these overlap the full suite). check_js.py passed: 42 modules, no broken imports
+or syntax errors, DOM/encoding/core gates passed, two existing advisory names.
+git diff --check passed. Evidence: logs/fix-review-20261011/. No version, tag or
+public release was created. Packaged validation is recorded separately.
+
 ## F-21 core comment sweep with authorized rebake - October 11, 2026
 
 The F-21 stale-reference sweep was executed against the AUTHORED core modules
@@ -15,7 +52,8 @@ Authorized rebake via scripts/build_core.py: new bake hash
 stub regenerated, N-1 retention kept the prior bake. check_core.py, check_js.py,
 check_encoding.py, check_dom_ids.py and the source release guard all passed;
 full suite **446 passed, one existing Starlette/httpx warning** in 99.04 s
-including the scoring-parity and D1 drivers (which import the NEW bake). The
+including the scoring-parity and D1 drivers (which import authored `core/`;
+`check_core.py` separately verifies the generated bake matches it). The
 stale-reference class (F-21) is closed.
 
 ## F-15 length caps on the remaining write fields - October 11, 2026
@@ -40,7 +78,7 @@ passed. Logs under logs/round3-*. No version, tag or release artifact.
   engine is proven bit-identical to the frozen characterization goldens
   (tests/fixtures/scoring_goldens.json: 697 objects x 2 sites, inputs baked
   into the fixture) on every displayed field and the transit index, with only
-  the owner-authorized precess-once drift (<=2e-5) allowed on the continuous
+  the existing precess-once drift tolerance (<=2e-5) on the continuous
   score doubles; a mutation proof on a COPY of core/scoring.js confirms a
   perturbed coefficient fails the parity. The orphaned D1 driver
   (tests/js/core_d1.mjs) is wired too: the world-azimuth bin contract runs
@@ -60,8 +98,9 @@ No version, tag or release artifact was created.
   test_rejected_requests_do_not_advance_the_idle_timer (403s leave the timer
   untouched; an allowed request still advances it).
 - F-13: /api/library/open_folder goes through the shared safe_join rail -
-  control characters and device names are a clean 400 (a raw NUL used to
-  escape as a 500) while the archive root stays openable via ".".
+  control characters and device names are a clean 400 while the archive root
+  stays openable via ".". The prior raw-NUL probe returned 404 on the verified
+  Python 3.14 environment; the earlier claim of a raw 500 was incorrect.
 - F-16: every response carries X-Content-Type-Options: nosniff, covering the
   non-HTML responses the CSP attachment deliberately skips.
 - check_core contract alignment: the header claimed a stub-token check, but
