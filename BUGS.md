@@ -18,8 +18,21 @@ cleanup to actual ProgramData or any application database.
   Fault-injection tests reproduce this recovery limit. The API now reports
   incomplete recovery and logs the affected paths instead of hiding it behind
   a generic error. Preserve files at both locations, resolve the filesystem
-  problem and inspect the logged paths before Reindex folders. Reindex reconciles
-  library records with the current archive; it does not reverse a failed move.
+  problem and inspect the logged paths before Reindex folders. Reindex repairs
+  only unique trusted full-file fingerprint matches and preserves original
+  records. It does not reverse a failed move, merge existing duplicate rows or
+  repair records without a trustworthy prior fingerprint. Ambiguous matches
+  remain unchanged and require manual review; no missing record is discarded.
+
+- The twelve-hour adjacent-capture rule can combine consecutive observing
+  nights with a short daytime gap. This is the current policy, not a calendar-
+  night guarantee. A future night-boundary option needs an observatory timezone
+  and explicit calibration/daytime semantics. Existing folder labels are not
+  migrated when later imports extend a logical session.
+
+- CSV formula protection targets spreadsheet viewing. Import/resave behavior
+  differs among spreadsheet applications; JSON retains exact original values.
+  No cross-application formula-execution or exfiltration acceptance is claimed.
 
 - Verify native scaled/mixed-DPI displays, monitor removal, Windows Snap,
   taskbar/system menu and keyboard move/resize on real hardware. Existing

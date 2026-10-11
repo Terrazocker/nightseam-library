@@ -347,9 +347,22 @@ def test_rename_images_updates_rows_and_paths(tmp_path):
         "date_obs": None, "filter": None, "telescope": None,
         "ingested_at": "2026-08-26T00:10:00",
     })
-    db.rename_images("My Secret", "New Name", "nebula", "New Name")
+    db.rename_images("My Secret", "New Name", "nebula", "New Name",
+                     {"My Secret/lights/a.fit": "New Name/lights/a.fit"})
     imgs = db.images()
     assert len(imgs) == 1
     assert imgs[0]["object_name"] == "New Name"
     assert imgs[0]["otype"] == "nebula"
     assert imgs[0]["file"] == "New Name/lights/a.fit"
+
+
+
+def test_rename_images_without_move_map_preserves_stored_path(tmp_path):
+    from app.database import Database
+    db = Database(tmp_path / "rename.sqlite3")
+    identifier = db.add_image({"file": "Original/lights/a.fit", "orig_name": "a.fit",
+                               "object_name": "Original", "ingested_at": "2026-10-11"})
+    db.rename_images("Original", "Changed", "nebula", "Changed")
+    record = db.image(identifier)
+    assert record["object_name"] == "Changed"
+    assert record["file"] == "Original/lights/a.fit"

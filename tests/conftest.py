@@ -46,6 +46,8 @@ def _never_touch_the_user_profile(monkeypatch, tmp_path):
     test's private directory. Tests may override archive settings explicitly;
     the default can never reach a profile archive or either application store.
     """
+    # The synthetic TestClient host is enabled explicitly only in tests.
+    monkeypatch.setenv("NIGHTSEAM_ALLOW_HOST", "testserver")
     monkeypatch.setattr("app.paths.default_archive_dir",
                         lambda: tmp_path / "default-archive")
     sandbox = tmp_path / "data"

@@ -124,7 +124,7 @@ def test_reindex_reuses_catalog_matcher_for_all_new_files(dedup_store, monkeypat
         loads.append(kwargs)
         return original(**kwargs)
     monkeypatch.setattr(db, "all_objects", catalog)
-    assert ingest.reindex_library(db, archive) == {"found": 8, "added": 8, "skipped": 0, "failed": 0}
+    assert ingest.reindex_library(db, archive) == {"found": 8, "added": 8, "skipped": 0, "failed": 0, "repaired": 0, "conflicts": 0}
     assert len(loads) == 1
     assert {row["object_name"] for row in db.images()} == {"Unlisted nebula"}
     loads.clear()
@@ -357,11 +357,10 @@ def test_images_for_object_returns_only_matching_rows_in_id_order(tmp_path):
 
         assert [r["file"] for r in db.images_for_object("known", "Known")] == [
             "a.fit", "d.fit"]
-        # The unresolved-name branch retains the original exact-name filter;
-        # it includes rows even if they carry an object_id.
-        assert [r["file"] for r in db.images_for_object(None, "Mystery")] == [
-            "b.fit", "c.fit"]
-        assert db.images_for_object(None, "mystery") == []
+        # Unresolved names share the Library normalization, and resolved rows
+        # never leak into an unresolved group's session selection.
+        assert [r["file"] for r in db.images_for_object(None, "Mystery")] == ["c.fit"]
+        assert [r["file"] for r in db.images_for_object(None, "my stery")] == ["c.fit"]
 
         id_plan = " ".join(str(r[3]) for r in db.conn.execute(
             "EXPLAIN QUERY PLAN SELECT * FROM images "
@@ -375,7 +374,7 @@ def test_images_for_object_returns_only_matching_rows_in_id_order(tmp_path):
         db.conn.close()
 
 
-def test_unresolved_session_lookup_joins_exact_name_even_with_existing_id(tmp_path):
+def test_unresolved_session_lookup_excludes_existing_resolved_id(tmp_path):
     db = Database(tmp_path / "session-name.sqlite3")
     archive = tmp_path / "archive"
     archive.mkdir()
@@ -388,7 +387,7 @@ def test_unresolved_session_lookup_joins_exact_name_even_with_existing_id(tmp_pa
         })
         selected = _session_dir(
             db, archive, "Mystery", None, "Mystery", "2026-08-23T01:00:00")
-        assert selected.name == session_folder_name(date_epoch(old_date))
+        assert selected.name == session_folder_name(date_epoch("2026-08-23T01:00:00"))
     finally:
         db.conn.close()
 
@@ -578,7 +577,7 @@ def test_reindex_skips_duplicate_content_and_preserves_manual_files(dedup_store)
     manual.parent.mkdir(parents=True)
     manual.write_bytes(_capture())
     result = ingest.reindex_library(db, archive)
-    assert result == {"found": 2, "added": 0, "skipped": 2, "failed": 0}
+    assert result == {"found": 2, "added": 0, "skipped": 2, "failed": 0, "repaired": 0, "conflicts": 0}
     assert manual.read_bytes() == _capture()
     assert len(db.images()) == 1
     assert db.image(first["id"])["content_sha256"]
@@ -1224,3 +1223,206 @@ def test_ingest_endpoint_builds_catalog_off_the_event_loop(tmp_path, monkeypatch
         assert resolver_seen[0].thread == observed["thread"]
     finally:
         db.conn.close()
+
+
+
+def test_normalized_unresolved_imports_share_session_label(dedup_store):
+    db, archive = dedup_store
+    def exposure(name, stamp, pixels):
+        return make_fits([("SIMPLE", "T"), ("OBJECT", repr(name)),
+                          ("DATE-OBS", repr(stamp)), ("IMAGETYP", "'LIGHT'")]) + pixels
+    first = _import(db, archive, exposure("Zzq Blob 7", "2026-01-01T20:00:00Z", b"A"), "a.fit")
+    second = _import(db, archive, exposure("zzqblob7", "2026-01-01T21:00:00Z", b"B"), "b.fit")
+    assert first["ok"] and second["ok"]
+    assert Path(first["stored"]).parts[1] == Path(second["stored"]).parts[1]
+    groups = ingest.imglib.group_library(db.images(), [])
+    assert len(groups) == 1 and len(groups[0]["sessions"]) == 1
+    assert groups[0]["sessions"][0]["n_images"] == 2
+
+
+def test_reindex_repairs_unique_missing_identity_preserving_metadata(dedup_store):
+    db, archive = dedup_store
+    first = _import(db, archive, _capture())
+    db.conn.execute("UPDATE images SET object_name=?,otype=?,session_date_obs=? WHERE id=?",
+                    ("Manual identity", "nebula", "2026-08-21T20:00:00Z", first["id"]))
+    db.conn.commit()
+    before = db.image(first["id"])
+    new_path = archive / "Actual/session/darks/restored.fit"
+    new_path.parent.mkdir(parents=True)
+    (archive / before["file"]).rename(new_path)
+    outcome = ingest.reindex_library(db, archive)
+    assert outcome == {"found": 1, "added": 0, "skipped": 0, "failed": 0,
+                       "repaired": 1, "conflicts": 0}
+    after = db.image(first["id"])
+    assert after["file"] == "Actual/session/darks/restored.fit"
+    for key in before.keys() - {"file", "content_sha256", "file_size", "file_mtime_ns"}:
+        assert after[key] == before[key]
+    assert after["imagetyp"] == "light"  # stored classification wins over folder
+    assert len(db.images()) == 1 and new_path.read_bytes() == _capture()
+
+
+@pytest.mark.parametrize("ambiguous", ["records", "destinations"])
+def test_reindex_refuses_ambiguous_missing_identity(dedup_store, ambiguous):
+    db, archive = dedup_store
+    first = _import(db, archive, _capture())
+    rec = db.image(first["id"])
+    (archive / rec["file"]).unlink()
+    if ambiguous == "records":
+        extra = dict(rec, file="Other/undated/lights/missing.fit")
+        db.add_image(extra)
+    before = db.images()
+    count = 2 if ambiguous == "destinations" else 1
+    for index in range(count):
+        target = archive / f"Actual/undated/lights/{index}.fit"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(_capture())
+    result = ingest.reindex_library(db, archive)
+    assert result["conflicts"] == count and result["repaired"] == result["added"] == 0
+    assert db.images() == before
+    assert all((archive / f"Actual/undated/lights/{index}.fit").read_bytes() == _capture()
+               for index in range(count))
+
+
+def test_reindex_does_not_guess_without_trusted_missing_fingerprint(dedup_store):
+    db, archive = dedup_store
+    first = _import(db, archive, _capture())
+    (archive / first["stored"]).unlink()
+    db.conn.execute("UPDATE images SET content_sha256=NULL,file_size=NULL WHERE id=?", (first["id"],))
+    db.conn.commit()
+    before = db.image(first["id"])
+    manual = archive / "Manual/lights/manual.fit"
+    manual.parent.mkdir(parents=True)
+    manual.write_bytes(_capture())
+    outcome = ingest.reindex_library(db, archive)
+    assert outcome["repaired"] == 0 and outcome["added"] == 1
+    assert db.image(first["id"]) == before
+
+
+def test_reindex_commit_failure_rolls_back_repairs_fingerprints_and_additions(dedup_store):
+    db, archive = dedup_store
+    first = _import(db, archive, _capture())
+    second = _import(db, archive, _capture(b"second"), "second.fit")
+    old = archive / first["stored"]
+    relocated = archive / "Manual/lights/relocated.fit"
+    relocated.parent.mkdir(parents=True)
+    old.rename(relocated)
+    (archive / second["stored"]).write_bytes(_capture(b"changed second"))
+    for index in (1, 2):
+        (relocated.parent / f"new-{index}.fit").write_bytes(_capture(f"new-{index}".encode()))
+    before = db.images()
+    db.conn.execute("CREATE TRIGGER refuse_second_reindex BEFORE INSERT ON images "
+                    "WHEN NEW.orig_name='new-2.fit' BEGIN SELECT RAISE(ABORT,'refused insert'); END")
+    db.conn.commit()
+    with pytest.raises(sqlite3.IntegrityError, match="refused insert"):
+        ingest.reindex_library(db, archive)
+    assert db.images() == before
+    assert relocated.read_bytes() == _capture()
+    assert not list(archive.rglob("*.part"))
+
+
+def test_reindex_cancel_after_hash_leaves_entire_database_unchanged(dedup_store, monkeypatch):
+    db, archive = dedup_store
+    first = _import(db, archive, _capture())
+    (archive / first["stored"]).write_bytes(_capture(b"changed"))
+    before = db.images()
+    cancelled = threading.Event()
+    original = ingest._fingerprint_file
+    def stop_after_read(path, event=None):
+        result = original(path, event)
+        cancelled.set()
+        return result
+    monkeypatch.setattr(ingest, "_fingerprint_file", stop_after_read)
+    with pytest.raises(ingest.ReindexCancelled):
+        ingest.reindex_library(db, archive, cancelled)
+    assert db.images() == before
+
+
+def test_reindex_hash_checks_cancellation_between_chunks(dedup_store, monkeypatch):
+    db, archive = dedup_store
+    target = archive / "Manual/lights/large.fit"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(_capture(b"pixel" * (1 << 19)))
+    before = db.images()
+    cancelled = threading.Event()
+    original = ingest.hashlib.sha256
+    class StopDigest:
+        def __init__(self):
+            self.digest = original()
+        def update(self, data):
+            self.digest.update(data)
+            cancelled.set()
+        def hexdigest(self):
+            raise AssertionError("cancellation must stop before completing digest")
+    monkeypatch.setattr(ingest.hashlib, "sha256", StopDigest)
+    with pytest.raises(ingest.ReindexCancelled):
+        ingest.reindex_library(db, archive, cancelled)
+    assert db.images() == before
+
+
+def test_reindex_refuses_outside_archive_candidate_before_read(dedup_store, monkeypatch):
+    db, archive = dedup_store
+    target = archive / "Manual/lights/refused.fit"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(_capture())
+    before = db.images()
+    original = ingest.paths.safe_join
+    monkeypatch.setattr(ingest.paths, "safe_join", lambda root, rel:
+                        None if rel == "Manual/lights/refused.fit" else original(root, rel))
+    with pytest.raises(ValueError, match="Unsafe archive file"):
+        ingest.reindex_library(db, archive)
+    assert db.images() == before and target.read_bytes() == _capture()
+
+
+
+def test_reindex_cancel_while_waiting_for_publication_lock(dedup_store, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    db, archive = dedup_store
+    target = archive / "Manual/lights/new.fit"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(_capture())
+    before = db.images()
+    cancelled, entered, publish = threading.Event(), threading.Event(), threading.Event()
+    original = db.apply_reindex_plan
+    def hold_publication(*args, **kwargs):
+        entered.set()
+        assert publish.wait(3)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(db, "apply_reindex_plan", hold_publication)
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        future = workers.submit(ingest.reindex_library, db, archive, cancelled)
+        assert entered.wait(3)
+        with db.lock:
+            publish.set()
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.05)
+            cancelled.set()
+        with pytest.raises(ingest.ReindexCancelled):
+            future.result(timeout=3)
+    assert db.images() == before and target.read_bytes() == _capture()
+
+
+
+def test_reindex_updated_live_digest_remains_available_to_later_candidates(dedup_store):
+    db, archive = dedup_store
+    old_bytes, actual_bytes = _capture(b"pixels-A"), _capture(b"pixels-B")
+    first = _import(db, archive, old_bytes)
+    original = archive / first["stored"]
+    original.write_bytes(actual_bytes)
+    stat = original.stat()
+    # A restoration can preserve size and modification time while changing
+    # bytes. The cached digest is only a hint until a positive match is read.
+    db.conn.execute("UPDATE images SET file_size=?,file_mtime_ns=? WHERE id=?",
+                    (stat.st_size, stat.st_mtime_ns, first["id"]))
+    db.conn.commit()
+    manual = archive / "Manual/lights"
+    manual.mkdir(parents=True)
+    (manual / "a-old.fit").write_bytes(old_bytes)
+    (manual / "b-actual.fit").write_bytes(actual_bytes)
+    outcome = ingest.reindex_library(db, archive)
+    assert outcome == {"found": 3, "added": 1, "skipped": 2, "failed": 0,
+                       "repaired": 0, "conflicts": 0}
+    assert len(db.images()) == 2
+    assert db.image(first["id"])["file"] == first["stored"]
+    assert db.image(first["id"])["content_sha256"] == hashlib.sha256(actual_bytes).hexdigest()
+    assert sum(row["content_sha256"] == hashlib.sha256(actual_bytes).hexdigest()
+               for row in db.images()) == 1

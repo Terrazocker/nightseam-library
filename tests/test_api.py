@@ -7,8 +7,10 @@ codes, and ingest for the image-catalog API surface.
 import io
 import json
 import math
+import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -152,6 +154,189 @@ def test_library_rename_allows_legacy_spellings_in_the_same_logical_group(
     assert all(row["object_name"] == "Other" for row in db.images())
     assert (archive / "Other/session/lights/a.fit").read_bytes() == b"A"
     assert (archive / "Other/session/lights/b.fit").read_bytes() == b"B"
+
+
+def test_library_rename_refuses_naturally_imported_multi_root_aliases(client, db):
+    imports = []
+    for index, name in enumerate(("Zzq Blob 7", "ZzqBlob7")):
+        payload = make_fits([("SIMPLE", "T"), ("OBJECT", repr(name)),
+                             ("DATE-OBS", f"'2026-01-01T{20 + index}:00:00'")])
+        result = client.post("/api/images/ingest", files=[
+            ("files", (f"{index}.fit", payload, "application/octet-stream"))]).json()["results"][0]
+        assert result["ok"]
+        imports.append(result)
+    before = db.images()
+    original_bytes = [(tmp_archive(client) / item["stored"]).read_bytes() for item in imports]
+    response = client.post("/api/library/edit", json={"name": "Zzq Blob 7", "new_name": "Renamed"})
+    assert response.status_code == 409
+    assert db.images() == before
+    assert [(tmp_archive(client) / item["stored"]).read_bytes() for item in imports] == original_bytes
+    assert not (tmp_archive(client) / "Renamed").exists()
+
+
+def test_library_rename_refuses_stored_root_that_differs_from_display_name(client, db, tmp_path):
+    original = _add_rename_image(db, tmp_path / "archive", "Display", "Legacy/session/lights/a.fit", b"A")
+    before = db.images()
+    assert client.post("/api/library/edit", json={"name": "Display", "new_name": "New"}).status_code == 409
+    assert db.images() == before and original.read_bytes() == b"A"
+
+
+def test_library_rename_refuses_missing_record_before_moving_other_files(client, db, tmp_path):
+    original = _add_rename_image(db, tmp_path / "archive", "Old", "Old/session/lights/a.fit", b"A")
+    _add_rename_image(db, tmp_path / "archive", "Old", "Old/session/lights/b.fit", b"B").unlink()
+    before = db.images()
+    assert client.post("/api/library/edit", json={"name": "Old", "new_name": "New"}).status_code == 409
+    assert db.images() == before and original.read_bytes() == b"A"
+    assert not (tmp_path / "archive/New").exists()
+
+
+@pytest.mark.parametrize("failure", [ValueError, sqlite3.OperationalError])
+def test_upload_exception_preserves_prior_results_and_reports_remaining_files(client, db, monkeypatch, failure):
+    real_add = db.add_image
+    calls = 0
+
+    def rejected_second(rec):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise failure("injected file failure")
+        return real_add(rec)
+
+    monkeypatch.setattr(db, "add_image", rejected_second)
+    response = client.post("/api/images/ingest", files=[
+        ("files", (f"{index}.fit", m31_fits(index + 1), "application/octet-stream"))
+        for index in range(3)])
+    assert response.status_code == 200
+    results = response.json()["results"]
+    assert len(results) == 3 and results[0]["ok"] and not results[1]["ok"]
+    if failure is ValueError:
+        assert results[2]["ok"] and len(db.images()) == 2
+    else:
+        assert results[1]["unconfirmed"] and results[2]["unattempted"]
+        assert len(db.images()) == 1 and calls == 2
+    assert (tmp_archive(client) / results[0]["stored"]).is_file()
+    assert not list(tmp_archive(client).rglob("*.part"))
+    assert len(list(tmp_archive(client).rglob("*.fit"))) == len(db.images())
+
+
+def test_upload_history_database_failure_reports_committed_file_as_unconfirmed(client, db):
+    db.conn.execute("CREATE TRIGGER reject_history BEFORE INSERT ON import_batches "
+                    "BEGIN SELECT RAISE(ABORT, 'injected history failure'); END")
+    db.conn.commit()
+    response = client.post("/api/images/ingest", files=[
+        ("files", ("a.fit", m31_fits(), "application/octet-stream")),
+        ("files", ("b.fit", m31_fits(1), "application/octet-stream"))])
+    results = response.json()["results"]
+    assert response.status_code == 200 and results[0]["unconfirmed"] and results[1]["unattempted"]
+    assert len(db.images()) == 1
+    assert (tmp_archive(client) / db.images()[0]["file"]).is_file()
+    assert not db.conn.in_transaction
+    assert client.post("/api/library/reindex").status_code == 200
+
+
+@pytest.mark.parametrize("text", ["=1+1", "+SUM(A1:A2)", "-1+2", "@SUM(A1:A2)", "  =1+1", "\r\n=1+1", "＝1+1"])
+def test_csv_neutralizes_formula_text_without_changing_metadata(client, db, text):
+    import csv
+    record = {"file": "Object/undated/lights/a.fit", "orig_name": text,
+              "object_name": text, "filter": text, "telescope": text,
+              "ra_hours": 1.25, "dec_deg": -25.0, "ingested_at": "2026-10-11"}
+    db.add_image(record)
+    response = client.get("/api/library/export?format=csv")
+    row = next(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+    for field in ("orig_name", "object_name", "filter", "telescope"):
+        assert row[field] == "\t" + text
+        assert db.images()[0][field] == text
+    assert row["dec_deg"] == "-25.0"
+    image = client.get("/api/library/export?format=json").json()["objects"][0]["images"][0]
+    assert image["filter"] == text and image["telescope"] == text
+
+
+def test_production_host_policy_and_csp_exclude_retired_allowances(db, monkeypatch):
+    monkeypatch.delenv("NIGHTSEAM_ALLOW_HOST")
+    with TestClient(create_app(db)) as production:
+        assert production.get("/api/state").status_code == 403
+    with TestClient(create_app(db), base_url="http://127.0.0.1") as production:
+        response = production.get("/api/state")
+        assert response.status_code == 200
+        csp = production.get("/").headers["content-security-policy"]
+        assert "connect-src 'self'" in csp
+        assert not any(host in csp for host in ("wikimedia", "alasky", "open-meteo"))
+
+
+def test_reindex_disconnect_signals_and_drains_worker(db, tmp_path, monkeypatch):
+    import asyncio
+    stopped = threading.Event()
+
+    def worker(database, archive, cancel):
+        assert cancel.wait(2), "disconnect did not reach worker"
+        stopped.set()
+        raise server_mod.ReindexCancelled()
+
+    class Disconnected:
+        async def is_disconnected(self):
+            return True
+
+    monkeypatch.setattr(server_mod, "reindex_library", worker)
+    with pytest.raises(server_mod.ReindexCancelled):
+        asyncio.run(server_mod._reindex_with_disconnect(db, Disconnected()))
+    assert stopped.is_set()
+
+
+def test_reindex_task_cancellation_signals_and_drains_worker(db, tmp_path, monkeypatch):
+    import asyncio
+    started, stopped = threading.Event(), threading.Event()
+
+    def worker(database, archive, cancel):
+        started.set()
+        assert cancel.wait(2), "request cancellation did not reach worker"
+        stopped.set()
+        raise server_mod.ReindexCancelled()
+
+    class Connected:
+        async def is_disconnected(self):
+            return False
+
+    async def scenario():
+        task = asyncio.create_task(server_mod._reindex_with_disconnect(db, Connected()))
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    monkeypatch.setattr(server_mod, "reindex_library", worker)
+    asyncio.run(scenario())
+    assert stopped.is_set()
+
+
+def test_queued_reindex_uses_archive_setting_under_archive_lock(db, tmp_path, monkeypatch):
+    import asyncio
+    queued = threading.Event()
+    roots = []
+    original = tmp_path / "first"
+    current = tmp_path / "second"
+    db.set_setting("image_dir", str(original))
+
+    def scan(database, archive, cancel):
+        roots.append(archive)
+        return {"found": 0}
+
+    class Connected:
+        async def is_disconnected(self):
+            queued.set()
+            return False
+
+    async def scenario():
+        with db.archive_lock:
+            task = asyncio.create_task(server_mod._reindex_with_disconnect(db, Connected()))
+            while not queued.is_set():
+                await asyncio.sleep(0.01)
+            db.set_setting("image_dir", str(current))
+        assert await task == {"found": 0}
+
+    monkeypatch.setattr(server_mod, "reindex_library", scan)
+    asyncio.run(scenario())
+    assert roots == [current]
 
 
 def test_library_database_failure_reports_failed_undo_with_original_diagnostics(
@@ -1028,7 +1213,7 @@ def test_ingest_builds_one_catalog_resolver_per_request(client, monkeypatch):
     assert len(builds) == 1
 
 
-def test_unresolved_ingest_joins_exact_name_session_even_if_old_row_has_id(
+def test_unresolved_ingest_does_not_join_differently_resolved_same_name(
         client, db):
     from app.fits import date_epoch
     from app.ingest import session_folder_name
@@ -1049,7 +1234,7 @@ def test_unresolved_ingest_joins_exact_name_session_even_if_old_row_has_id(
     result = response.json()["results"][0]
     assert result["ok"] and result["object"]["id"] is None
     assert result["stored"].replace("\\", "/").split("/")[1] == \
-        session_folder_name(date_epoch(old_date))
+        session_folder_name(date_epoch("2026-08-23T01:00:00"))
 
 
 def test_library_session_rollups(client):
@@ -1131,7 +1316,8 @@ def test_reindex_adds_disk_files(client):
 def test_reindex_empty_archive(client):
     r = client.post("/api/library/reindex")
     assert r.status_code == 200
-    assert r.json() == {"found": 0, "added": 0, "skipped": 0, "failed": 0}
+    assert r.json() == {"found": 0, "added": 0, "skipped": 0, "failed": 0,
+                        "repaired": 0, "conflicts": 0}
 
 
 @pytest.mark.parametrize("relative", [
@@ -1209,7 +1395,8 @@ def test_reindex_ignores_empty_and_non_fits_folders(client):
     (base / "notes.txt").write_text("Keep this user file.", encoding="utf-8")
     response = client.post("/api/library/reindex")
     assert response.status_code == 200
-    assert response.json() == {"found": 0, "added": 0, "skipped": 0, "failed": 0}
+    assert response.json() == {"found": 0, "added": 0, "skipped": 0, "failed": 0,
+                               "repaired": 0, "conflicts": 0}
     assert (base / "notes.txt").read_text(encoding="utf-8") == "Keep this user file."
 
 

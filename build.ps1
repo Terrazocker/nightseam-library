@@ -4,14 +4,10 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 $catalogPython = Join-Path $PSScriptRoot ".venv-build\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $catalogPython)) {
-    & python -m venv (Join-Path $PSScriptRoot ".venv-build")
-    if ($LASTEXITCODE -ne 0) { throw "Cannot create build environment" }
+    throw "Prepare the build environment manually: py -3.12 -m venv .venv-build; .venv-build\Scripts\python.exe -m pip install -r requirements-build-lock.txt"
 }
-& $catalogPython -c "import fastapi, uvicorn, multipart, webview, PyInstaller, PIL, pytest, httpx"
-if ($LASTEXITCODE -ne 0) {
-    & $catalogPython -m pip install -r (Join-Path $PSScriptRoot "requirements-dev.txt") --quiet
-    if ($LASTEXITCODE -ne 0) { throw "Cannot install build dependencies" }
-}
+& $catalogPython (Join-Path $PSScriptRoot "scripts\check_build_dependencies.py")
+if ($LASTEXITCODE -ne 0) { throw "Build dependency verification failed; follow the manual setup instructions above" }
 $catalogVersion = (Get-Content -LiteralPath (Join-Path $PSScriptRoot "VERSION") -Raw).Trim()
 if ($catalogVersion -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid VERSION" }
 $catalogStatus = @(& git status --porcelain)

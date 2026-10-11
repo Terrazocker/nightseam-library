@@ -1,5 +1,49 @@
 # Independent catalog release record
 
+## Verified partial-review implementation - October 11, 2026
+
+Implemented the substantiated issues in reviews/partial-review-verification-20261011.md:
+
+- Renames refuse missing files, mismatched stored roots and logical groups spanning
+  multiple physical roots before moving anything. Database path updates use only
+  proven move mappings, never guessed destinations.
+- Reindex plans before one atomic database publication, preserves IDs and manual
+  metadata when a unique trusted full-byte fingerprint identifies a missing file,
+  reports ambiguous repairs without guessing, and cooperatively cancels before
+  publication. Connection reads remain available while scanning/hashing. Existing
+  duplicate rows and missing records without trustworthy fingerprints need manual
+  recovery; reindex never deletes them.
+- Import session lookup uses the same normalized unresolved/resolved identity as
+  the library. The documented twelve-hour gap policy remains; historical folders
+  and backdated imports are not automatically relocated.
+- Database opening preserves validated, dated snapshots before migration and
+  after opening, retaining five of each plus the rolling backup. Snapshot failures
+  stop initialization instead of replacing recovery evidence.
+- Upload responses preserve confirmed earlier results, isolate validation errors,
+  stop on database failure, distinguish committed-but-unconfirmed outcomes and
+  files not attempted, and stop subsequent browser chunks. Import-history errors
+  roll back their transaction so following operations can proceed.
+- CSV text uses quoted, tab-prefixed formula neutralization; numeric columns and
+  lossless JSON/database values are preserved. CSP and production host checks
+  permit only current local dependencies; testserver is explicit test setup.
+- Build dependencies have a complete 40-pin Windows x64 CPython 3.12 closure and
+  a read-only preflight. Builds no longer install packages automatically. Cleanup
+  tests own private scratch and preserve unrelated evidence. Current remote,
+  recovery, timestamp and module documentation was corrected.
+
+Validation with the locked build interpreter: **572 passed in 133.59 seconds**.
+The first full-suite attempt exposed an existing missing Path import in a test
+annotation under Python 3.12; it was corrected before the passing rerun. Focused
+archive/session, database recovery, build/cleanup and API regressions also passed.
+check_js.py passed for 42 modules with zero syntax errors/broken imports; DOM,
+encoding and core gates passed, with two existing advisory names. The dependency
+preflight verified all 40 pins; source release checks reported zero errors and
+git diff --check passed. Evidence: logs/partial-review-fixes-20261011/.
+
+No core formulas, reference fixtures, generated core bakes, VERSION, tags or
+public release artifacts changed. Packaged verification is recorded separately
+after compiling this implementation.
+
 ## Packaged verification of audit fixes - October 11, 2026
 
 Built the verified clean source commit 9ecf9435 as a local development executable

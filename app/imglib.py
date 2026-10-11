@@ -266,8 +266,10 @@ def session_for_anchor(images: list[dict], anchor_id: int) -> dict | None:
 def session_for_image(images: list[dict], new_im: dict) -> dict | None:
     """The session (as in compute_sessions) that a new frame belongs to when
     appended to `images`, including a session it opens itself. Used by ingest to
-    pick the on-disk session folder, so the folder layout and the session
-    grouping never disagree. Undated frames join the undated session."""
+    pick the on-disk session label with the same object membership and gap
+    policy. Backdated imports may extend or join existing logical sessions;
+    this does not relocate folders already on disk. Undated frames join the
+    undated session."""
     for members in _session_groups(list(images) + [new_im]):
         if any(member is new_im for member in members):
             return _session_record(members)

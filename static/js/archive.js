@@ -177,11 +177,19 @@ async function ingestFiles(files, frame, session, sessionAnchorId) {
         break;
       }
       results.push(...res.results);
-      activity.processed += res.results.length;
+      const confirmed = res.results.filter(result => !result.unconfirmed && !result.unattempted);
+      activity.processed += confirmed.length;
       activity.skipped += res.results.filter(result => result.ok && result.skipped).length;
       activity.restored += res.results.filter(result => result.ok && result.restored).length;
-      activity.failed += res.results.filter(result => !result.ok).length;
+      activity.failed += confirmed.filter(result => !result.ok).length;
+      activity.unconfirmed += res.results.filter(result => result.unconfirmed).length;
       activity.update();
+      if (res.results.some(result => result.unconfirmed || result.unattempted)) {
+        for (const file of list.slice(i + chunk.length)) results.push({
+          file: file.name, ok: false, unattempted: true,
+          error: "Not imported because the earlier request could not finish." });
+        break;
+      }
     }
     renderIngestResults(results);
     S.library = null;                       // stale until refetched
@@ -645,8 +653,10 @@ export function bindArchive() {
       // a big archive needs more than the default 30 s request timeout
       const res = await api("/api/library/reindex",
         { method: "POST", signal: new AbortController().signal, silent: true });
-      toast(`Reindex: ${res.added} added, ${res.skipped} already known, ${res.failed} failed.`,
-            "info", 6000);
+      const conflicts = res.conflicts || 0;
+      toast(`Reindex: ${res.added} added, ${res.repaired || 0} repaired, ${res.skipped} already known, ${res.failed} failed, ${conflicts} ambiguous.` +
+            (conflicts ? " Ambiguous files were left unchanged; inspect the archive before retrying." : ""),
+            conflicts ? "err" : "info", conflicts ? 0 : 6000);
       S.library = null;
       await loadLibrary();
     } catch (err) {

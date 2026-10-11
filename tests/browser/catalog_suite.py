@@ -550,6 +550,32 @@ def desktop_catalog_import_progress(c):
     c.expect(c.page.locator("#btnTopIngest").is_enabled() and
              c.page.locator("#btnTopExport").is_enabled(),
              "archive actions recover after an interrupted import")
+
+    # A server exception is now a successful HTTP response with explicit
+    # partial outcomes. It must halt the remaining browser chunks too.
+    select(20)
+    with c.page.expect_request("**/api/library"):
+        pending.pop(0).fulfill(json={"results": [
+            {"file": "exposure-00.fits", "ok": True},
+            {"file": "exposure-01.fits", "ok": False, "unconfirmed": True,
+             "error": "Import outcome unconfirmed after a database error."},
+            *[{"file": f"exposure-{index:02d}.fits", "ok": False,
+               "unattempted": True, "error": "Not attempted after the import stopped."}
+              for index in range(2, 8)],
+        ]})
+    finished(1, 20)
+    c.expect_eq(progress.locator(".import-pending").inner_text(), "18 not attempted",
+                "both unattempted server files and unsent browser chunks remain pending")
+    c.expect_in("1 file outcomes unconfirmed", progress.inner_text(),
+                "only the exceptional file has an unknown outcome")
+    c.expect(not progress.locator(".import-failed").is_visible(),
+             "unattempted files and unknown outcomes are not confirmed failures")
+    c.expect_eq(len(requests), 7, "explicit partial outcomes must stop later browser chunks")
+    c.expect_eq(len(pending), 0, "no later chunk remains in flight after partial completion")
+    c.expect(c.page.locator("#btnTopIngest").is_enabled() and
+             c.page.locator("#btnTopReindex").is_enabled() and
+             c.page.locator("#btnTopExport").is_enabled(),
+             "partial completion must unlock archive controls and refresh the library")
     c.expect(not c.page_errors, f"import progress must not throw page errors: {c.page_errors}")
 
 

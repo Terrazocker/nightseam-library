@@ -119,13 +119,14 @@ def _remove_stage(stage: Path) -> None:
             _ACTIVE_STAGES.discard(stage)
 
 
-def _fingerprint_file(path: Path) -> tuple[str, int, int] | None:
+def _fingerprint_file(path: Path, cancel_event=None) -> tuple[str, int, int] | None:
     """Hash current bytes, refusing files that change during the read."""
     try:
         before = path.stat()
         digest = hashlib.sha256()
         with path.open("rb") as source:
             while chunk := source.read(_COPY_CHUNK):
+                _check_reindex_cancelled(cancel_event)
                 digest.update(chunk)
         after = path.stat()
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
@@ -733,136 +734,243 @@ def _norm_rel(rel) -> str:
     return str(rel).replace("\\", "/").lower()
 
 
-def reindex_library(db: Database, archive: Path) -> dict:
-    # Serialize archive writes, not SQLite reads, while hashing in this worker.
+class ReindexCancelled(Exception):
+    """A cooperative archive scan ended before database publication."""
+
+
+def _check_reindex_cancelled(cancel_event) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise ReindexCancelled("Reindex cancelled. No library records were changed.")
+
+
+def reindex_library(db: Database, archive: Path, cancel_event=None) -> dict:
+    # Serialize archive operations while scanning; SQLite reads remain available.
     with db.archive_lock:
-        return _reindex_library_locked(db, archive)
+        return _reindex_library_locked(db, archive, cancel_event)
 
 
-def _reindex_library_locked(db: Database, archive: Path) -> dict:
-    """Scan the archive folder and record .fit/.fits files not yet in the DB.
+def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> dict:
+    """Plan one atomic archive scan, preserving metadata when repairing paths.
 
-    Covers files placed on disk outside the app (manual copies, restored
-    backups, imports from other tools). Files already recorded by normalized
-    path or exact content are skipped. Manually placed duplicate files remain
-    untouched on disk. The frame type comes from the required standard
-    sub-folder (lights/darks/flats/bias); the object is resolved from the header
-    (OBJECT + coordinates) with the folder name as fallback.
+    A discovered file can repair exactly one missing record only when its full
+    byte digest and size match that record's previously stored fingerprint and
+    exactly one destination exists. Ambiguous matches are reported, never
+    guessed. Missing rows and every physical archive file remain untouched.
+    Hashing, parsing and filesystem validation precede the SQLite transaction.
     """
+    result = {"found": 0, "added": 0, "skipped": 0, "failed": 0,
+              "repaired": 0, "conflicts": 0}
+    _check_reindex_cancelled(cancel_event)
     if not archive.is_dir():
-        return {"found": 0, "added": 0, "skipped": 0, "failed": 0}
-    def candidate_files():
-        for p in archive.rglob("*"):
-            if p.is_file() and p.suffix.lower() in (".fit", ".fits"):
-                yield p
-
-    candidates = sorted(candidate_files())
-    # Validate the WHOLE scan before even backfilling a known fingerprint.
-    # Source folders belong in Import Exposures, not the managed archive scan.
-    malformed = [path for path in candidates
-                 if len(path.relative_to(archive).parts) not in (3, 4)
-                 or path.parent.name.lower() not in FRAME_DIRS]
-    if malformed:
-        folder = malformed[0].parent.resolve()
-        raise ValueError(
-            f"Unexpected archive folder structure at '{folder}'. "
-            "Expected <object>/<session>/<frame-type>/<file.fit> or legacy "
-            "<object>/<frame-type>/<file.fit>, where frame-type is lights, "
-            "darks, flats or bias. Use Import Exposures for flat source folders. "
-            "No library records were changed.")
-
-    known = {_norm_rel(r["file"]): r for r in db.images()}
-    resolver = None
-    found = added = skipped = failed = 0
-    for f in candidates:
-        found += 1
-        rel = f.relative_to(archive)
-        if _norm_rel(rel) in known:
-            rec = known[_norm_rel(rel)]
-            try:
-                stat = f.stat()
-                unchanged = (rec.get("content_sha256") and
-                             rec.get("file_size") == stat.st_size and
-                             rec.get("file_mtime_ns") == stat.st_mtime_ns)
-            except OSError:
-                unchanged = False
-            if not unchanged:
-                measured = _fingerprint_file(f)
-                if measured is not None:
-                    db.set_image_fingerprint(rec["id"], *measured)
-            skipped += 1
+        return result
+    archive = archive.resolve()
+    expected = db.images()
+    known = {}
+    live = {}
+    missing = {}
+    for rec in expected:
+        _check_reindex_cancelled(cancel_event)
+        known.setdefault(_norm_rel(rec["file"]), []).append(rec)
+        target = paths.safe_join(archive, rec["file"])
+        if target is None:
             continue
-
-        parts = rel.parts
-        frame_dir = parts[-2].lower()
-        folder_frame = frame_dir
-        # The OBJECT is the folder above the session, never the session folder
-        # itself: <archive>/<Object>/<session>/<frame>/f.fit -> parts[-4], and
-        # for the older <archive>/<Object>/<frame>/f.fit layout -> parts[-3].
-        if frame_dir is not None:
-            folder_name = (parts[-4] if len(parts) >= 4
-                           else parts[-3] if len(parts) >= 3 else None)
-        else:
-            folder_name = parts[-2] if len(parts) >= 2 else None
         try:
-            with open(f, "rb") as fh:
-                hdr = fitsio.read_fits_header(fh.read(HEADER_READ))
-            if not hdr:
-                failed += 1
-                continue
+            stat = target.stat()
+        except FileNotFoundError:
+            digest = rec.get("content_sha256")
+            size = rec.get("file_size")
+            if (isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest)
+                    and isinstance(size, int) and not isinstance(size, bool) and size >= 0):
+                missing.setdefault((digest, size), []).append(rec)
+            continue
         except OSError:
-            failed += 1
             continue
-        measured = _fingerprint_file(f)
-        if measured is None:
-            failed += 1
-            continue
-        digest, size, mtime_ns = measured
-        if _find_duplicate(db, archive, digest, size) is not None:
-            skipped += 1
-            continue
+        if target.is_file():
+            live[rec["id"]] = (rec, target, stat)
 
-        stem = f.stem
-        hint = (folder_name or "").strip() or str(hdr.get("OBJECT") or "").strip() or stem
+    candidates = []
+    for entry in archive.rglob("*"):
+        _check_reindex_cancelled(cancel_event)
+        if entry.suffix.lower() not in (".fit", ".fits"):
+            continue
+        rel = paths.safe_rel(entry.relative_to(archive).as_posix())
+        target = paths.safe_join(archive, rel)
+        if target is None:
+            raise ValueError("Unsafe archive file path. No library records were changed.")
+        if target.is_file():
+            parts = rel.split("/")
+            if len(parts) not in (3, 4) or parts[-2].lower() not in FRAME_DIRS:
+                raise ValueError(
+                    f"Unexpected archive folder structure at '{entry.parent}'. "
+                    "Expected <object>/<session>/<frame-type>/<file.fit> or legacy "
+                    "<object>/<frame-type>/<file.fit>, where frame-type is lights, "
+                    "darks, flats or bias. Use Import Exposures for flat source folders. "
+                    "No library records were changed.")
+            candidates.append((rel, target))
+    candidates.sort()
+    result["found"] = len(candidates)
+    fingerprints = {}
+    measured_paths = {}
+
+    def measure(target):
+        _check_reindex_cancelled(cancel_event)
+        if target not in measured_paths:
+            measured_paths[target] = (_fingerprint_file(target) if cancel_event is None
+                                      else _fingerprint_file(target, cancel_event))
+        _check_reindex_cancelled(cancel_event)
+        return measured_paths[target]
+
+    def fingerprint_live(rec, target):
+        measured = measure(target)
+        if measured is not None:
+            fingerprints[rec["id"]] = (rec["id"], *measured)
+            actual_candidates = live_by_identity.setdefault(measured[:2], [])
+            if not any(entry[0]["id"] == rec["id"] for entry in actual_candidates):
+                actual_candidates.append(live[rec["id"]])
+            size = live[rec["id"]][2].st_size
+            uncertain_by_size[size] = [entry for entry in uncertain_by_size.get(size, [])
+                                       if entry[0]["id"] != rec["id"]]
+        return measured
+
+    new = {}
+    for rel, target in candidates:
+        _check_reindex_cancelled(cancel_event)
+        recorded = known.get(_norm_rel(rel))
+        if recorded:
+            stat = target.stat()
+            needs_hash = any(not rec.get("content_sha256") or
+                             rec.get("file_size") != stat.st_size or
+                             rec.get("file_mtime_ns") != stat.st_mtime_ns
+                             for rec in recorded)
+            if needs_hash:
+                measured = measure(target)
+                if measured is None:
+                    result["failed"] += 1
+                    continue
+                for rec in recorded:
+                    fingerprints[rec["id"]] = (rec["id"], *measured)
+            result["skipped"] += 1
+            continue
+        try:
+            with target.open("rb") as source:
+                header = fitsio.read_fits_header(source.read(HEADER_READ))
+        except OSError:
+            header = None
+        if not header:
+            result["failed"] += 1
+            continue
+        measured = measure(target)
+        if measured is None:
+            result["failed"] += 1
+            continue
+        digest, size, _ = measured
+        new.setdefault((digest, size), []).append((rel, target, header, measured))
+
+    # Index the snapshot once. Unchanged cached mismatches need no reread;
+    # possible positive matches still require proof from their current bytes.
+    live_by_identity, uncertain_by_size = {}, {}
+    for rec, target, stat in live.values():
+        cached = fingerprints.get(rec["id"])
+        entry = (rec, target, stat)
+        if cached:
+            live_by_identity.setdefault(cached[1:3], []).append(entry)
+        elif (rec.get("content_sha256") and rec.get("file_size") == stat.st_size
+              and rec.get("file_mtime_ns") == stat.st_mtime_ns):
+            identity = (rec["content_sha256"], stat.st_size)
+            live_by_identity.setdefault(identity, []).append(entry)
+        else:
+            uncertain_by_size.setdefault(stat.st_size, []).append(entry)
+
+    additions, relinks = [], []
+    resolver = None
+    for identity, destinations in new.items():
+        _check_reindex_cancelled(cancel_event)
+        digest, size = identity
+        matching_live = []
+        possible = (live_by_identity.get(identity, []) +
+                    uncertain_by_size.get(size, []))
+        for rec, target, stat in possible:
+            cached = fingerprints.get(rec["id"])
+            if cached:
+                if cached[1:3] == identity:
+                    matching_live.append(rec)
+                continue
+            # A matching cache is a candidate, never proof of current bytes.
+            unchanged = (rec.get("file_size") == stat.st_size and
+                         rec.get("file_mtime_ns") == stat.st_mtime_ns)
+            if stat.st_size != size:
+                continue
+            if unchanged and rec.get("content_sha256") not in (None, "", digest):
+                continue
+            actual = fingerprint_live(rec, target)
+            if actual is not None and actual[:2] == identity:
+                matching_live.append(rec)
+        stale = missing.get(identity, [])
+        if stale:
+            if len(stale) != 1 or len(destinations) != 1 or matching_live:
+                result["conflicts"] += len(destinations)
+                continue
+            rel, _, _, measured = destinations[0]
+            relinks.append((stale[0]["id"], rel, *measured))
+            result["repaired"] += 1
+            continue
+        if matching_live:
+            result["skipped"] += len(destinations)
+            continue
+        rel, target, hdr, measured = destinations[0]
+        parts = rel.split("/")
+        folder_name = parts[0]
+        hint = folder_name.strip() or str(hdr.get("OBJECT") or "").strip() or target.stem
         ra_h = fitsio.parse_ra_hours(hdr.get("OBJCTRA") or hdr.get("RA"))
         dec_d = fitsio.parse_dec_deg(hdr.get("OBJCTDEC") or hdr.get("DEC"))
         if resolver is None:
             resolver = imglib.CatalogResolver(db.all_objects(advanced=True))
         row = resolver.resolve(hint, ra_h, dec_d)
         if row is None and str(hdr.get("OBJECT") or "").strip() not in ("", hint):
-            row = resolver.resolve(
-                str(hdr.get("OBJECT") or "").strip(), ra_h, dec_d)
-
+            row = resolver.resolve(str(hdr.get("OBJECT") or "").strip(), ra_h, dec_d)
         if row:
             object_id = row["id"]
             object_name = str(row.get("primary_name") or hint)[:120]
             ra_h, dec_d = row["ra_hours"], row["dec_deg"]
         else:
             object_id = None
-            object_name = (folder_name or
-                           str(hdr.get("OBJECT") or "").strip() or stem)[:120]
-
+            object_name = (folder_name or str(hdr.get("OBJECT") or "").strip()
+                           or target.stem)[:120]
         exposure = None
-        for k in ("EXPTIME", "EXPOSURE", "EXPTIM", "ELAPTIME"):
-            v = hdr.get(k)
-            if isinstance(v, (int, float)) and v >= 0:
-                exposure = float(v)
+        for key in ("EXPTIME", "EXPOSURE", "EXPTIM", "ELAPTIME"):
+            value = hdr.get(key)
+            if isinstance(value, (int, float)) and value >= 0:
+                exposure = float(value)
                 break
-        frame = (FRAME_DIRS[folder_frame] if folder_frame
-                 else classify_frame(hdr.get("IMAGETYP")))
-        db.add_image({
-            "file": str(rel).replace("\\", "/"),   # forward slashes
-            "orig_name": f.name, "object_id": object_id,
+        additions.append({
+            "file": rel, "orig_name": target.name, "object_id": object_id,
             "object_name": object_name, "ra_hours": ra_h, "dec_deg": dec_d,
             "exposure": exposure,
             "date_obs": fitsio.parse_date_obs(hdr.get("DATE-OBS") or hdr.get("DATE")),
             "filter": str(hdr.get("FILTER") or "").strip() or None,
             "telescope": str(hdr.get("TELESCOP") or hdr.get("INSTRUME") or "").strip() or None,
-            "imagetyp": frame,
-            "content_sha256": digest, "file_size": size,
-            "file_mtime_ns": mtime_ns,
+            "imagetyp": FRAME_DIRS[parts[-2].lower()],
+            "content_sha256": measured[0], "file_size": measured[1],
+            "file_mtime_ns": measured[2],
             "ingested_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
         })
-        added += 1
+        result["added"] += 1
+        result["skipped"] += len(destinations) - 1
 
-    return {"found": found, "added": added, "skipped": skipped, "failed": failed}
+    # Files can also change outside this process's archive lock. Refuse a plan
+    # whose measured input has disappeared, moved outside the archive or changed.
+    for target, measured in measured_paths.items():
+        _check_reindex_cancelled(cancel_event)
+        if measured is None:
+            continue
+        rel = target.relative_to(archive).as_posix()
+        current = paths.safe_join(archive, rel)
+        if current != target:
+            raise ValueError("Archive changed during reindex. No library records were changed.")
+        stat = target.stat()
+        if (stat.st_size, stat.st_mtime_ns) != measured[1:]:
+            raise ValueError("Archive changed during reindex. No library records were changed.")
+    _check_reindex_cancelled(cancel_event)
+    db.apply_reindex_plan(expected, additions, list(fingerprints.values()), relinks,
+                          cancel_check=lambda: _check_reindex_cancelled(cancel_event))
+    return result

@@ -3,8 +3,8 @@
 Enough to ingest astrophotography captures: OBJECT, EXPTIME, DATE-OBS,
 FILTER, OBJCTRA/OBJCTDEC (plus RA/DEC), TELESCOP/INSTRUME. FITS headers are
 ASCII 80-character records inside 2880-byte blocks, so no astropy/numpy is
-needed; image data is only touched by preview_png*() (tests and the
-/api/images/{id}/preview endpoint, not the library UI).
+needed; image data is only touched by the retained preview_png*() helper API
+and its tests. The current catalog has no preview route.
 
 Compressed FITS is deliberately out of scope - nothing here decompresses.
 read_fits_header() requires `SIMPLE` at byte 0, so an fpack `.fits.fz` yields
@@ -204,7 +204,11 @@ def parse_dec_deg(value) -> float | None:
 
 
 def parse_date_obs(value) -> str | None:
-    """DATE-OBS -> ISO 'YYYY-MM-DDTHH:MM:SS' or None (unparseable)."""
+    """DATE-OBS -> ISO timestamp; ambiguous legacy slash dates use MM/DD.
+
+    ISO dates are preferred. DD/MM is inferred only when the first field is
+    above 12; changing that fallback would reinterpret existing US captures.
+    """
     if value is None:
         return None
     s = str(value).strip().split(".")[0]      # drop fractional seconds
