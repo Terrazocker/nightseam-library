@@ -1,5 +1,23 @@
 # Independent catalog release record
 
+## F-21 core comment sweep with authorized rebake - October 11, 2026
+
+The F-21 stale-reference sweep was executed against the AUTHORED core modules
+(the contract-gated rebake this finding required). 21 present-tense references
+to the retired website build, webstore helpers and deleted shell modules were
+rewritten to their desktop-only truths across astro.js, catalog.js, format.js,
+horizon.js, plannerstate.js, planning.js, scoring.js and visibility.js; two
+past-tense lineage notes were deliberately KEPT (accurate history, per the
+sweep discipline). Comment-only: zero behavior change.
+
+Authorized rebake via scripts/build_core.py: new bake hash
+11488fc2bbbb7ddb (manifest token 44 -> 45, register updated in DECISIONS.md),
+stub regenerated, N-1 retention kept the prior bake. check_core.py, check_js.py,
+check_encoding.py, check_dom_ids.py and the source release guard all passed;
+full suite **446 passed, one existing Starlette/httpx warning** in 99.04 s
+including the scoring-parity and D1 drivers (which import the NEW bake). The
+stale-reference class (F-21) is closed.
+
 ## F-15 length caps on the remaining write fields - October 11, 2026
 
 - /api/library/edit: object names are ARCHIVE FOLDER names (obj_slug strips

@@ -39,11 +39,11 @@ export function isCustomId(id) {
 /** Web search text: id, names, type, constellation, description and the CSV's
  *  own designation blob (`search`), lowercased and space-joined.
  *
- *  CD-02 (0.6.32 review): `search` was NOT indexed here and the web payload did
- *  not ship it at all, so 25 rows whose common name lives only in that column
- *  (`tarantula`, `coathanger`, `silver coin`, ...) were findable on the desktop
- *  but not on the web. The column is now in `web/build_web.py::COLS` and below.
- *  (The old comment here claimed the desktop searched
+ *  CD-02 (0.6.32 review, combined-repo era): `search` was NOT indexed here and
+ *  the website build did not ship it at all, so 25 rows whose common name lives
+ *  only in that column (`tarantula`, `coathanger`, `silver coin`, ...) were
+ *  findable on the desktop but not on the website. (The old comment here claimed
+ *  the desktop searched
  *  `app/catalog_data.py`'s blob - that file was deleted with the curated list in
  *  0.6.26, and `o.distance` no longer exists either.) */
 export function searchBlob(o) {

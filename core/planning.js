@@ -52,10 +52,11 @@ export function sunCrossings(scanStartUTC, lat, lon, thresholdDeg) {
  *  Returns { sunset, civilDusk, nauticalDusk, astroDusk, astroDawn, nauticalDawn, civilDawn, sunrise }
  *  each Date|null, plus dayStart (scan window start).
  *
- *  `localNoon` is the REAL instant of the site's local noon for that date
- *  (app.js computes it with webstore's wallToUtc). Without it the browser's own
- *  zone stands in for the site's - correct only while both are the same. That
- *  fallback is what made planning for a site far EAST of the browser pick the
+ *  `localNoon` is the REAL instant of the site's local noon for that date,
+ *  which the CALLER computes from its own timezone data. Without it the
+ *  machine's own zone stands in for the site's - correct only while both are
+ *  the same. That fallback is what made planning for a site far EAST of the
+ *  machine pick the
  *  previous evening's dusk and a dawn up to two days later: the scan window
  *  then started before the previous local noon, so "first descending crossing"
  *  is not tonight's dusk. */

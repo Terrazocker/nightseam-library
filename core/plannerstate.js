@@ -9,7 +9,7 @@ export function nextPlannerRevision(value) {
     ? n + 1 : 1;
 }
 
-/** Build the event detail carried by both shells. */
+/** Build the event detail for the planner-revision contract. */
 export function plannerChange(kind, revision, fields = {}) {
   return {
     kind: String(kind || "unknown"),

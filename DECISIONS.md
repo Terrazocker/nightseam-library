@@ -951,6 +951,11 @@ the same commit:
   (10 core modules now).
 * the tagged v0.6.24 register was 60/10/41/17/7/20 with stub 17; 0.6.23 (live)
   was 59/9/40/16/6/19.
+* independent catalog era (post-split): the manifest token carried forward as
+  44 (bakes before the split did not bump it). 2026-10-11 - the F-21 comment
+  sweep touched nine core modules (comments only, zero behavior) and
+  scripts/build_core.py produced hash 11488fc2bbbb7ddb -> token 44 -> 45; the
+  retired web-era register history above is retained as provenance only.
 
 ### The deployed CSP is limited by the host's nginx front end (measured)
 

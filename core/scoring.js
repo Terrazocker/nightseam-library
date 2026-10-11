@@ -2,10 +2,10 @@
  * NightSeam core - scoring curves (pure).
  *
  * Phase 2, concept 5. Single implementations of the moon-aware scoring curves
- * and the silent popularity tiebreaker, shared by the desktop
- * (static/js/derive.js) and the web (web/astro.js, web/app.js) shells. No
- * Python counterpart: the scoring model is client-owned (the server ships raw
- * tracks only). No DOM, storage, network or build tokens.
+ * and the silent popularity tiebreaker, owned by the client (the server ships
+ * raw tracks only). No
+ * Python counterpart: the scoring model is client-owned. No DOM, storage,
+ * network or build tokens.
  */
 
 import { gmstDeg, precessJ2000ToDate, refractionDeg, sepDeg } from './astro.js';
@@ -118,8 +118,9 @@ export function computeNightTracks(objects, jd0, jd1, step, lat, lon) {
  *  that span, while a sample's `vis`/`above` STATE stays full-grid. That is
  *  the ONE scoring-window policy: the desktop's payload grid deliberately
  *  carries twilight margins for its charts (241 samples, local noon -> local
- *  noon) and clips the numbers to dusk..dawn, while the web's grid already IS
- *  dusk..dawn and therefore passes no range. Both shells now run THIS loop;
+ *  noon) and clips the numbers to dusk..dawn via the `range` parameter, while
+ *  the retired web grid already was dusk..dawn and therefore passed no range.
+ *  Every consumer runs THIS loop;
  *  only the grid anchor and the optional range differ, instead of each shell
  *  owning a separate aggregation. */
 export function scoreNightTracks(tracks, objects, jd0, step, minAlt, pano, ctx = {}) {
@@ -214,7 +215,7 @@ export function scoreNightTracks(tracks, objects, jd0, step, minAlt, pano, ctx =
         visBits[i] = vis ? 1 : 0;
         aboveBits[i] = up ? 1 : 0;
       }
-      if (up && !vis) blocked++;                 // full grid, like both shells
+      if (up && !vis) blocked++;                 // full grid (deliberate)
       if (!vis || !inRange) { run = 0; continue; }
 
       visN++;
