@@ -52,7 +52,8 @@ archive remains read-only. No remote repository is configured by this split.
 - Tests: python -m pytest tests/ -q --tb=no. Run relevant modules while editing
   and the full suite once at the end. JS: python scripts/check_js.py.
 - Browser: python scripts/check_browser.py --desktop, using a freshly compiled
-  executable and a private data copy. A browser launch failure is a failure,
+  executable, a private data copy and an explicitly configured/verified private
+  archive before any upload. A browser launch failure is a failure,
   never a skip; this machine may need elevated browser execution.
 - Build: powershell -ExecutionPolicy Bypass -File build.ps1. Never kill a user's
   application to run a gate. Back up an executable before replacement.

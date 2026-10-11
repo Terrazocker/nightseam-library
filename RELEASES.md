@@ -26,8 +26,8 @@ included in NOTICE and the executable. Authorized core regeneration produced has
 2cd86208d501eff7, token 48, retaining b7bcc0f836fe6da0. Existing astronomy reference
 fixtures are unchanged.
 
-Final full suite: **635 passed in 151.91 seconds** on the locked build interpreter
-after the final application changes. Focused archive/database checks passed
+Final full suite: **637 passed in 152.84 seconds** on the locked build interpreter
+after the final application and test-isolation changes. Focused archive/database checks passed
 **122 tests**; the source JS/import/DOM/encoding/core guards pass, with the same two
 existing advisory names. The source release guard reports **zero errors**.
 An earlier full run exposed an omitted core-guard export registration; it was fixed
@@ -40,10 +40,19 @@ repairs, failures or conflicts on reindex; original sample sizes/mtimes were
 unchanged. These samples contain lights/stacks, so calibration uses private
 synthetic regression data. No actual source/packaged library was reindexed.
 
-The development candidate compiled and passed **11/11** private packaged browser
-checks, including real uploads using embedded solar calculations. The final clean
-source revision is rebuilt for handoff; the strengthened final packaged check also
-exercises calibration location backfill. Final build/browser/artifact outcomes and
+The development candidate compiled and initially passed **11/11** browser checks,
+including real uploads using embedded solar calculations. Review of a subsequent
+gate failure exposed two test-setup errors: input was filled before initial state
+had loaded, and a private database still used the default Documents archive.
+Exactly three synthetic FITS files were verified byte-for-byte and removed; all
+unrelated files and archive roots were preserved. The harness now sets and verifies
+a private archive before any check, fails closed on a mismatch and waits for boot
+before filling the observing form. All **9** harness tests pass, including private
+archive acceptance/refusal. Cleanup evidence is in profile-test-cleanup.json.
+The corrected private-archive browser run passes **11/11**, including calibration
+backfill with a different original capture date and site.
+The final clean source revision is rebuilt for handoff; its strengthened packaged
+check also exercises calibration location backfill. Final build/browser/artifact outcomes and
 commit identity are retained in logs/solar-sessions-20261011/final-*.log and
 reviews/solar-session-implementation-20261011.md. Candidate housekeeping removed
 74.23 MiB with zero failures and retained three executable backups. VERSION, tags,

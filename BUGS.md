@@ -2,6 +2,9 @@
 
 The browser-test process-tree and silent pytest-cleanup findings were fixed on
 October 10, 2026. See RELEASES.md for validation and DEVELOPMENT.md for upkeep.
+On October 11 the packaged gate was also corrected to select and verify a private
+archive before checks; its private database alone did not isolate the default
+Documents archive. Three exact synthetic test files were verified and removed.
 
 ## Validation environment cache - October 10, 2026
 

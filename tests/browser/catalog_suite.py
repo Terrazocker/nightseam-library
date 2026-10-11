@@ -17,6 +17,7 @@ def desktop_catalog_solar_sessions(c):
         return header.ljust(2880).encode("ascii") + identity.encode("ascii")
 
     c.goto()
+    c.page.wait_for_function("() => document.querySelector('#versionTag').textContent.includes('NightSeam v')")
     c.page.locator('#catalog-tab-import').click()
     c.page.locator('#siteLat').fill('52.52')
     c.page.locator('#siteLon').fill('13.405')

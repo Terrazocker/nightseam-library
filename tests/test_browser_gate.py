@@ -97,6 +97,51 @@ def test_desktop_start_failure_removes_its_private_scratch(tmp_path, monkeypatch
     server.stop()
 
 
+@pytest.mark.parametrize("accept_archive", [False, True])
+def test_browser_start_requires_private_archive_even_without_seed(tmp_path, monkeypatch, accept_archive):
+    exe = tmp_path / "candidate.exe"
+    exe.write_bytes(b"private fake executable")
+    scratch = tmp_path / "browser"
+    monkeypatch.setattr(harness, "SCRATCH", scratch)
+    server = harness.DesktopServer(exe, seed=False)
+    calls, trees = [], []
+
+    class FakeTree:
+        def __init__(self, *args, **kwargs):
+            self.proc = self
+            self.stopped = False
+            trees.append(self)
+        def poll(self):
+            return None
+        def stop(self):
+            self.stopped = True
+
+    def http(url, method="GET", body=None, **kwargs):
+        calls.append((url, method, body))
+        if method == "POST":
+            assert Path(body["image_dir"]).is_relative_to(server.tmp)
+            return {"ok": True}
+        if len(calls) > 1 and accept_archive:
+            return {"image_dir": str(server.tmp / "archive")}
+        return {"image_dir": str(tmp_path / "outside-browser-scratch")}
+
+    monkeypatch.setattr(harness, "ProcessTree", FakeTree)
+    monkeypatch.setattr(harness, "_http", http)
+    monkeypatch.setattr(harness, "_wait_listener_closed", lambda port: None)
+    if accept_archive:
+        try:
+            server.start()
+            assert Path(calls[1][2]["image_dir"]) == server.tmp / "archive"
+            assert len(calls) == 3
+        finally:
+            server.stop()
+    else:
+        with pytest.raises(RuntimeError, match="archive configuration"):
+            server.start()
+    assert trees[0].stopped
+    assert server.tmp is None and not list(scratch.iterdir())
+
+
 def test_desktop_cleanup_failure_is_reported_and_retryable(tmp_path, monkeypatch):
     server = harness.DesktopServer()
     server.tmp = tmp_path / "private"

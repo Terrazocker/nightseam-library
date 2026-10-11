@@ -144,6 +144,10 @@ private checker stores and do not require other invocations' logs to be empty.
 
 The packaged browser gate uses `logs/browser/` and owns its executable and
 children through a private Windows Job Object (a process group on POSIX).
+Before any check, startup explicitly sets the archive inside its private scratch
+and verifies the setting through state; refusal or a mismatched path stops the
+gate and cleans its owned process/data. A private executable/database alone is
+insufficient because the application's default archive is in Documents.
 Windows starts the executable suspended, assigns ownership, then resumes it.
 Its TEMP/TMP/TMPDIR point into private scratch so frozen extraction files are
 removed with the test data, even when the process tree is forcibly stopped.
