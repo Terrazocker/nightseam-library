@@ -2,6 +2,7 @@
 
 from harness import check
 from time import monotonic
+import archive_features
 
 
 def _selected_session_actions(c):
@@ -289,7 +290,7 @@ def desktop_catalog_archive_folder_errors(c):
     c.expect_eq(folders.count(), 1, "flat files must produce one actual folder, not 296 filenames")
     c.expect_eq(folders.first.get_attribute("data-open-library-folder"), "NGC 6960_sub",
                 "the folder action must name the containing directory")
-    c.expect(not c.page.locator("#librarySessionDetail").filter(
+    c.expect(not c.page.locator("#librarySessionDetail .library-folder-rollup").filter(
         has_text="Light_NGC_6960_").count(), "archive details must not list flat filenames as folders")
     c.expect(c.page.locator("#librarySessionActions [data-library-add=dark]").is_enabled(),
              "a recorded session must support calibration attachments regardless of its folder layout")

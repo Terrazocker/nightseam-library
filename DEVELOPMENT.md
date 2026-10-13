@@ -51,6 +51,48 @@ files are quarantined in logs/repository-split and regenerated on launch.
 
 ## Independent build
 
+Archive health is separate from reindex. app/archive_health.py owns one
+cancellable background job/report per instance. POST /api/library/health starts
+a quick/deep job, GET on that path returns the latest job; GET /{id} polls,
+POST /{id}/cancel requests cancellation, and GET /{id}/report downloads terminal
+JSON. POST /{id}/acknowledge requires image_id, action (forget_missing or
+accept_contents), and confirmed:true. Only retained completed-scan findings
+qualify. Scans hold the independent archive lock and release SQLite after a
+short consistent snapshot. Job/status requests remain responsive during IO.
+
+The additive image_integrity table preserves import/historical/reindex baselines
+independently of mutable dedup caches. Explicit acceptance updates baseline/cache
+with user_accepted provenance; deletion removes only the selected record/baseline.
+Both atomically retain timestamps and previous/new hashes in archive_health_actions.
+Exact snapshot comparisons, archive identity and fresh disk reads reject stale
+findings. Original files, object definitions and import history stay intact.
+Discovery uses no-follow directory descriptors on POSIX and pinned lineage
+handles/reparse rejection on Windows. Reports retain 10,000 findings (200 shown)
+and count omitted findings. Private acknowledgement snapshots never enter API
+reports. Starts/acknowledgements serialize without holding SQLite during IO.
+
+GET /api/images/{id}/preview returns PNG with X-FITS-Size, X-FITS-HDU and
+X-FITS-Plane. Optional size is 64..1024 (default 512). app/fits_preview.py uses
+Astropy row sections without full-array loads; a narrow borrowed-file interface
+enforces 64 MiB reads even on actual disk files. Row width is limited to 100,000,
+HDU traversal to 64, axes to eight, and compressed tile bands to eight million
+decoded pixels. Finite samples use a 1/99.5-percentile interval and AsinhStretch(.1);
+Pillow encodes 8-bit grayscale with lower FITS origin. No derivatives are stored.
+Containment/opened/final identities are checked; archive conflicts fail promptly.
+Import's primary-header parser remains unchanged; legacy preview helpers delegate
+to the Astropy renderer. Runtime dependencies are Astropy 7.x, NumPy and Pillow.
+The authored scripts/pyinstaller_hooks/hook-astropy.py bundles runtime modules,
+metadata/data/parser tables without optional WCS plotting or upstream tests;
+Astropy's initializer-required tests.runner helper stays included.
+
+ASGI lifespan stops/joins health workers. main.py signals shutdown before Uvicorn
+drains active requests; acknowledgement and preview reads honor that signal.
+The vanilla JS health/preview modules guard stale requests, clean up blob URLs,
+and manage modal inert/focus state. Health uses the existing archive-action lock;
+preview selection uses exact session image IDs and loads only on demand.
+Health and preview APIs retain host/origin guards and no-store/nosniff responses.
+Native Windows packaged validation is tracked in BUGS.md.
+
 VERSION is the catalog version authority. Build and release tooling belong here;
 no website version.json, changelog, database or deploy is required. core/ and
 its generated static/js/core tree are local copies, not sibling references.

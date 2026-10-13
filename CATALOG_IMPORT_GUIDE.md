@@ -115,6 +115,57 @@ The ordinary **Import** action continues to identify objects and group capture
 times automatically. An already-imported exposure is skipped and retains its
 existing association; selecting a different session does not move it.
 
+## Archive health
+
+Open **Archive health** in the toolbar. **Quick check** inspects availability,
+paths, readability, sizes and modification times. It also discovers unindexed
+`.fit`/`.fits` files. Unchanged metadata does not verify contents. **Deep
+verification** reads complete indexed files and compares SHA-256 against a
+separately preserved integrity baseline. Neither checks image quality, FITS
+structure or embedded FITS checksums. Scans never repair or change anything.
+
+New imports preserve import-time hashes. Earlier libraries preserve their
+previously recorded fingerprint, honestly labelled as historical; it may already
+reflect a prior external edit. Reindex/cache refreshes preserve existing
+baselines. Files without a baseline remain unverified. An unavailable/replaced
+archive is reported as unavailable, instead of treating every file as missing.
+Linked paths are not followed. Progress shows checked exposures and elapsed
+time. **Cancel scan** leaves explicit partial results; closing the dialog lets
+the scan continue. The latest report stays in memory until the next scan or app
+exit. **Download JSON report** preserves it. The dialog shows 200 findings; the
+report retains 10,000, with further omitted findings counted explicitly.
+
+After a completed scan, **Acknowledge deletion** resolves intentionally deleted
+exposures, such as rejected blurry frames. Confirmation removes only the missing
+catalog record and its baseline; no files are deleted. **Accept current contents**
+replaces a Deep scan's changed-content baseline after confirmation and rehashing.
+Restored files, further edits, changed records and unavailable/replaced archives
+require a new scan. Quick metadata changes require Deep verification first.
+Cancelled/failed reports cannot be acknowledged. Counts refresh, acknowledgements
+remain labelled in the current report, and resolved issues do not recur in later
+scans. SQLite retains action timestamps and previous/accepted hashes. Accepting
+contents does not update FITS header metadata or assess an edit's correctness.
+
+## FITS previews
+
+In **Library**, select an object/session, choose an **Exposure** in the inspector,
+then press **Show preview**. **Expand preview** opens a larger view; Escape
+returns focus to its opener. After the first load, selecting another exposure
+loads its preview automatically. Attached calibration exposures belong to their
+explicitly selected session. Missing/unusable images show an explanation and
+**Retry preview**. Wait for a running archive operation before retrying.
+
+Astropy reads the first nonempty image HDU, handles FITS scaling/blank values,
+and displays the first plane of a cube. The caption identifies original
+dimensions, HDU and plane. PNG previews are grayscale, automatically stretched,
+and bounded to 512 pixels on the longest side in the UI. Invalid pixels are
+black; constant images are gray. FITS axis 2 increases upwards in the display.
+No debayering, color combination, calibration, plate solving or WCS rotation is
+applied. Originals, metadata and integrity hashes stay unchanged. Image
+extensions and tile-compressed HDUs inside indexed `.fit`/`.fits` are supported;
+import still accepts only `.fit`/`.fits`, not `.fz`/`.fits.gz`. Previewing does not
+verify integrity or evaluate image quality.
+
 ## Export and duplicate handling
 
 **Export library** writes the full library's metadata as CSV. The separate

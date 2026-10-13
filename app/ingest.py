@@ -861,6 +861,7 @@ def _reindex_library_locked(db: Database, archive: Path) -> dict:
             "imagetyp": frame,
             "content_sha256": digest, "file_size": size,
             "file_mtime_ns": mtime_ns,
+            "integrity_source": "reindex",
             "ingested_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
         })
         added += 1

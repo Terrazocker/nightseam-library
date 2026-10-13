@@ -137,3 +137,76 @@ def test_existing_instance_url_ignores_a_corrupt_entry(tmp_path, monkeypatch):
     f.write_text("not json at all")
     assert main.existing_instance_url() is None
     assert not f.exists()
+
+
+def test_source_lifespan_stops_waiting_health_worker(tmp_path, monkeypatch):
+    import logging
+    import sys
+    from app.database import Database
+    db = Database(tmp_path / "health-main.db")
+    real_create = main.create_app
+    owned = {}
+    def create(database):
+        app = real_create(database); owned["health"] = app.state.archive_health; return app
+    monkeypatch.setattr(main, "Database", lambda path: db)
+    monkeypatch.setattr(main, "create_app", create)
+    monkeypatch.setattr(main, "setup_logging", lambda console: logging.getLogger("health-main-test"))
+    monkeypatch.setattr(main, "wait_for_exit", lambda server, idle: owned["health"].start("deep"))
+    monkeypatch.setattr(sys, "argv", ["main.py", "--no-browser", "--port", str(_free_port())])
+    with db.archive_lock: assert main.main() == 0
+    assert owned["health"].snapshot()["status"] == "cancelled"
+    assert not owned["health"].thread.is_alive() and not main._instance_file().exists()
+
+
+def test_source_shutdown_interrupts_active_acknowledgement(tmp_path, monkeypatch):
+    import hashlib
+    import logging
+    import sys
+    import time
+    import httpx
+    from app import archive_health
+    from app.database import Database
+    db = Database(tmp_path / "ack-main.db")
+    root = tmp_path / "archive"; root.mkdir(); db.set_setting("image_dir", str(root))
+    target = root / "edited.fit"; target.write_bytes(b"original")
+    expected = hashlib.sha256(target.read_bytes()).hexdigest()
+    image_id = db.add_image(dict(file=target.name, orig_name=target.name, object_name="M31", ingested_at="today",
+        content_sha256=expected, file_size=target.stat().st_size, file_mtime_ns=target.stat().st_mtime_ns))
+    target.write_bytes(b"edited" * (1024 * 1024))
+    real_create, real_hash = main.create_app, hashlib.sha256
+    owned, outcome = {}, {}; reading = threading.Event()
+    def create(database):
+        app = real_create(database); owned["health"] = app.state.archive_health; return app
+    class SlowHash:
+        def __init__(self): self.hash = real_hash()
+        def update(self, data):
+            self.hash.update(data); reading.set()
+            assert owned["health"].stopping.wait(5), "shutdown did not signal active hashing"
+        def hexdigest(self): return self.hash.hexdigest()
+    def wait_for_exit(server, idle):
+        health = owned["health"]; report = health.start("deep")
+        deadline = time.monotonic() + 5
+        while health.snapshot()["status"] == "running":
+            assert time.monotonic() < deadline; time.sleep(.01)
+        assert health.snapshot()["status"] == "completed"
+        monkeypatch.setattr(archive_health.hashlib, "sha256", SlowHash)
+        def request():
+            try:
+                outcome["response"] = httpx.post(
+                    f"http://127.0.0.1:{server.config.port}/api/library/health/{report['id']}/acknowledge",
+                    json={"image_id": image_id, "action": "accept_contents", "confirmed": True}, timeout=10)
+            except Exception as exc: outcome["error"] = exc
+        owned["request"] = threading.Thread(target=request, daemon=True); owned["request"].start()
+        assert reading.wait(5)
+    monkeypatch.setattr(main, "Database", lambda path: db)
+    monkeypatch.setattr(main, "create_app", create)
+    monkeypatch.setattr(main, "setup_logging", lambda console: logging.getLogger("health-ack-main-test"))
+    monkeypatch.setattr(main, "wait_for_exit", wait_for_exit)
+    monkeypatch.setattr(sys, "argv", ["main.py", "--no-browser", "--port", str(_free_port())])
+    try: assert main.main() == 0
+    finally:
+        if "request" in owned: owned["request"].join(timeout=6)
+    assert not owned["request"].is_alive() and "error" not in outcome
+    assert outcome["response"].status_code == 409
+    assert db.integrity_snapshot()[1][0]["expected_sha256"] == expected
+    assert not main._instance_file().exists()

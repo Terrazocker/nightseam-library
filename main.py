@@ -305,7 +305,7 @@ def main() -> int:
     import uvicorn
     config = uvicorn.Config(app, host=args.host, port=port,
                             log_level="warning", access_log=False,
-                            lifespan="off", ws="none",
+                            lifespan="on", ws="none",
                             log_config=None)
     server = NoSignalServer(config)
 
@@ -344,8 +344,12 @@ def main() -> int:
         else:
             wait_for_exit(server, idle_secs)
     finally:
+        app.state.archive_health.request_shutdown()
         server.should_exit = True
-        thread.join(timeout=6)
+        thread.join(timeout=15)
+        if thread.is_alive():
+            log.error("Server shutdown did not finish; archive work may still be stopping.")
+            return 1
         clear_instance_file()
     return 0
 

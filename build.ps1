@@ -7,7 +7,7 @@ if (-not (Test-Path -LiteralPath $catalogPython)) {
     & python -m venv (Join-Path $PSScriptRoot ".venv-build")
     if ($LASTEXITCODE -ne 0) { throw "Cannot create build environment" }
 }
-& $catalogPython -c "import fastapi, uvicorn, multipart, webview, PyInstaller, PIL, pytest, httpx"
+& $catalogPython -c "import fastapi, uvicorn, multipart, webview, PyInstaller, PIL, pytest, httpx, astropy, numpy"
 if ($LASTEXITCODE -ne 0) {
     & $catalogPython -m pip install -r (Join-Path $PSScriptRoot "requirements-dev.txt") --quiet
     if ($LASTEXITCODE -ne 0) { throw "Cannot install build dependencies" }
@@ -56,6 +56,7 @@ $catalogBake = "BAKED_VERSION = '$catalogVersion'`n"
 & $catalogPython -m PyInstaller --clean --noconfirm --onefile --noconsole `
     --specpath "$PSScriptRoot\dist" --distpath "$PSScriptRoot\dist" --workpath "$PSScriptRoot\build" `
     --name NightSeam --icon "$PSScriptRoot\assets\app.ico" `
+    --additional-hooks-dir "$PSScriptRoot\scripts\pyinstaller_hooks" `
     --add-data "$PSScriptRoot\static;static" --add-data "$PSScriptRoot\app\data;app\data" `
     --collect-all uvicorn --collect-all webview --hidden-import python_multipart "$PSScriptRoot\main.py"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $catalogExe)) { throw "Compilation failed" }

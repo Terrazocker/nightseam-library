@@ -8,17 +8,22 @@ import os
 import re
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Path as ApiPath
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
+from .archive_health import ArchiveHealthManager
 from .database import Database
+from .fits_preview import PreviewUnavailable, preview_image
 from .imglib import CatalogResolver, name_key
 from .ingest import (ArchiveRenameRecoveryError, _archive_io,
                      calibration_import_target, ingest_one, obj_slug,
@@ -113,11 +118,29 @@ class FolderOpenIn(BaseModel):
     rel: str                      # relative path inside the archive folder
 
 
+class HealthScanIn(BaseModel):
+    mode: Literal["quick", "deep"] = "quick"
+
+
+class HealthAcknowledgementIn(BaseModel):
+    image_id: int
+    action: Literal["forget_missing", "accept_contents"]
+    confirmed: Literal[True]
+
+
 # ------------------------------------------------------------------ factory
 
 def create_app(db: Database) -> FastAPI:
+    health = ArchiveHealthManager(db)
+    @asynccontextmanager
+    async def lifespan(app):
+        try:
+            yield
+        finally:
+            await run_in_threadpool(health.shutdown)
     app = FastAPI(title="NightSeam", version=APP_VERSION, docs_url=None,
-                  redoc_url=None, openapi_url=None)
+                  redoc_url=None, openapi_url=None, lifespan=lifespan)
+    app.state.archive_health = health
 
     def serialize_archive(function):
         """Sync routes run in workers; lock before any metadata/file snapshot."""
@@ -166,6 +189,9 @@ def create_app(db: Database) -> FastAPI:
         # that also covers non-HTML responses (the SVG placeholder) which the
         # CSP attachment below deliberately skips.
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        if request.url.path.startswith("/api/library/health") or (
+                request.url.path.startswith("/api/images/") and request.url.path.endswith("/preview")):
+            resp.headers["Cache-Control"] = "no-store"
         # SP-02: the privileged localhost origin must not accept remote script.
         # Attach the policy to every HTML document the server serves (the SPA
         # shell and FastAPI's own error pages; a 4xx/5xx body is HTML and needs
@@ -223,6 +249,66 @@ def create_app(db: Database) -> FastAPI:
         return {"ok": True}
 
     # ---------------- image archive ----------------
+
+    @app.get("/api/images/{image_id}/preview")
+    def api_image_preview(image_id: int = ApiPath(gt=0, le=(1 << 63) - 1),
+                          size: int = Query(512, ge=64, le=1024)):
+        try:
+            result = preview_image(db, image_id, size, health.stopping.is_set)
+        except PreviewUnavailable as exc:
+            raise HTTPException(exc.status, str(exc)) from None
+        return Response(result.png, media_type="image/png", headers={
+            "X-FITS-HDU": str(result.hdu), "X-FITS-Size": f"{result.width}x{result.height}",
+            "X-FITS-Plane": "1" if result.first_plane else "none", "Cache-Control": "no-store"})
+
+    @app.post("/api/library/health", status_code=202)
+    def api_health_start(body: HealthScanIn):
+        try:
+            return health.start(body.mode)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @app.get("/api/library/health")
+    def api_health_latest():
+        try:
+            return health.snapshot()
+        except KeyError:
+            return None
+
+    @app.get("/api/library/health/{job_id}")
+    def api_health_status(job_id: str):
+        try:
+            return health.snapshot(job_id)
+        except KeyError:
+            raise HTTPException(404, "Health report not found in this application instance") from None
+
+    @app.post("/api/library/health/{job_id}/cancel")
+    def api_health_cancel(job_id: str):
+        try:
+            health.cancel(job_id)
+            return health.snapshot(job_id)
+        except KeyError:
+            raise HTTPException(404, "Health scan not found") from None
+
+    @app.get("/api/library/health/{job_id}/report")
+    def api_health_report(job_id: str):
+        try:
+            result = health.snapshot(job_id, full=True)
+        except KeyError:
+            raise HTTPException(404, "Health report not found") from None
+        if result["status"] in ("running", "cancelling"):
+            raise HTTPException(409, "Wait for the scan or cancellation to finish")
+        return Response(json.dumps(result, indent=2).encode("utf-8"), media_type="application/json",
+                        headers={"Content-Disposition": 'attachment; filename="nightseam-archive-health.json"'})
+
+    @app.post("/api/library/health/{job_id}/acknowledge")
+    def api_health_acknowledge(job_id: str, body: HealthAcknowledgementIn):
+        try:
+            return health.acknowledge(job_id, body.image_id, body.action)
+        except KeyError:
+            raise HTTPException(404, "Health report not found") from None
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
 
     @app.post("/api/library/reindex")
     @serialize_archive

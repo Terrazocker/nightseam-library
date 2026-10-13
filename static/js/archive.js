@@ -4,6 +4,7 @@ import { $, esc, api, toast, setBusy, fmtSize, fmtDT, TYPE_LABEL } from "./util.
 import { S } from "./state.js";
 import { renderSkyMap } from "./skymap.js";
 import { catalogIcon } from "./catalog_icons.js";
+import { clearExposurePreview, setPreviewImages } from "./fits_preview.js";
 
 let _bound = false;
 let _selectedLibraryObject = null;
@@ -61,11 +62,23 @@ function elapsedLabel(ms) {
 }
 
 function lockArchiveActions() {
-  const selectors = "#btnTopIngest, #btnIngest, #btnTopReindex, #btnArcReindex, #btnTopExport, #btnClearResults, #btnArcSave, #btnArcBrowse, #arcDir, [data-frame-override], [data-library-add], [data-imp]";
+  const selectors = "#btnTopIngest, #btnIngest, #btnTopReindex, #btnArcReindex, #btnTopExport, #btnTopHealth, #btnClearResults, #btnArcSave, #btnArcBrowse, #arcDir, #libEditSave, [data-edit], [data-frame-override], [data-library-add], [data-imp]";
   const controls = [...document.querySelectorAll(selectors)];
   const previous = controls.map(control => control.disabled);
   controls.forEach(control => { control.disabled = true; });
   return () => controls.forEach((control, i) => { control.disabled = previous[i]; });
+}
+
+export function beginArchiveHealth() {
+  if (_archiveOperation) {
+    toast("Wait for the current archive operation to finish.", "info", 4000);
+    return null;
+  }
+  _archiveOperation = "health";
+  const unlock = lockArchiveActions();
+  $("#btnTopHealth").disabled = false;
+  setBusy(true, "Checking archive health...");
+  return () => { unlock(); _archiveOperation = null; setBusy(false); };
 }
 
 function startImportActivity(total) {
@@ -352,6 +365,7 @@ function fmtDur(sec) {
 }
 
 export function renderLibrary() {
+  clearExposurePreview();
   if (!$("#libraryObjectList")) return;
   const L = S.library;
   const unit = S.cfg?.size_unit || "arcmin";
@@ -366,7 +380,7 @@ export function renderLibrary() {
     $("#librarySessions").innerHTML = `<tr><td colspan="8">${emptyStateMarkup(
       "database", "No capture sessions yet", "Import exposures to build your image library.",
       "session-empty-state")}</td></tr>`;
-    $("#librarySessionDetail").innerHTML = emptyStateMarkup("file",
+    $("#librarySessionFacts").innerHTML = emptyStateMarkup("file",
       "No session selected", ["Choose a capture session", "from the library to view details", "and frames."],
       "selected-session-empty");
     $("#librarySessionActions").innerHTML = "";
@@ -407,7 +421,7 @@ export function renderLibrary() {
       "session-empty-state")}</td></tr>`;
     $("#librarySessionCount").textContent = "0 sessions";
     $("#libraryFrameCount").textContent = "0 frames";
-    $("#librarySessionDetail").innerHTML = emptyStateMarkup("file",
+    $("#librarySessionFacts").innerHTML = emptyStateMarkup("file",
       "No object selected", "Choose an object from the list to view its sessions and frames.",
       "selected-session-empty");
     $("#librarySessionActions").innerHTML = "";
@@ -501,7 +515,7 @@ function renderLibrarySessions(object, sessions, activeSession) {
       "database", "No capture sessions yet", "Import exposures to build your image library.",
       "session-empty-state")}</td></tr>`;
     $("#libraryFrameCount").textContent = "0 frames";
-    $("#librarySessionDetail").innerHTML = emptyStateMarkup("file",
+    $("#librarySessionFacts").innerHTML = emptyStateMarkup("file",
       "No session selected", ["Choose a capture session", "from the library to view details", "and frames."],
       "selected-session-empty");
     $("#librarySessionActions").innerHTML = "";
@@ -523,7 +537,7 @@ function renderLibrarySessions(object, sessions, activeSession) {
   }).join("");
   if (!activeSession) {
     $("#libraryFrameCount").textContent = "0 frames";
-    $("#librarySessionDetail").innerHTML = emptyStateMarkup("file",
+    $("#librarySessionFacts").innerHTML = emptyStateMarkup("file",
       "No session selected", ["Choose a session", "from the library to view details", "and frames."],
       "selected-session-empty");
     $("#librarySessionActions").innerHTML = "";
@@ -538,12 +552,13 @@ function renderLibrarySessions(object, sessions, activeSession) {
   const filterText = Object.keys(activeSession.filters || {}).map(esc).join(" · ");
   const folders = sessionFolderPaths(object, activeSession);
   $("#libraryFrameCount").textContent = `${activeSession.n_images} frames`;
-  $("#librarySessionDetail").innerHTML = `<p class="session-date">${esc(activeSession.undated ? "No date recorded" : `${fmtDT(activeSession.start)} – ${fmtDT(activeSession.end)}`)}</p>
+  $("#librarySessionFacts").innerHTML = `<p class="session-date">${esc(activeSession.undated ? "No date recorded" : `${fmtDT(activeSession.start)} – ${fmtDT(activeSession.end)}`)}</p>
     <dl class="library-session-facts"><div><dt>Total exposure</dt><dd>${esc(fmtDur(activeSession.exposure))}</dd></div>
     <div><dt>Light integration</dt><dd>${esc(fmtDur(lightExposure))}</dd></div></dl>
     <div class="library-frame-rollup">${typeRows || '<p class="hint">No frame-type rollup recorded.</p>'}</div>
     <p class="library-filter-rollup"><span class="hint">Filters</span><br>${filterText || "No filter recorded"}</p>
     <div class="library-folder-rollup"><span class="hint">Archive folders</span><div class="library-archive-folders" role="group" aria-label="Archive folders">${folders.length ? folders.map((rel) => `<button class="library-folder-link" data-open-library-folder="${esc(rel)}" title="${esc(rel || "Archive root")}" type="button">${esc(rel || "Archive root")}</button>`).join("") : "Not recorded"}</div></div>`;
+  setPreviewImages(sessionImages(object, activeSession));
   const actions = $("#librarySessionActions");
   if (actions) {
     actions.hidden = false;
@@ -563,6 +578,10 @@ function renderLibrarySessions(object, sessions, activeSession) {
 }
 
 function openEdit(name) {
+  if (_archiveOperation === "health") {
+    toast("Wait for archive health work to finish.", "info", 4000);
+    return;
+  }
   const o = (S.library.objects || []).find(x => x.name === name);
   if (!o || o.object_id) return;
   _editTarget = o;
@@ -573,6 +592,10 @@ function openEdit(name) {
 }
 
 async function saveEdit() {
+  if (_archiveOperation === "health") {
+    toast("Wait for archive health work to finish.", "info", 4000);
+    return;
+  }
   if (!_editTarget) return;
   const o = _editTarget;
   const newName = $("#libEditName").value.trim();

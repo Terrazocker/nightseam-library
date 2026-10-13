@@ -4,6 +4,8 @@
 import { $, toast, initFocusTrap } from "./util.js";
 import { S } from "./state.js";
 import { bindArchive, applyArchiveUI, loadLibrary, exportLibrary } from "./archive.js";
+import { bindArchiveHealth } from "./archive_health.js";
+import { bindExposurePreview } from "./fits_preview.js";
 import { bindSkyMap, renderSkyMap } from "./skymap.js";
 
 const CHILD_KEY = "nightseam_catalog_child";
@@ -116,6 +118,8 @@ async function initCatalog() {
   bindCatalogTabs();
   bindTopActions();
   bindArchive();
+  bindArchiveHealth();
+  bindExposurePreview();
   bindSkyMap();
   initFocusTrap();
   const objectsToggle = $("#libraryObjectsToggle");

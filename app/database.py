@@ -88,6 +88,25 @@ CREATE INDEX IF NOT EXISTS idx_images_object_id_id
     ON images(object_id, id);
 CREATE INDEX IF NOT EXISTS idx_images_object_name_id
     ON images(object_name, id);
+CREATE TABLE IF NOT EXISTS image_integrity (
+    image_id INTEGER PRIMARY KEY,
+    sha256 TEXT NOT NULL,
+    size INTEGER,
+    mtime_ns INTEGER,
+    source TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS archive_health_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    image_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    archive TEXT NOT NULL,
+    file TEXT NOT NULL,
+    previous_sha256 TEXT,
+    accepted_sha256 TEXT,
+    acknowledged_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS import_batches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
@@ -185,6 +204,11 @@ class Database:
             "ON images(content_sha256)")
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_images_file_size ON images(file_size)")
+        self.conn.execute(
+            "INSERT OR IGNORE INTO image_integrity "
+            "SELECT id,content_sha256,file_size,file_mtime_ns,'existing_fingerprint',? "
+            "FROM images WHERE content_sha256 IS NOT NULL",
+            (datetime.now(UTC).isoformat(),))
         try:  # migration: import-run marker for merging chunked uploads
             self.conn.execute("ALTER TABLE import_batches ADD COLUMN run_id TEXT")
         except sqlite3.OperationalError:
@@ -425,6 +449,12 @@ class Database:
                      rec.get("filter"), rec.get("telescope"), rec.get("imagetyp"),
                      rec["ingested_at"], rec.get("content_sha256"),
                      rec.get("file_size"), rec.get("file_mtime_ns")))
+                if rec.get("content_sha256"):
+                    self.conn.execute(
+                        "INSERT INTO image_integrity VALUES(?,?,?,?,?,?)",
+                        (c.lastrowid, rec["content_sha256"], rec.get("file_size"),
+                         rec.get("file_mtime_ns"), rec.get("integrity_source", "import"),
+                         datetime.now(UTC).isoformat()))
                 self.conn.commit()
                 return c.lastrowid
             except BaseException:
@@ -436,10 +466,64 @@ class Database:
         """Cache a fingerprint measured from the current local original."""
         with self.lock:
             try:
+                # Cache refreshes must never accept a changed file as a new
+                # integrity baseline. Preserve the earlier observation first.
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO image_integrity "
+                    "SELECT id,COALESCE(content_sha256,?),COALESCE(file_size,?),"
+                    "COALESCE(file_mtime_ns,?),"
+                    "CASE WHEN content_sha256 IS NULL THEN 'first_observed' "
+                    "ELSE 'existing_fingerprint' END,? FROM images WHERE id=?",
+                    (digest, size, mtime_ns, datetime.now(UTC).isoformat(), img_id))
                 self.conn.execute(
                     "UPDATE images SET content_sha256=?,file_size=?,file_mtime_ns=? "
                     "WHERE id=?", (digest, size, mtime_ns, img_id))
                 self.conn.commit()
+            except BaseException:
+                self.conn.rollback()
+                raise
+
+    def integrity_snapshot(self) -> tuple[str, list[dict]]:
+        """Callers own archive_lock; release SQLite before filesystem work."""
+        with self.lock:
+            return self.image_dir(), [dict(row) for row in self.conn.execute(
+                "SELECT images.*,i.sha256 AS expected_sha256,i.size AS expected_size,"
+                "i.mtime_ns AS expected_mtime_ns,i.source AS baseline_source,"
+                "i.recorded_at AS baseline_recorded_at "
+                "FROM images LEFT JOIN image_integrity i ON i.image_id=images.id ORDER BY images.id")]
+
+    def acknowledge_integrity(self, record, archive, job_id, action, *,
+                              digest=None, size=None, mtime_ns=None):
+        """Revalidated user resolution and its history commit atomically."""
+        with self.lock:
+            try:
+                current = self.conn.execute(
+                    "SELECT images.*,i.sha256 AS expected_sha256,i.size AS expected_size,"
+                    "i.mtime_ns AS expected_mtime_ns,i.source AS baseline_source,"
+                    "i.recorded_at AS baseline_recorded_at FROM images "
+                    "LEFT JOIN image_integrity i ON i.image_id=images.id WHERE images.id=?",
+                    (record["id"],)).fetchone()
+                if current is None or dict(current) != record or self.image_dir() != archive:
+                    raise ValueError("The catalog record changed since the scan. Run a new check.")
+                stamp = datetime.now(UTC).isoformat()
+                if action == "forget_missing":
+                    self.conn.execute("DELETE FROM image_integrity WHERE image_id=?", (record["id"],))
+                    self.conn.execute("DELETE FROM images WHERE id=?", (record["id"],))
+                elif action == "accept_contents":
+                    self.conn.execute(
+                        "UPDATE image_integrity SET sha256=?,size=?,mtime_ns=?,source=?,recorded_at=? "
+                        "WHERE image_id=?", (digest, size, mtime_ns, "user_accepted", stamp, record["id"]))
+                    self.conn.execute(
+                        "UPDATE images SET content_sha256=?,file_size=?,file_mtime_ns=? WHERE id=?",
+                        (digest, size, mtime_ns, record["id"]))
+                else:
+                    raise ValueError("Unsupported acknowledgement action.")
+                self.conn.execute(
+                    "INSERT INTO archive_health_actions(job_id,image_id,action,archive,file,"
+                    "previous_sha256,accepted_sha256,acknowledged_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (job_id, record["id"], action, archive, record["file"], record["expected_sha256"], digest, stamp))
+                self.conn.commit()
+                return stamp
             except BaseException:
                 self.conn.rollback()
                 raise

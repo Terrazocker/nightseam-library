@@ -14,6 +14,12 @@ cleanup to actual ProgramData or any application database.
 
 ## Acceptance still open
 
+- Validate Archive health and FITS previews in a fresh Windows executable:
+  native directory pinning/reparse rejection, permissions, scan cancellation,
+  shutdown, acknowledgement confirmations, Astropy/NumPy binaries and compressed
+  image decoding, viewer keyboard focus and narrow layouts. Linux source/browser
+  and frozen decoder checks do not establish native Windows acceptance.
+
 - Filesystem refusal can prevent archive rename undo after a database failure.
   Fault-injection tests reproduce this recovery limit. The API now reports
   incomplete recovery and logs the affected paths instead of hiding it behind

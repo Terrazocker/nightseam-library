@@ -24,6 +24,9 @@
         <button id="btnTopReindex" class="catalog-action" type="button" aria-label="Reindex folders">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.7-2L20 12M4 12l2.7 5a7 7 0 0 0 11.7-2"/></svg><span>Reindex folders</span>
         </button>
+        <button id="btnTopHealth" class="catalog-action" type="button" aria-label="Archive health">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 7v6c0 5 9 8 9 8s9-3 9-8V7Z"/><path d="m7 12 3 3 7-7"/></svg><span>Archive health</span>
+        </button>
         <button id="btnTopExport" class="catalog-action" type="button" aria-label="Export library">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V3m-5 5 5-5 5 5M5 14v6h14v-6"/></svg><span>Export library</span>
         </button>
@@ -149,10 +152,25 @@
         <aside id="librarySessionRail" class="library-session-rail" aria-label="Selected session details">
           <div class="panel-heading selected-session-heading"><h2>Selected session</h2><span id="libraryFrameCount" class="hint">0 frames</span></div>
           <div id="librarySessionDetail" class="hint">
+            <div id="librarySessionFacts">
             <div class="empty-state selected-session-empty">
               <svg class="empty-icon" viewBox="0 0 32 40" fill="none" aria-hidden="true"><path d="M6 1.5h13l11.5 11.8v24.2H6a3 3 0 0 1-3-3v-30a3 3 0 0 1 3-3Z"/><path d="M19 2v12h11"/></svg>
               <strong>No session selected</strong><p>Choose a capture session<br>from the library to view details<br>and frames.</p>
             </div>
+          </div>
+            <section id="libraryExposurePreview" class="exposure-preview" aria-label="Exposure preview" hidden>
+              <h3>Exposure preview</h3>
+              <label for="libraryPreviewExposure">Exposure</label>
+              <select id="libraryPreviewExposure"></select>
+              <p id="libraryPreviewInfo" class="hint"></p>
+              <div class="preview-actions">
+                <button id="libraryPreviewShow" type="button">Show preview</button>
+                <button id="libraryPreviewExpand" class="ghost" type="button" hidden>Expand preview</button>
+              </div>
+              <p id="libraryPreviewStatus" class="hint" role="status" aria-live="polite"></p>
+              <img id="libraryPreviewImage" alt="Grayscale FITS preview" hidden>
+              <p id="libraryPreviewCaption" class="hint"></p>
+            </section>
           </div>
           <div id="librarySessionActions" class="library-session-actions" aria-label="Selected session actions" hidden></div>
         </aside>
@@ -235,6 +253,37 @@
   </div>
 </div>
 
+<div id="archiveHealthModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="archiveHealthTitle" aria-describedby="healthDescription">
+  <div class="modal-box archive-health-box">
+    <header><h2 id="archiveHealthTitle">Archive health</h2>
+      <button id="healthClose" class="close" type="button" aria-label="Close archive health">&times;</button></header>
+    <p id="healthDescription">Scans inspect the archive without changing files or library records. After a completed scan, acknowledge expected deletions or accept changed contents. Closing this window lets a running scan continue.</p>
+    <p id="healthArchive" class="mono health-archive"></p>
+    <div class="health-actions">
+      <button id="healthQuick" class="primary" type="button">Quick check</button>
+      <button id="healthDeep" type="button">Deep verification</button>
+      <button id="healthCancel" class="ghost" type="button" disabled>Cancel scan</button>
+    </div>
+    <p class="hint">Quick checks paths, readability, sizes and modification times. Deep reads indexed files and compares SHA-256 hashes. Neither checks image quality or embedded FITS checksums.</p>
+    <p id="healthStatus" role="status" aria-live="polite">Choose a check to inspect your archive.</p>
+    <progress id="healthProgress" aria-label="Archive health scan progress" value="0" max="1"></progress>
+    <p id="healthCounters" class="mono" aria-live="off"></p>
+    <p id="healthBaseline" class="hint"></p>
+    <ul id="healthFindings" class="health-findings" aria-label="Archive health findings"></ul>
+    <p id="healthReportLimit" class="hint"></p>
+    <div class="health-actions"><button id="healthDownload" type="button" disabled>Download JSON report</button></div>
+    <p class="hint">The latest report remains until another scan starts or the app closes. Download it to keep a copy. Acknowledgements require confirmation and leave files unchanged.</p>
+  </div>
+</div>
+<div id="fitsPreviewModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="fitsPreviewTitle">
+  <div class="modal-box fits-preview-box">
+    <header><h2 id="fitsPreviewTitle">Exposure preview</h2>
+      <button id="fitsPreviewClose" class="close" type="button" aria-label="Close exposure preview">&times;</button></header>
+    <p id="fitsPreviewFilename" class="mono preview-filename"></p>
+    <img id="fitsPreviewLarge" alt="Grayscale FITS preview">
+    <p id="fitsPreviewCaption" class="hint"></p>
+  </div>
+</div>
 <div id="toasts"></div>
 <div id="versionTag" aria-live="polite"></div>
 <script type="module" src="/js/catalog_main.js"></script>

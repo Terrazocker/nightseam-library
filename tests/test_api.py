@@ -9,6 +9,7 @@ import json
 import math
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -268,11 +269,11 @@ def test_f15_oversized_strings_are_rejected_not_truncated(client, tmp_path, monk
     assert r.status_code == 400 and "1024" in r.json()["detail"]
 
     # open_folder rel: oversized input is refused before the filesystem
-    monkeypatch.setattr("os.startfile", lambda p: None)
+    monkeypatch.setattr("os.startfile", lambda p: None, raising=False)
     assert client.post("/api/library/open_folder",
                        json={"rel": "x" * 513}).status_code == 400
     assert client.post("/api/library/open_folder",
-                       json={"rel": "x" * 512}).status_code == 404  # in-bounds
+                       json={"rel": "/".join(["x" * 170] * 3)}).status_code == 404  # in-bounds
 
 
 def test_retired_planner_and_restore_routes_answer_404(client):
@@ -291,7 +292,6 @@ def test_retired_planner_and_restore_routes_answer_404(client):
             ("get", "/api/export"), ("post", "/api/import"),
             ("post", "/api/update-check"), ("get", "/api/shutdown"),
             ("post", "/api/shutdown"),
-            ("get", "/api/images/1/preview"),
             ("get", "/index.html")):
         r = client.request(method, path)
         # GETs fall through to the static mount's 404; POSTs are refused by
@@ -929,7 +929,7 @@ def test_ingest_session_override(client):
 
 def test_open_folder(client, monkeypatch):
     opened = []
-    monkeypatch.setattr("os.startfile", lambda p: opened.append(str(p)))
+    monkeypatch.setattr("os.startfile", lambda p: opened.append(str(p)), raising=False)
     base = tmp_archive(client)
     (base / "M 42" / "2026-08-22_2000").mkdir(parents=True)
     r = client.post("/api/library/open_folder",
@@ -949,7 +949,7 @@ def test_open_folder_rejects_malformed_paths_and_keeps_the_root_open(client, mon
     from pathlib import Path
 
     opened = []
-    monkeypatch.setattr("os.startfile", lambda p: opened.append(str(p)))
+    monkeypatch.setattr("os.startfile", lambda p: opened.append(str(p)), raising=False)
     base = tmp_archive(client)
     base.mkdir(parents=True, exist_ok=True)
     assert client.post("/api/library/open_folder",

@@ -1,5 +1,49 @@
 # Independent catalog release record
 
+## Archive health and grayscale FITS previews - October 13, 2026
+
+Added Quick metadata and Deep whole-file SHA-256 archive health scans, background
+progress, explicit server cancellation and downloadable JSON reports. The
+additive image_integrity table preserves import-time/historical/reindex baselines
+independently of mutable dedup caches. Findings distinguish missing/unreadable
+files, unavailable/replaced archives, unsafe links, metadata/content changes,
+unstable files, unindexed exposures and missing baselines. Reports retain 10,000
+findings with omitted counts and show 200. Scans never repair or mutate files/DB.
+
+Completed findings support confirmed Acknowledge deletion and Accept current
+contents actions. Archive identity, the exact catalog/baseline snapshot and
+current disk state are revalidated; acceptance rehashes the exposure against the
+scan's observed digest. Database changes and timestamped previous/new hash history
+commit atomically. Resolved findings remain labelled; subsequent scans use the
+updated catalog. Restored/further edited files and stale findings are refused.
+Exposure contents, object definitions and import history remain unchanged.
+
+The session inspector now provides on-demand grayscale previews, exact exposure
+selection, retry/refresh and an expanded viewer with keyboard focus restoration.
+Astropy handles integer/float/scaled/blank pixels, image extensions, cube first
+planes and tile-compressed HDUs. Finite samples use percentile/asinh stretching;
+Pillow encodes grayscale PNGs. Whole-array loading is avoided, file reads and
+compressed tile buffers are capped, path identities are checked and archive
+conflicts fail promptly. Imports retain their original primary-header parser.
+Runtime dependencies/build checks and the Astropy PyInstaller hook are included.
+Early app shutdown interrupts health/acknowledgement/preview reads before Uvicorn
+drains active requests. UI generations protect against stale responses and URLs
+are revoked. No debayering, calibration, color combination or WCS rotation is done.
+
+Fresh Linux validation of restored source: **577 passed, 2 expected skips** in
+124.29 s; all **11 catalog browser checks passed**, including stale cancellation
+and reopen responses, confirmation cancellation, hostile filenames, preview
+selection/retry, expanded-view focus and narrow layouts. A private live archive
+rendered three grayscale previews, resolved one missing and one edited exposure
+through the UI, verified both remaining exposures in later scans, and left
+exposure bytes unchanged. Scans/previews left the database unchanged; explicit
+acknowledgements alone updated it. A fresh frozen Linux decoder rendered plain
+and RICE-compressed images. JS/DOM/encoding/core, dependency and source release
+checks passed. Evidence is retained in logs/recovery/.
+
+Native Windows packaging/browser acceptance remains open in BUGS.md. VERSION,
+tags and public executable/release artifacts are unchanged.
+
 ## Packaged verification of audit fixes - October 11, 2026
 
 Built the verified clean source commit 9ecf9435 as a local development executable
