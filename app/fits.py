@@ -9,11 +9,11 @@ from __future__ import annotations
 import io
 import math
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
 __all__ = [
     "read_fits_header", "parse_ra_hours", "parse_dec_deg", "parse_date_obs",
-    "date_epoch", "extract_object_tokens", "header_size", "image_geometry",
+    "date_epoch", "parse_site_coordinates", "capture_date_obs", "extract_object_tokens", "header_size", "image_geometry",
     "preview_png", "preview_png_file",
 ]
 
@@ -188,23 +188,35 @@ def parse_dec_deg(value) -> float | None:
 
 
 def parse_date_obs(value) -> str | None:
-    """DATE-OBS -> ISO 'YYYY-MM-DDTHH:MM:SS' or None (unparseable)."""
-    if value is None:
+    """Normalize a capture instant to UTC, retaining fractional seconds.
+
+    FITS timestamps without an offset are UTC. Ambiguous slash dates are
+    unresolved rather than guessed; use ISO metadata from the capture device.
+    The stored ISO text is naive by convention but always denotes UTC.
+    """
+    if not isinstance(value, str):
         return None
-    s = str(value).strip().split(".")[0]      # drop fractional seconds
-    m = _DATE_ISO_RE.match(s)
-    if m:
-        return _fmt_iso(m.groups())
-    m = _DATE_SLASH_RE.match(s)
+    s = value.strip()
+    m = _DATE_SLASH_RE.fullmatch(s)
     if m:
         a, b = int(m.group(1)), int(m.group(2))
-        # ambiguous US/EU slashed dates: day>12 forces DD/MM, else MM/DD
-        if a > 12:
+        if a <= 12 and b <= 12:
+            return None
+        if a > 12 and b <= 12:
             y, mo, d = m.group(3), b, a
         else:
             y, mo, d = m.group(3), a, b
-        return _fmt_iso((y, mo, d, m.group(4), m.group(5), m.group(6)))
-    return None
+        s = _fmt_iso((y, mo, d, m.group(4), m.group(5), m.group(6)))
+    if not re.match(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", s):
+        return None
+    try:
+        stamp = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=UTC)
+        return stamp.astimezone(UTC).replace(tzinfo=None).isoformat(
+            timespec="microseconds" if stamp.microsecond else "seconds")
+    except (ValueError, OverflowError):
+        return None
 
 
 def _fmt_iso(groups) -> str:
@@ -214,14 +226,60 @@ def _fmt_iso(groups) -> str:
             f"T{hh}:{mm}:{ss}")
 
 
+def capture_date_obs(header: dict) -> str | None:
+    """Only actual capture metadata in UTC may determine an observing session.
+
+    FITS defaults an absent TIMESYS to UTC. Other explicit scales need a real
+    conversion, so remain unresolved. DATE denotes file creation, not capture.
+    """
+    scale = header.get("TIMESYS")
+    if scale is not None and str(scale).strip().upper() != "UTC":
+        return None
+    return parse_date_obs(header.get("DATE-OBS"))
+
+
 def date_epoch(iso: str | None) -> float | None:
-    """ISO string -> unix epoch (float), or None when missing/invalid."""
+    """UTC ISO capture -> epoch; naive FITS values never use the host zone."""
     if not iso:
         return None
     try:
-        return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
-    except ValueError:
+        stamp = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=UTC)
+        return stamp.timestamp()
+    except (ValueError, TypeError, OverflowError, OSError):
         return None
+
+
+def parse_site_coordinates(header: dict) -> tuple[float | None, float | None]:
+    """Read complete finite observing coordinates; longitude is east-positive.
+
+    SITELAT/SITELONG are provided by the inspected Seestar captures. Decimal
+    degrees and signed degrees:minutes:seconds are accepted. Incomplete or
+    invalid metadata remains unresolved instead of inventing a location.
+    """
+    def coordinate(value, limit):
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            text = str(value).strip()
+            if ":" in text:
+                parts = text.lstrip("+-").split(":")
+                if len(parts) not in (2, 3):
+                    return None
+                degrees, minutes = float(parts[0]), float(parts[1])
+                seconds = float(parts[2]) if len(parts) == 3 else 0.0
+                if degrees < 0 or not 0 <= minutes < 60 or not 0 <= seconds < 60:
+                    return None
+                number = (-1 if text.startswith("-") else 1) * (degrees + minutes / 60 + seconds / 3600)
+            else:
+                number = float(text)
+            return number if math.isfinite(number) and abs(number) <= limit else None
+        except (ValueError, TypeError, OverflowError):
+            return None
+    lat = coordinate(header.get("SITELAT"), 90)
+    lon = coordinate(header.get("SITELONG"), 180)
+    return (lat, lon) if lat is not None and lon is not None else (None, None)
 
 
 def extract_object_tokens(text: str) -> list[str]:

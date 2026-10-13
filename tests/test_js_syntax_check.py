@@ -46,16 +46,25 @@ needs_node = pytest.mark.skipif(
 
 
 @pytest.fixture()
-def scratch(tmp_path):
+def scratch(checker_repository):
     """Per-test JS input, removed by the strict owned tmp_path fixture."""
-    d = tmp_path / "js-syntax-input"
+    d = checker_repository / "js-syntax-input"
     d.mkdir()
     return d
 
 
+@pytest.fixture(autouse=True)
+def checker_repository(tmp_path, monkeypatch):
+    """Keep checker output private; default discovery still scans shipping roots."""
+    private_repo = tmp_path / "checker-repository"
+    private_repo.mkdir()
+    monkeypatch.setattr(SYN, "REPO", private_repo)
+    return private_repo
+
+
 def leftovers():
-    """Scratch the checker failed to remove from its sole permitted store."""
-    return sorted(p.name for p in (ROOT / "logs").glob(SYN.SCRATCH_PREFIX + "*"))
+    """Scratch in this test's owned store, never another invocation's logs."""
+    return sorted(p.name for p in (SYN.REPO / "logs").glob(SYN.SCRATCH_PREFIX + "*"))
 
 
 # --------------------------------------------------------------------------
@@ -158,10 +167,36 @@ def test_no_scratch_files_survive_a_run(scratch, capsys):
 def test_checker_scratch_is_owned_and_stays_in_logs():
     directory = SYN._scratch_dir()
     try:
-        assert directory.parent == ROOT / "logs"
+        assert directory.parent == SYN.REPO / "logs"
         assert (directory / ".owner-pid").read_text(encoding="utf-8") == str(os.getpid())
     finally:
         SYN.remove_tree(directory)
+
+
+@needs_node
+def test_checker_preserves_unrelated_preexisting_and_concurrent_scratch(scratch, monkeypatch):
+    store = SYN.REPO / "logs"
+    store.mkdir()
+    old = store / f"{SYN.SCRATCH_PREFIX}{os.getpid()}-0"
+    old.mkdir()
+    (old / "evidence.txt").write_text("preserve", encoding="utf-8")
+    concurrent = store / f"{SYN.SCRATCH_PREFIX}other-process-0"
+    actual_check = SYN.check_one
+    owned = []
+
+    def checking(node, source, directory, index, capture):
+        owned.append(directory)
+        concurrent.mkdir(exist_ok=True)
+        (concurrent / "evidence.txt").write_text("in use", encoding="utf-8")
+        return actual_check(node, source, directory, index, capture)
+
+    monkeypatch.setattr(SYN, "check_one", checking)
+    good = scratch / "ok.js"
+    good.write_text(GOOD_JS, encoding="utf-8")
+    assert SYN.main(["--path", str(good)]) == 0
+    assert owned and all(not directory.exists() for directory in owned)
+    assert (old / "evidence.txt").read_text(encoding="utf-8") == "preserve"
+    assert (concurrent / "evidence.txt").read_text(encoding="utf-8") == "in use"
 
 
 def test_cleanup_refusal_fails_an_otherwise_successful_gate(scratch, monkeypatch, capsys):

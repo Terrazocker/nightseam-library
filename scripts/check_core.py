@@ -63,7 +63,8 @@ MOVED = (
     "precessDateToJ2000", "refractionDeg", "altaz", "altazFrame",
     "altazFrameApply", "sunRaDec", "moonRaDec", "moonIllumination",
     "moonAge",
-    "sunAlt", "sunCrossings", "nightInfo", "pickDarkWindow", "scrubWindowMs",
+    "sunAlt", "sunCrossings", "solarSession", "solarSessionWindows",
+    "nightInfo", "pickDarkWindow", "scrubWindowMs",
     "scrubBounds", "scrubClamp", "sepDeg", "nightStats",
 )
 # The Python astronomy/planning layer was deleted in Phase C (0.6.20): these

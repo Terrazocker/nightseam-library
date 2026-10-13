@@ -1,6 +1,9 @@
 """Tests for the pure-python FITS header reader and value parsers."""
 
 import struct
+from datetime import UTC, datetime
+
+import pytest
 
 from app import fits
 from _util import make_fits, make_fits_with_data
@@ -152,7 +155,7 @@ def test_read_fits_header_non_finite_exptime_is_none():
 
 def test_parse_date_obs():
     assert fits.parse_date_obs("2026-08-22T23:14:05.123") == \
-        "2026-08-22T23:14:05"
+        "2026-08-22T23:14:05.123000"
     assert fits.parse_date_obs("2026-08-22 23:14:05") == \
         "2026-08-22T23:14:05"
     assert fits.parse_date_obs("23/08/2026 22:00:00") == \
@@ -167,6 +170,40 @@ def test_date_epoch():
     assert fits.date_epoch("2026-08-22T23:14:05") is not None
     assert fits.date_epoch(None) is None
     assert fits.date_epoch("garbage") is None
+
+
+def test_capture_offsets_fractions_and_host_independent_utc_epoch():
+    expected = "2026-08-22T23:14:05.123456"
+    assert fits.parse_date_obs("2026-08-23T01:14:05.123456+02:00") == expected
+    assert fits.parse_date_obs(expected + "Z") == expected
+    assert fits.date_epoch(expected) == datetime(2026, 8, 22, 23, 14, 5, 123456, tzinfo=UTC).timestamp()
+
+
+@pytest.mark.parametrize("value", ["08/09/2026 22:00:00", "2026-02-30T10:00:00", "2026-08-22", "2026-08-22T23:14:05garbage"])
+def test_ambiguous_or_invalid_capture_dates_remain_unresolved(value):
+    assert fits.parse_date_obs(value) is None
+
+
+def test_capture_date_is_not_file_creation_or_an_unsupported_time_scale():
+    stamp = "2026-08-22T23:14:05"
+    assert fits.capture_date_obs({"DATE": stamp}) is None
+    assert fits.capture_date_obs({"DATE-OBS": stamp}) == stamp
+    assert fits.capture_date_obs({"DATE-OBS": stamp, "TIMESYS": " utc "}) == stamp
+    for scale in ("TT", "TAI", "TDB", "LOCAL", ""):
+        assert fits.capture_date_obs({"DATE-OBS": stamp, "TIMESYS": scale}) is None
+
+
+@pytest.mark.parametrize("header,expected", [
+    ({"SITELAT": 50.0383, "SITELONG": 7.81667}, (50.0383, 7.81667)),
+    ({"SITELAT": "-30:30:00", "SITELONG": "120:15:00"}, (-30.5, 120.25)),
+    ({"SITELAT": 91, "SITELONG": 0}, (None, None)),
+    ({"SITELAT": 0, "SITELONG": float("inf")}, (None, None)),
+    ({"SITELAT": True, "SITELONG": 0}, (None, None)),
+    ({"SITELAT": "50:60:00", "SITELONG": 0}, (None, None)),
+    ({"SITELAT": 50}, (None, None)),
+])
+def test_observing_coordinate_validation(header, expected):
+    assert fits.parse_site_coordinates(header) == expected
 
 
 # ---------------------------------------------------------------- tokens

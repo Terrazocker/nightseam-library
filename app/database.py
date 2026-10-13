@@ -9,16 +9,22 @@ from contextlib import nullcontext
 
 import csv
 import json
+import logging
 import math
 import re
+import shutil
 import sqlite3
 import threading
+import uuid
 from datetime import datetime, UTC
 from pathlib import Path
 
 from . import catalog_data
 from .paths import resource_dir, safe_rel
 from .theme import normalize_theme
+
+log = logging.getLogger(__name__)
+BACKUP_HISTORY_LIMIT = 5
 
 def finite_or_none(value):
     """The storage boundary never accepts a non-finite number (PY04-F2).
@@ -76,6 +82,12 @@ CREATE TABLE IF NOT EXISTS images (
     exposure REAL,
     date_obs TEXT,
     session_date_obs TEXT,
+    site_lat REAL,
+    site_lon REAL,
+    session_key TEXT,
+    session_kind TEXT,
+    session_start TEXT,
+    session_end TEXT,
     filter TEXT,
     telescope TEXT,
     imagetyp TEXT,
@@ -156,15 +168,28 @@ def normalize_session_date_obs(value) -> str | None:
 
 class Database:
     def __init__(self, db_path: Path):
-        self.path = db_path
+        self.path = Path(db_path)
         # reentrant: read methods wrap their queries too, so the shared
         # sqlite connection is never used from two threads at once
         self.lock = threading.RLock()
         # Serialize archive import/reindex publication without blocking reads of
         # the shared SQLite connection during filesystem work.
         self.archive_lock = threading.RLock()
-        self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        existing = self.path.exists() and self.path.stat().st_size > 0
+        self.conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        try:
+            # Capture the original schema and settings before any one-way
+            # migration or catalog replacement. An unavailable recovery copy
+            # refuses opening rather than risking an unprotected upgrade.
+            if existing:
+                self._write_backup_snapshot("pre-migration")
+            self._initialize()
+        except BaseException:
+            self.conn.close()
+            raise
+
+    def _initialize(self):
         self.conn.executescript(SCHEMA)
         # One-way removal of the retired sky-brightness preference. Do this
         # during database open, before the server can make its automatic
@@ -193,6 +218,9 @@ class Database:
         # reindex. Keep existing duplicate rows intact; this is not a UNIQUE
         # constraint and never deletes user files.
         for column, kind in (("session_date_obs", "TEXT"),
+                             ("site_lat", "REAL"), ("site_lon", "REAL"),
+                             ("session_key", "TEXT"), ("session_kind", "TEXT"),
+                             ("session_start", "TEXT"), ("session_end", "TEXT"),
                              ("content_sha256", "TEXT"), ("file_size", "INTEGER"),
                              ("file_mtime_ns", "INTEGER")):
             try:
@@ -228,23 +256,68 @@ class Database:
         self.make_backup()
 
     def make_backup(self) -> None:
-        """Keep one rolling backup of the user database next to the original.
+        """Publish a validated snapshot and retain five per recovery phase.
 
-        PY-07: this used `shutil.copyfile`, a byte copy taken with no lock while
-        the server thread keeps committing - a write landing mid-copy could leave
-        a torn, unusable recovery artifact and nothing detected it. SQLite's own
-        backup API reads a consistent snapshot under its locking."""
+        The historical copies outlive updates to the compatible rolling
+        ``.backup`` file. SQLite's backup API includes committed WAL contents;
+        never copy the live database file directly. All staging is adjacent to
+        the database so publication is an atomic same-filesystem replacement.
+        """
+        if not (self.path.exists() and self.path.stat().st_size > 0):
+            return
+        with self.lock:
+            snapshot = self._write_backup_snapshot("open")
+            staging = self.path.with_name(self.path.name + ".backup-stage-" + uuid.uuid4().hex)
+            try:
+                # This source is already closed and validated, unlike the live
+                # database. Preserve the old rolling copy until copy completes.
+                shutil.copyfile(snapshot, staging)
+                staging.replace(Path(str(self.path) + ".backup"))
+            except BaseException:
+                log.exception("Could not publish rolling database backup for %s", self.path)
+                self._remove_backup_staging(staging)
+                raise
+
+    @staticmethod
+    def _validate_backup(connection):
+        result = [row[0] for row in connection.execute("PRAGMA quick_check")]
+        if result != ["ok"]:
+            raise sqlite3.DatabaseError("Database recovery snapshot failed quick_check: " + "; ".join(result))
+
+    @staticmethod
+    def _remove_backup_staging(path):
         try:
-            if not (self.path.exists() and self.path.stat().st_size > 0):
-                return
-            dest = sqlite3.connect(str(self.path) + ".backup")
+            path.unlink(missing_ok=True)
+        except OSError:
+            log.exception("Could not remove failed database backup staging: %s", path)
+            raise
+
+    def _write_backup_snapshot(self, phase):
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        final = self.path.with_name(f"{self.path.name}.backup.{phase}.{stamp}-{uuid.uuid4().hex}")
+        staging = self.path.with_name(self.path.name + ".backup-stage-" + uuid.uuid4().hex)
+        try:
+            dest = sqlite3.connect(str(staging))
             try:
                 with self.lock:
+                    if self.conn.in_transaction:
+                        raise sqlite3.OperationalError("Cannot back up uncommitted database changes")
                     self.conn.backup(dest)
+                    self._validate_backup(dest)
             finally:
                 dest.close()
-        except (OSError, sqlite3.Error):
-            pass
+            staging.replace(final)
+            prefix = f"{self.path.name}.backup.{phase}."
+            pattern = re.compile(re.escape(prefix) + r"\d{8}T\d{12}Z-[0-9a-f]{32}$")
+            historical = sorted(p for p in self.path.parent.glob(prefix + "*")
+                                if pattern.fullmatch(p.name) and p.is_file() and not p.is_symlink())
+            for obsolete in historical[:-BACKUP_HISTORY_LIMIT]:
+                obsolete.unlink()
+            return final
+        except BaseException:
+            log.exception("Could not preserve %s database recovery snapshot for %s", phase, self.path)
+            self._remove_backup_staging(staging)
+            raise
 
     # ---------------- catalog ----------------
 
@@ -414,14 +487,22 @@ class Database:
                 return default
 
     def set_setting(self, key: str, value):
-        if key == "theme":
-            value = normalize_theme(value)
-        with (self.archive_lock if key == "image_dir" else nullcontext()), self.lock:
-            self.conn.execute(
-                "INSERT INTO settings(key,value) VALUES(?,?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (key, json.dumps(value)))
-            self.conn.commit()
+        self.update_settings({key: value})
+
+    def update_settings(self, changes: dict):
+        """Publish a validated settings request atomically."""
+        values = [(key, json.dumps(normalize_theme(value) if key == "theme" else value))
+                  for key, value in changes.items()]
+        archive_settings = any(key in ("image_dir", "observing_site") for key in changes)
+        with (self.archive_lock if archive_settings else nullcontext()), self.lock:
+            try:
+                self.conn.executemany(
+                    "INSERT INTO settings(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value", values)
+                self.conn.commit()
+            except BaseException:
+                self.conn.rollback()
+                raise
 
     def image_dir(self) -> str:
         """User-chosen image archive folder, or the default when unset."""
@@ -436,27 +517,98 @@ class Database:
     def add_image(self, rec: dict) -> int:
         with self.lock:
             try:
-                c = self.conn.execute(
-                    "INSERT INTO images(file,orig_name,object_id,object_name,"
-                    "ra_hours,dec_deg,exposure,date_obs,session_date_obs,filter,telescope,imagetyp,"
-                    "ingested_at,content_sha256,file_size,file_mtime_ns) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (rec["file"], rec["orig_name"], rec.get("object_id"),
-                     rec["object_name"], finite_or_none(rec.get("ra_hours")),
-                     finite_or_none(rec.get("dec_deg")),
-                     finite_or_none(rec.get("exposure")), rec.get("date_obs"),
-                     normalize_session_date_obs(rec.get("session_date_obs")),
-                     rec.get("filter"), rec.get("telescope"), rec.get("imagetyp"),
-                     rec["ingested_at"], rec.get("content_sha256"),
-                     rec.get("file_size"), rec.get("file_mtime_ns")))
-                if rec.get("content_sha256"):
-                    self.conn.execute(
-                        "INSERT INTO image_integrity VALUES(?,?,?,?,?,?)",
-                        (c.lastrowid, rec["content_sha256"], rec.get("file_size"),
-                         rec.get("file_mtime_ns"), rec.get("integrity_source", "import"),
-                         datetime.now(UTC).isoformat()))
+                image_id = self._insert_image(rec)
                 self.conn.commit()
-                return c.lastrowid
+                return image_id
+            except BaseException:
+                self.conn.rollback()
+                raise
+
+    def _insert_image(self, rec: dict) -> int:
+        """Insert without committing; callers own the transaction and lock."""
+        c = self.conn.execute(
+            "INSERT INTO images(file,orig_name,object_id,object_name,"
+            "ra_hours,dec_deg,exposure,date_obs,session_date_obs,filter,telescope,imagetyp,"
+            "ingested_at,content_sha256,file_size,file_mtime_ns,"
+            "site_lat,site_lon,session_key,session_kind,session_start,session_end) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (rec["file"], rec["orig_name"], rec.get("object_id"),
+             rec["object_name"], finite_or_none(rec.get("ra_hours")),
+             finite_or_none(rec.get("dec_deg")),
+             finite_or_none(rec.get("exposure")), rec.get("date_obs"),
+             normalize_session_date_obs(rec.get("session_date_obs")),
+             rec.get("filter"), rec.get("telescope"), rec.get("imagetyp"),
+             rec["ingested_at"], rec.get("content_sha256"),
+             rec.get("file_size"), rec.get("file_mtime_ns"),
+             finite_or_none(rec.get("site_lat")), finite_or_none(rec.get("site_lon")),
+             rec.get("session_key"), rec.get("session_kind"),
+             rec.get("session_start"), rec.get("session_end")))
+        if rec.get("content_sha256"):
+            self.conn.execute(
+                "INSERT INTO image_integrity VALUES(?,?,?,?,?,?)",
+                (c.lastrowid, rec["content_sha256"], rec.get("file_size"),
+                 rec.get("file_mtime_ns"), rec.get("integrity_source", "import"),
+                 datetime.now(UTC).isoformat()))
+        return c.lastrowid
+
+    def apply_reindex_plan(self, expected_images: list[dict], additions: list[dict],
+                           fingerprints: list[tuple], relinks: list[tuple], *,
+                           cancel_check=None, session_updates=()) -> None:
+        """Apply a filesystem scan atomically if its entire input is unchanged.
+
+        Fingerprints are (id, digest, size, mtime_ns); relinks additionally
+        include the verified relative path after id. Relinks preserve all
+        database-only metadata and the original record identity. Filesystem
+        work stays outside the connection lock; this short transaction checks
+        for concurrent edits before committing any scan result.
+        """
+        with self.lock:
+            try:
+                if cancel_check is not None:
+                    cancel_check()
+                self.conn.execute("BEGIN IMMEDIATE")
+                current = [dict(r) for r in self.conn.execute("SELECT * FROM images ORDER BY id")]
+                if current != expected_images:
+                    raise RuntimeError("Image library changed during reindex; retry the scan")
+                ids = {row["id"] for row in current}
+                for img_id, digest, size, mtime_ns in fingerprints:
+                    if cancel_check is not None:
+                        cancel_check()
+                    if img_id not in ids:
+                        raise ValueError("Reindex fingerprint refers to an unknown image")
+                    self._set_image_fingerprint(img_id, digest, size, mtime_ns)
+                for img_id, file, digest, size, mtime_ns in relinks:
+                    if cancel_check is not None:
+                        cancel_check()
+                    if img_id not in ids:
+                        raise ValueError("Reindex repair refers to an unknown image")
+                    file = safe_rel(file)
+                    if file is None:
+                        raise ValueError("Reindex repair has an unsafe stored path")
+                    self._set_image_fingerprint(img_id, digest, size, mtime_ns)
+                    self.conn.execute("UPDATE images SET file=? WHERE id=?", (file, img_id))
+                for rec in session_updates:
+                    if cancel_check is not None:
+                        cancel_check()
+                    if rec["id"] not in ids:
+                        raise ValueError("Reindex session update refers to an unknown image")
+                    self.conn.execute(
+                        "UPDATE images SET site_lat=?,site_lon=?,session_key=?,session_kind=?,"
+                        "session_start=?,session_end=?,date_obs=CASE WHEN ? THEN ? ELSE date_obs END WHERE id=?",
+                        (finite_or_none(rec.get("site_lat")), finite_or_none(rec.get("site_lon")),
+                         rec.get("session_key"), rec.get("session_kind"),
+                         rec.get("session_start"), rec.get("session_end"), "date_obs" in rec,
+                         rec.get("date_obs"), rec["id"]))
+                for rec in additions:
+                    if cancel_check is not None:
+                        cancel_check()
+                    file = safe_rel(rec["file"])
+                    if file is None:
+                        raise ValueError("Reindex addition has an unsafe stored path")
+                    self._insert_image({**rec, "file": file})
+                if cancel_check is not None:
+                    cancel_check()
+                self.conn.commit()
             except BaseException:
                 self.conn.rollback()
                 raise
@@ -466,22 +618,28 @@ class Database:
         """Cache a fingerprint measured from the current local original."""
         with self.lock:
             try:
-                # Cache refreshes must never accept a changed file as a new
-                # integrity baseline. Preserve the earlier observation first.
-                self.conn.execute(
-                    "INSERT OR IGNORE INTO image_integrity "
-                    "SELECT id,COALESCE(content_sha256,?),COALESCE(file_size,?),"
-                    "COALESCE(file_mtime_ns,?),"
-                    "CASE WHEN content_sha256 IS NULL THEN 'first_observed' "
-                    "ELSE 'existing_fingerprint' END,? FROM images WHERE id=?",
-                    (digest, size, mtime_ns, datetime.now(UTC).isoformat(), img_id))
-                self.conn.execute(
-                    "UPDATE images SET content_sha256=?,file_size=?,file_mtime_ns=? "
-                    "WHERE id=?", (digest, size, mtime_ns, img_id))
+                self._set_image_fingerprint(img_id, digest, size, mtime_ns)
                 self.conn.commit()
             except BaseException:
                 self.conn.rollback()
                 raise
+
+
+    def _set_image_fingerprint(self, img_id: int, digest: str,
+                               size: int, mtime_ns: int) -> None:
+        """Update dedup cache without committing or replacing integrity baselines."""
+        # Cache refreshes must never accept a changed file as a new
+        # integrity baseline. Preserve the earlier observation first.
+        self.conn.execute(
+            "INSERT OR IGNORE INTO image_integrity "
+            "SELECT id,COALESCE(content_sha256,?),COALESCE(file_size,?),"
+            "COALESCE(file_mtime_ns,?),"
+            "CASE WHEN content_sha256 IS NULL THEN 'first_observed' "
+            "ELSE 'existing_fingerprint' END,? FROM images WHERE id=?",
+            (digest, size, mtime_ns, datetime.now(UTC).isoformat(), img_id))
+        self.conn.execute(
+            "UPDATE images SET content_sha256=?,file_size=?,file_mtime_ns=? "
+            "WHERE id=?", (digest, size, mtime_ns, img_id))
 
     def integrity_snapshot(self) -> tuple[str, list[dict]]:
         """Callers own archive_lock; release SQLite before filesystem work."""
@@ -553,9 +711,8 @@ class Database:
                           object_name: str) -> list[dict]:
         """Frames relevant to session-folder selection, in insertion order.
 
-        Unresolved imports historically match every row with the same exact
-        object_name, including rows that already have an object_id. Keep that
-        predicate while using indexes to avoid loading the full image library.
+        Unresolved imports use the same normalized-name identity as library
+        grouping; resolved catalog objects remain separated by object_id.
         """
         with self.lock:
             if object_id is not None:
@@ -563,9 +720,11 @@ class Database:
                     "SELECT * FROM images WHERE object_id=? ORDER BY id",
                     (object_id,))
             else:
+                from .imglib import name_key
+                target = name_key(object_name)
                 rows = self.conn.execute(
-                    "SELECT * FROM images WHERE object_name=? ORDER BY id",
-                    (object_name,))
+                    "SELECT * FROM images WHERE object_id IS NULL ORDER BY id")
+                return [dict(r) for r in rows if name_key(r["object_name"]) == target]
             return [dict(r) for r in rows]
 
     def image(self, img_id: int) -> dict | None:
@@ -586,7 +745,8 @@ class Database:
         relative path}). PY-01: the stored path now becomes the file's REAL
         destination, so a frame that had to be uniquified when the rename merged
         into an existing folder is not left aliased with the frame it would have
-        overwritten."""
+        overwritten. Paths absent from that map remain unchanged; ``new_folder``
+        is retained as a compatibility parameter and never guesses a move."""
         from .imglib import name_key          # local import: keeps the
         target = name_key(old_name)           # module import graph acyclic
         moved = moved or {}
@@ -604,12 +764,14 @@ class Database:
                     if r["id"] not in ids:
                         continue
                     if r["file"] in moved:
-                        new_file = moved[r["file"]]
+                        new_file = safe_rel(moved[r["file"]])
+                        if new_file is None:
+                            raise ValueError("Rename publication has an unsafe stored path")
                     else:
-                        parts = r["file"].split("/", 1)
-                        new_file = (f"{new_folder}/{parts[1]}"
-                                    if len(parts) == 2 and parts[0] != new_folder
-                                    else r["file"])
+                        # A name change is not evidence that this original
+                        # moved. Only the filesystem publisher's explicit map
+                        # may change a stored path.
+                        new_file = r["file"]
                     if new_file != r["file"]:
                         cur.execute("UPDATE images SET file=? WHERE id=?",
                                     (new_file, r["id"]))
@@ -622,36 +784,44 @@ class Database:
 
     def add_import_batch(self, rec: dict) -> int:
         with self.lock:
-            c = self.conn.execute(
-                "INSERT INTO import_batches(created_at,object_id,object_name,"
-                "slug,session,frame,n_files,total_exposure,first_obs,image_dir,run_id) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (rec["created_at"], rec.get("object_id"), rec["object_name"],
-                 rec["slug"], rec["session"], rec["frame"], rec["n_files"],
-                 round(float(rec.get("total_exposure") or 0.0), 1),
-                 rec.get("first_obs"), rec["image_dir"], rec.get("run_id")))
-            self.conn.commit()
-            return c.lastrowid
+            try:
+                c = self.conn.execute(
+                    "INSERT INTO import_batches(created_at,object_id,object_name,"
+                    "slug,session,frame,n_files,total_exposure,first_obs,image_dir,run_id) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (rec["created_at"], rec.get("object_id"), rec["object_name"],
+                     rec["slug"], rec["session"], rec["frame"], rec["n_files"],
+                     round(float(rec.get("total_exposure") or 0.0), 1),
+                     rec.get("first_obs"), rec["image_dir"], rec.get("run_id")))
+                self.conn.commit()
+                return c.lastrowid
+            except BaseException:
+                self.conn.rollback()
+                raise
 
     def merge_import_batch(self, run_id: str, rec: dict) -> int:
         """Record a batch, merging into the row of the same import run
         (one upload action split into chunks = one history entry)."""
         with self.lock:
-            row = self.conn.execute(
-                "SELECT id, n_files, total_exposure, first_obs FROM import_batches "
-                "WHERE run_id=? AND slug=? AND session=? AND frame=?",
-                (run_id, rec["slug"], rec["session"], rec["frame"])).fetchone()
-            if row:
-                self.conn.execute(
-                    "UPDATE import_batches SET n_files=?, total_exposure=?, "
-                    "first_obs=? WHERE id=?",
-                    (row["n_files"] + rec["n_files"],
-                     round(row["total_exposure"] + rec["total_exposure"], 1),
-                     min((value for value in (row["first_obs"], rec.get("first_obs"))
-                          if value), default=None), row["id"]))
-                self.conn.commit()
-                return row["id"]
-            return self.add_import_batch({**rec, "run_id": run_id})
+            try:
+                row = self.conn.execute(
+                    "SELECT id, n_files, total_exposure, first_obs FROM import_batches "
+                    "WHERE run_id=? AND slug=? AND session=? AND frame=?",
+                    (run_id, rec["slug"], rec["session"], rec["frame"])).fetchone()
+                if row:
+                    self.conn.execute(
+                        "UPDATE import_batches SET n_files=?, total_exposure=?, "
+                        "first_obs=? WHERE id=?",
+                        (row["n_files"] + rec["n_files"],
+                         round(row["total_exposure"] + rec["total_exposure"], 1),
+                         min((value for value in (row["first_obs"], rec.get("first_obs"))
+                              if value), default=None), row["id"]))
+                    self.conn.commit()
+                    return row["id"]
+                return self.add_import_batch({**rec, "run_id": run_id})
+            except BaseException:
+                self.conn.rollback()
+                raise
 
     def import_batches(self, limit: int = 60) -> list[dict]:
         with self.lock:

@@ -34,7 +34,8 @@ def img(**kw):
     d = {"file": "x.fit", "orig_name": "x.fit", "object_id": None,
          "object_name": "Unknown", "ra_hours": None, "dec_deg": None,
          "exposure": 300.0, "date_obs": None, "filter": None,
-         "telescope": None, "ingested_at": "2026-08-22T00:00:00"}
+         "telescope": None, "site_lat": 52.52, "site_lon": 13.405,
+         "ingested_at": "2026-08-22T00:00:00"}
     d.update(kw)
     return d
 
@@ -208,7 +209,7 @@ def test_session_anchor_null_fallback_and_explicit_empty_are_distinct():
                                             session_date_obs="")) == ""
 
 
-def test_session_membership_does_not_guess_by_nearest_session_end():
+def test_session_membership_does_not_chain_capture_gaps():
     base = datetime(2026, 8, 23)
 
     def at(hours):
@@ -218,12 +219,14 @@ def test_session_membership_does_not_guess_by_nearest_session_end():
     run = [img(id=index + 2, date_obs=at(hours)) for index, hours in enumerate(range(0, 81, 10))]
     early = img(id=20, date_obs=at(1))
     chosen = imglib.session_for_image([previous] + run, early)
-    # A long connected run's end can be farther away than another session's end.
-    assert chosen["start"] == at(0) and chosen["end"] == at(80)
-    assert set(chosen["image_ids"]) == {frame["id"] for frame in run} | {20}
+    # Every physical interval is independent: a ten-hour capture chain must
+    # never turn several sunrises/sunsets into one session.
+    assert chosen["start"] == at(0) and chosen["end"] == at(1)
+    assert set(chosen["image_ids"]) == {2, 20}
+    assert len(imglib.compute_sessions([previous] + run + [early])) > 4
 
 
-def test_ordinary_session_gap_boundary_and_utc_offsets_remain_truthful():
+def test_day_night_sessions_and_utc_offsets_remain_truthful():
     frames = [img(id=1, date_obs="2026-08-22T23:00:00+02:00"),
               img(id=2, date_obs="2026-08-23T09:00:00Z"),
               img(id=3, date_obs="2026-08-23T10:00:00Z")]
@@ -260,32 +263,20 @@ def test_library_payload_preserves_measurement_and_anchor_but_uses_logical_range
     assert frames == original
 
 
-def test_fractional_utc_anchor_does_not_bridge_exact_twelve_hour_sessions(monkeypatch):
+def test_fractional_utc_anchor_keeps_day_night_membership():
     earlier = img(id=1, date_obs="2026-08-22T08:00:00.900000")
     target = img(id=2, date_obs="2026-08-22T20:00:00.900000")
     calibration = img(id=3, date_obs="2026-09-01T00:00:00", imagetyp="dark",
                       session_date_obs="2026-08-22T20:00:00.900000Z")
-    for offset_hours in (-7, 2, 5.5):
-        # Simulate the existing filename clock in different host zones. A UTC
-        # anchor between local-interpreted captures would otherwise bridge them.
-        host_zone = timezone(timedelta(hours=offset_hours))
-
-        def filename_epoch(value):
-            if not value:
-                return None
-            stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            return (stamp if stamp.tzinfo is not None else
-                    stamp.replace(tzinfo=host_zone)).timestamp()
-
-        monkeypatch.setattr(imglib, "date_epoch", filename_epoch)
-        sessions = imglib.compute_sessions([earlier, target, calibration])
-        assert [session["image_ids"] for session in sessions] == [[1], [2, 3]]
-        chosen = imglib.session_for_image([earlier, target], calibration)
-        assert chosen["start"] == chosen["end"] == target["date_obs"]
-        assert imglib.session_for_anchor([earlier, target, calibration], 3) == chosen
-        group = imglib.group_library([calibration, target, earlier], [])[0]
-        assert group["n_sessions"] == 2
-        assert group["first"] == earlier["date_obs"] and group["last"] == target["date_obs"]
+    sessions = imglib.compute_sessions([earlier, target, calibration])
+    assert [session["image_ids"] for session in sessions] == [[1], [2, 3]]
+    assert [session["session_kind"] for session in sessions] == ["day", "night"]
+    chosen = imglib.session_for_image([earlier, target], calibration)
+    assert chosen["start"] == chosen["end"] == target["date_obs"]
+    assert imglib.session_for_anchor([earlier, target, calibration], 3) == chosen
+    group = imglib.group_library([calibration, target, earlier], [])[0]
+    assert group["n_sessions"] == 2
+    assert group["first"] == earlier["date_obs"] and group["last"] == target["date_obs"]
 
 
 # ---------------------------------------------------------------- grouping
@@ -347,9 +338,44 @@ def test_rename_images_updates_rows_and_paths(tmp_path):
         "date_obs": None, "filter": None, "telescope": None,
         "ingested_at": "2026-08-26T00:10:00",
     })
-    db.rename_images("My Secret", "New Name", "nebula", "New Name")
+    db.rename_images("My Secret", "New Name", "nebula", "New Name",
+                     {"My Secret/lights/a.fit": "New Name/lights/a.fit"})
     imgs = db.images()
     assert len(imgs) == 1
     assert imgs[0]["object_name"] == "New Name"
     assert imgs[0]["otype"] == "nebula"
     assert imgs[0]["file"] == "New Name/lights/a.fit"
+
+
+
+def test_rename_images_without_move_map_preserves_stored_path(tmp_path):
+    from app.database import Database
+    db = Database(tmp_path / "rename.sqlite3")
+    identifier = db.add_image({"file": "Original/lights/a.fit", "orig_name": "a.fit",
+                               "object_name": "Original", "ingested_at": "2026-10-11"})
+    db.rename_images("Original", "Changed", "nebula", "Changed")
+    record = db.image(identifier)
+    assert record["object_name"] == "Changed"
+    assert record["file"] == "Original/lights/a.fit"
+
+
+
+def test_missing_location_sessions_are_unassigned_utc_date_buckets():
+    frames = [img(id=1, date_obs="2026-08-22T23:00:00Z", site_lat=None, site_lon=None),
+              img(id=2, date_obs="2026-08-23T01:00:00Z", site_lat=None, site_lon=None)]
+    sessions = imglib.compute_sessions(frames)
+    assert len(sessions) == 2
+    assert [session["session_kind"] for session in sessions] == ["unassigned", "unassigned"]
+    assert all(session["label"] == "Unassigned location" for session in sessions)
+    assert [session["image_ids"] for session in sessions] == [[1], [2]]
+
+
+def test_exact_solar_boundary_opens_next_session():
+    from app.solar import session_metadata
+    night = session_metadata("2026-08-22T23:00:00Z", 52.52, 13.405)
+    frames = [img(id=1, date_obs="2026-08-22T23:00:00Z"),
+              img(id=2, date_obs=night["session_end"])]
+    sessions = imglib.compute_sessions(frames)
+    assert [session["session_kind"] for session in sessions] == ["night", "day"]
+    assert [session["image_ids"] for session in sessions] == [[1], [2]]
+    assert sessions[0]["session_end"] == sessions[1]["session_start"]

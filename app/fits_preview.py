@@ -149,8 +149,11 @@ def render_preview(source, max_px=512, cancelled=None):
     raise PreviewUnavailable("No image HDU with at least two dimensions was found.")
 
 
-def _signature(info):
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+def _signature(info, *, cross_source=False):
+    # Windows Python 3.12 stat/fstat disagree on ctime (creation/change time).
+    # Compare it only between observations from the same metadata source.
+    identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+    return identity if cross_source and os.name == "nt" else (*identity, info.st_ctime_ns)
 
 
 def _target(root, relative, identity):
@@ -191,13 +194,14 @@ def preview_image(db, image_id, max_px=512, cancelled=None):
             fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
             with os.fdopen(fd, "rb") as source:
                 checked = _target(root, record["file"], identity)
-                if checked != target or _signature(os.fstat(source.fileno())) != _signature(before):
+                opened = os.fstat(source.fileno())
+                if checked != target or _signature(opened, cross_source=True) != _signature(before, cross_source=True):
                     raise PreviewUnavailable("The exposure changed while opening it. Try again.", 409)
                 result = render_preview(source, max_px, cancelled)
                 current = _target(root, record["file"], identity).stat()
                 if cancelled and cancelled():
                     raise PreviewUnavailable("Preview stopped during application shutdown.", 409)
-                if _signature(os.fstat(source.fileno())) != _signature(before) or _signature(current) != _signature(before):
+                if _signature(os.fstat(source.fileno())) != _signature(opened) or _signature(current) != _signature(before):
                     raise PreviewUnavailable("The exposure changed during the preview. Try again.", 409)
                 return result
         except FileNotFoundError:

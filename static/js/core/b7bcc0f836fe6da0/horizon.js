@@ -3,7 +3,7 @@
  *
  * This module is the SINGLE implementation of the panorama mask/profile math
  * and the sky-band geometry. It must stay pure: no DOM, no storage, no
- * network, no build tokens. Shells (web/ and static/js/) import it through the
+ * network, no build tokens. The catalog shell imports it through the
  * baked stable stub `core.js`; scripts/build_core.py copies this tree to
  * content-hashed URLs and scripts/check_core.py fails on drift.
  *
@@ -20,8 +20,8 @@ export const MASK_H = 360; // 0.25 deg per row of altitude
 
 /** Metadata vocabulary for the horizon editor.  These values are descriptive
  * only: they never alter the planning profile.  Keeping the vocabulary in the
- * shared core prevents the web and desktop editors from silently inventing
- * different meanings for the same imported record. */
+ * shared core keeps ONE meaning for the same imported record, whatever reads
+ * it. */
 export const HORIZON_LANDMARK_KINDS = Object.freeze([
   'tree', 'building', 'ridge', 'pole', 'roof', 'balcony', 'other',
 ]);
@@ -436,13 +436,12 @@ export function clearMask(p) {
   return p.profile;
 }
 
-/* ---------------- kept-band crop (shared by both shells) ----------------
+/* ---------------- kept-band crop (core contract; the editor is retired) ----------------
  *
  * A horizontal crop keeps ONE contiguous azimuth band and shrinks the
  * calibrated FOV to it. `sel = { x, w }` is the KEPT band in the editor's
- * canvas pixels and `W` is that canvas width (the web passes its 720-wide
- * logical mask, the desktop its displayed canvas width - only the fraction
- * matters). fovNew = max(45, round(fovOld * w/W)); azNew is the azimuth of the
+ * canvas pixels and `W` is that canvas width (callers pass any width - only
+ * the fraction matters). fovNew = max(45, round(fovOld * w/W)); azNew is the azimuth of the
  * kept band's left edge, at the same 2 dp the desktop transport used.
  *
  * History note (0.6.2x): the retired desktop formula `fovOld * (1 - w/W)`

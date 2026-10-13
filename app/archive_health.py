@@ -33,8 +33,11 @@ class UnstableFile(ValueError):
     pass
 
 
-def _signature(info):
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+def _signature(info, *, cross_source=False):
+    # Windows Python 3.12 stat/fstat disagree on ctime (creation/change time).
+    # Compare it only between observations from the same metadata source.
+    identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+    return identity if cross_source and os.name == "nt" else (*identity, info.st_ctime_ns)
 
 
 def _check_root(root, identity):
@@ -122,7 +125,8 @@ def _inspect(root, relative, identity, deep, checkpoint, read_progress):
     fd = os.open(target, flags)
     with os.fdopen(fd, "rb") as source:
         checked = _contained(root, relative, identity)
-        if checked != target or _signature(os.fstat(source.fileno())) != _signature(before):
+        opened = os.fstat(source.fileno())
+        if checked != target or _signature(opened, cross_source=True) != _signature(before, cross_source=True):
             raise UnstableFile("The path changed while opening it; it was not read.")
         observed = None
         if deep:
@@ -138,7 +142,7 @@ def _inspect(root, relative, identity, deep, checkpoint, read_progress):
         checkpoint()
         after = os.fstat(source.fileno())
         current = _contained(root, relative, identity).stat()
-        if _signature(before) != _signature(after) or _signature(after) != _signature(current):
+        if _signature(opened) != _signature(after) or _signature(before) != _signature(current):
             raise UnstableFile("The exposure changed during inspection; no verification result is valid.")
         return after, observed
 

@@ -65,6 +65,16 @@
           <p id="arcDirHint" class="hint" aria-live="polite"></p>
           <p class="archive-copy">Original files are copied to your archive folder and never moved or modified.</p>
           <div class="import-divider"></div>
+          <span class="field-label" id="observingSiteLabel">Observing location fallback</span>
+          <div class="observing-site-fields" role="group" aria-labelledby="observingSiteLabel">
+            <label for="siteLat">Latitude</label>
+            <input id="siteLat" type="number" min="-90" max="90" step="any" placeholder="Degrees">
+            <label for="siteLon">Longitude</label>
+            <input id="siteLon" type="number" min="-180" max="180" step="any" placeholder="East positive">
+            <button id="btnSiteSave" type="button" class="ghost">Save</button>
+          </div>
+          <p class="hint">FITS location takes priority. Night sessions run sunset to sunrise; daytime sessions run sunrise to sunset. Leave both blank to clear the fallback.</p>
+          <div class="import-divider"></div>
           <span class="field-label" id="frameTypeLabel">Frame type</span>
           <div id="ingestFrameSelector" class="frame-type-selector" role="group" aria-labelledby="frameTypeLabel" aria-describedby="frameTypeHelp">
             <button type="button" data-frame-override="light" aria-pressed="true">Lights</button>
@@ -81,7 +91,7 @@
             <button id="btnIngest" class="primary" type="button">Import exposures...</button>
             <p class="hint">or drop exposures here</p>
           </div>
-          <button id="btnArcReindex" type="button" hidden title="Scan the archive folder and add supported exposure files found on disk">Reindex folder</button>
+          <button id="btnArcReindex" type="button" hidden title="Scan archive exposures, recover unique missing references and refresh observing-session metadata">Reindex folder</button>
         </aside>
         <div class="import-results-column">
           <section class="ingest-results import-result-card" aria-labelledby="importResultsHeading">

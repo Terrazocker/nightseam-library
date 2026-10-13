@@ -154,6 +154,19 @@ def test_png_api_metadata_and_no_mutations(library):
     assert before == (snapshot(db), target.read_bytes(), target.stat().st_mtime_ns)
 
 
+def test_completed_external_edit_can_be_previewed_without_changing_baseline(library):
+    import time
+    db, root = library
+    image_id, target = stored_image(db, root, fits_bytes(np.arange(100).reshape(10, 10)))
+    baseline = snapshot(db)
+    time.sleep(.01)
+    target.write_bytes(fits_bytes(np.arange(100, 200).reshape(10, 10)))
+    with TestClient(create_app(db)) as client:
+        response = client.get(f"/api/images/{image_id}/preview")
+        assert response.status_code == 200 and decode(response.content).shape == (10, 10)
+    assert snapshot(db) == baseline
+
+
 def test_missing_and_nonimage_statuses(library):
     db, root = library
     image_id, target = stored_image(db, root, fits_bytes())

@@ -48,9 +48,9 @@ export function gmstDeg(jd) {
 
 /** Precess ICRS/J2000 coords to mean equinox of date (Meeus ch.21).
  *  Z(zeta) -> Y(theta) -> Z(z): the MIDDLE rotation is about the Y axis.
- *  This is the ONE implementation (both shells re-export it); the retired
- *  app/astro.py implemented the same equations. tests/test_js_parity.py compares
- *  both shells against published values; tests/js/reference_anchors.mjs is the
+ *  This is the ONE implementation; the retired app/astro.py implemented the
+ *  same equations, and the retired cross-shell parity runner was superseded by
+ *  tests/js/reference_anchors.mjs (published IAU-2006/Meeus values) as the
  *  correctness authority. */
 export function precessJ2000ToDate(raDeg, decDeg, jd) {
   const t = (jd - J2000) / 36525.0;

@@ -21,26 +21,86 @@ app/ingest.py parses exposure headers, matches objects, stages/copies files,
 hashes complete bytes for global duplicate identity and reindexes archive trees.
 app/imglib.py derives objects and capture sessions for the interface.
 app/paths.py contains safe path and writable/resource-directory boundaries.
-Recovery is file-first: the archive folder is the source of truth, SQLite keeps
-a rolling `nightseam.db.backup` next to the database (taken with SQLite's own
-backup API under the connection lock), and **Reindex folders** rebuilds library
-rows from the archive.
+Dedup comparisons read the current complete bytes of same-size originals even
+if their cached digest differs: external restores can preserve size and mtime.
+This can add I/O for new content. Reindex measures each original at most once
+per scan and keeps cached fingerprints for unchanged known-only scans.
+Recovery is file-first: exposure bytes stay in the archive. SQLite keeps a
+compatible rolling `nightseam.db.backup` plus up to five dated pre-migration
+and five post-open snapshots beside the database. SQLite's backup API includes
+committed WAL contents; snapshots pass quick_check before atomic publication.
+An existing database must have a successful pre-migration snapshot before any
+migration runs. Backup and retention failures are logged and stop opening.
+Structural validation cannot determine whether every user edit is correct.
+
+**Reindex folders** adds unrecorded files and repairs a missing stored path only
+when a trusted complete-byte SHA-256 and size identify exactly one record and
+one discovered destination. Repair preserves the original ID, manual metadata,
+frame class and logical session anchor. Ambiguous matches are reported and left
+unchanged; missing records are never deleted. Files without a trusted prior
+fingerprint cannot be relinked automatically. Reindex does not move archive
+files or reverse a failed rename. Scan/hash work runs outside SQLite critical
+sections, and the planned record changes publish in one transaction. Disconnect
+or request cancellation stops work cooperatively before publication; once the
+transaction commits, its completed result remains durable.
 
 Library renames preserve logical object groups. If different names share a
 sanitized archive folder, a rename that would move that folder is refused with
 HTTP 409 before any file or database change; an edit that keeps the same folder
-may proceed. Directory enumeration finishes before a whole-folder move; its
+may proceed. A group spread across physical roots, a mismatched stored root or
+a missing stored file refuses a folder-changing rename before mutation. Stored
+paths change only through the actual move map. Directory enumeration finishes
+before a whole-folder move; its
 undo moves the directory back independently of the file map, including empty
 folders and unrecorded children. Database failures trigger filesystem undo.
 If filesystem recovery is refused,
 the API reports incomplete recovery and logs the affected relative paths;
 inspect those paths and recover the archive before using Reindex folders.
 
+Sessions group each object's captures by observing location and actual solar
+interval: sunset through the next sunrise is one night; sunrise through sunset
+is one day. Membership is half-open, so a capture exactly at sunrise starts the
+day and one exactly at sunset starts the night. The shared core uses geometric
+solar-center altitude -0.833 degrees, without terrain or elevation corrections.
+Coordinates are rounded to 0.001 degrees for stable site identity. Continuous
+polar phases use explicitly labelled polar day/night UTC-date intervals.
+Catalog IDs identify resolved objects; normalized names identify unresolved
+objects. Different targets retain separate Library groups even on the same night.
+
+FITS SITELAT/SITELONG take priority. The Import pane's observing-location fallback
+applies only when both header coordinates are absent. Invalid or incomplete
+header locations remain visibly Unassigned location, grouped by UTC capture date.
+Set the fallback only for files known to originate at that location. Clearing it
+does not erase already recorded capture locations. Reindex folders reads headers
+and refreshes old session metadata transactionally without moving exposure files.
+New folder identities use the fixed solar boundary and a hash of the full key,
+so import order, gaps longer than twelve hours and host timezone cannot change them.
+
+DATE-OBS without an offset denotes UTC; explicit offsets are normalized to UTC
+and fractions are retained. An absent TIMESYS defaults to UTC. Unsupported
+explicit time scales, ambiguous slash dates, date-only values and invalid dates
+remain Undated; DATE (file creation) is never substituted for capture time.
+Original FITS bytes are preserved. There is no locale-dependent date guess.
+
+Uploads report validation failures per file and can continue. Database errors
+stop the remaining request and later UI chunks, preserving earlier confirmed
+results while marking uncertain and unattempted files separately. Import-history
+failures roll back their own transaction; earlier committed exposures remain.
+Unexpected invariant failures are not silently converted into success.
+
+CSV export quotes every cell and prefixes formula-leading textual fields with
+a tab for spreadsheet viewing. Numeric fields are not rewritten. Original
+database values and JSON export remain unchanged; JSON is the lossless choice
+for programmatic metadata exchange. Spreadsheet import/resave behavior varies.
+
 `POST /api/images/ingest` may receive a positive `session_anchor_id` for an
 existing image, with dark/flat/bias frame type. The server revalidates the target
-under the archive lock. Nullable `session_date_obs` stores logical membership:
+under the archive lock. Stored `session_key`, `session_kind`, `session_start` and
+`session_end` define exact interval membership. An explicit calibration attachment
+copies those fields from the validated target while preserving its own capture
+date and location. Nullable `session_date_obs` also records the logical anchor:
 NULL uses the original timestamp, empty text targets an undated session, and an
-ISO UTC date targets a dated session. `date_obs` remains original. Library
+ISO UTC date targets a dated session. `date_obs` remains the capture instant. Library
 sessions publish exact `image_ids`; calibration dates do not extend the capture
 interval. Duplicate files retain their previous association and location.
 
@@ -100,6 +160,25 @@ Catalog source CSVs and popularity policy live in app/ and are owned here.
 Current tests use private ignored directories; browser gates launch private
 executable copies. See AGENTS.md for commands and security invariants.
 
+Desktop artifacts use Windows x64 CPython 3.12 and the exact active dependency
+closure in requirements-build-lock.txt. build.ps1 checks installed versions and
+dependency closure before any build/backup mutation, including httpx2 and the
+compiler. It never installs packages automatically. The existing build
+environment already matches the lock. For a new environment, follow the manual
+setup printed by scripts/check_build_dependencies.py. Embedded mini-racer 0.14.1
+executes the generated shared JavaScript solar core in headless and packaged runs;
+Node is not a runtime dependency and Python contains no duplicate astronomy math.
+V8 contexts close after cache misses; the bounded cache contains plain records.
+The complete artifact closure now has 46 pins. Runtime requirements live in
+requirements.txt; the lock describes tested artifacts, not byte-for-
+byte reproducibility across OS or Python patch versions.
+
+Archive health and preview readers compare Windows path/descriptor identity
+using device, inode, size and modification time. Python 3.12 can report creation
+time through stat and change time through fstat, so ctime is compared only within
+the same metadata source. Descriptor observations before/after reading retain
+change-time detection even when an external writer restores size and mtime.
+
 ## Workspace upkeep
 
 Tests allocate a separate directory under ignored `logs/.pytest-tmp/` for each
@@ -108,10 +187,15 @@ close before directory removal. Removal retries transient Windows locks and a
 persistent refusal fails teardown instead of silently leaving files behind.
 Pytest's cache provider is disabled; no root pytest scratch is required.
 JS syntax gates likewise own their scratch under logs/ and report cleanup
-failures; housekeeping covers abandoned JS scratch as well.
+failures; housekeeping covers abandoned JS scratch as well. Their tests use
+private checker stores and do not require other invocations' logs to be empty.
 
 The packaged browser gate uses `logs/browser/` and owns its executable and
 children through a private Windows Job Object (a process group on POSIX).
+Before any check, startup explicitly sets the archive inside its private scratch
+and verifies the setting through state; refusal or a mismatched path stops the
+gate and cleans its owned process/data. A private executable/database alone is
+insufficient because the application's default archive is in Documents.
 Windows starts the executable suspended, assigns ownership, then resumes it.
 Its TEMP/TMP/TMPDIR point into private scratch so frozen extraction files are
 removed with the test data, even when the process tree is forcibly stopped.

@@ -2,7 +2,7 @@
  * NightSeam core - visibility predicates and the minimum-altitude rule (pure).
  *
  * Phase 2, concept 4. This is the ONE predicate behind every "can I see it?"
- * decision on both shells (desktop derive.js, web nightrank.js/detail loop):
+ * decision:
  * above the minimum altitude AND above the obstruction ceiling AND below the
  * sky-mode upper ceiling (ceilTop; absent = no upper limit, like the 90.5
  * sentinel). No Python implementation is authoritative - the server ships raw
@@ -109,9 +109,9 @@ export function effectiveMinAlt(bortle, explicitMinAlt) {
 }
 
 /* ---------------------- the "Tonight" candidate pool ----------------------
- * ONE answer to "may this object appear in the Tonight list at all?", shared by
- * both shells so the two apps cannot disagree about the pool - they used to:
- * the web filtered `o.vmag != null`, which silently dropped 45 of the 200
+ * ONE answer to "may this object appear in the Tonight list at all?" (one
+ * contract so every consumer agrees about the pool - they used to disagree:
+ * the retired web filtered `o.vmag != null`, which silently dropped 45 of the 200
  * standard-mode objects (IC 1396, the Running Man, NGC 281, the Flame, the
  * Tulip, Simeis 147, the Double Cluster, the Pipe Nebula, ...) while a comment
  * claimed exact desktop parity. The desktop applied no magnitude test here at

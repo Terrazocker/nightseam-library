@@ -8,6 +8,34 @@ desktop libraries were preserved. The remaining entries below are historical
 decisions from the combined project; references to removed cross-project paths
 describe that historical state, not current build requirements.
 
+## 2026-10-11 - Solar capture sessions replace chronological gaps
+
+**Decision.** Automatic sessions use sunset to next sunrise, or sunrise to sunset,
+at the capture location. Exact half-open intervals and site identity determine
+membership. Daytime calibration belongs to its daytime interval unless explicitly
+attached to a chosen night; an attachment preserves its original capture instant.
+The user explicitly chose this policy while the application is in development.
+
+**Why.** A twelve-hour gap can split long winter nights or join adjacent nights.
+UTC capture instants plus location define physical solar intervals without host
+timezone assumptions or observatory timezone configuration. Missing or invalid
+metadata stays visibly unresolved. Continuous polar phases split by UTC date.
+
+**Implementation.** core/solar_sessions.js uses the existing shared sun position
+and geometric altaz functions with the conventional -0.833-degree horizon. Daily
+extrema refinement detects grazing phases shorter than the five-minute scan grid.
+app/solar.py executes the generated bake in embedded mini-racer 0.14.1, with strict
+module adaptation and a bounded plain-record cache. No Python astronomy formulas,
+external Node runtime, terrain model or user-data relocation were introduced.
+scripts/build_core.py generated current hash 2cd86208d501eff7, token 48, retaining
+previous solar bake b7bcc0f836fe6da0. Prior astronomy fixtures remain unchanged.
+
+**Enforced by.** Solar boundary/reference/grazing/polar tests, headless-versus-JS
+parity, reverse-order winter imports, selected calibration and atomic reindex
+regressions, plus actual solar imports in the private packaged browser gate.
+FITS DATE-OBS remains UTC by default, retains fractions and explicit offsets;
+ambiguous dates and unsupported time scales are not guessed.
+
 ## 2026-10-10 - The planning shell is retired, not frozen
 
 **Decision.** The retained maintenance planner (its shell, route families, and

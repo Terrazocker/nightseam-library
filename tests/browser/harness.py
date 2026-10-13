@@ -183,6 +183,13 @@ class DesktopServer:
                 time.sleep(0.3)
         else:
             raise RuntimeError("packed exe never answered /api/state")
+        # A private executable/database does not isolate the default Documents
+        # archive. Set its destination explicitly before any check can upload.
+        private_archive = self.tmp / "archive"
+        _http(self.base + "api/settings", "POST", {"image_dir": str(private_archive)})
+        state = _http(self.base + "api/state")
+        if Path(state["image_dir"]).resolve() != private_archive.resolve():
+            raise RuntimeError("gate archive configuration did not select private scratch")
         if self.seed:
             _http(self.base + "api/sites", "POST",
                   {"name": "Gate Site", "lat": 52.52, "lon": 13.4, "elev": 34})

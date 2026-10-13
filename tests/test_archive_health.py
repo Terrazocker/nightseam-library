@@ -227,6 +227,26 @@ def test_cancellation_and_mutation_during_hash_are_not_verified(library, monkeyp
     assert audit(db, "deep")["finding_counts"] == {"unstable": 1}
 
 
+def test_mutation_during_hash_with_restored_size_and_mtime_is_unstable(library, monkeypatch):
+    db, root = library
+    _, target = add_record(db, root, data=b"AAAA")
+    info = target.stat()
+    original = hashlib.sha256
+
+    class MutatingHash:
+        def __init__(self): self.hash = original()
+        def update(self, data):
+            self.hash.update(data)
+            time.sleep(.01)
+            target.write_bytes(b"BBBB")
+            os.utime(target, ns=(info.st_atime_ns, info.st_mtime_ns))
+        def hexdigest(self): return self.hash.hexdigest()
+
+    monkeypatch.setattr(archive_health.hashlib, "sha256", MutatingHash)
+    report = audit(db, "deep")
+    assert report["verified"] == 0 and report["finding_counts"] == {"unstable": 1}
+
+
 def test_retention_limit_counts_omitted_findings(library, monkeypatch):
     db, root = library; root.mkdir()
     for i in range(3): (root / f"untracked-{i}.fit").write_bytes(b"x")

@@ -1,10 +1,10 @@
 """Image-library logic: resolving captures to catalog objects, grouping
 ingested frames per object, and computing imaging sessions.
 
-Sessions: frames of one object whose DATE-OBS timestamps are less than 12 h
-apart belong to the same session, so a run that crosses midnight is counted
-once, not twice. Explicit calibration attachments carry a separate logical
-session date so they join the selected session without replacing DATE-OBS.
+Sessions use exact sunset-to-sunrise or sunrise-to-sunset intervals at the
+measured observing site. Missing locations stay visibly unresolved by UTC
+date. Explicit calibration attachments copy selected interval membership
+without replacing DATE-OBS or measured site coordinates.
 """
 
 from __future__ import annotations
@@ -13,9 +13,8 @@ import re
 import math
 from datetime import UTC, datetime
 
-from .fits import date_epoch, extract_object_tokens
+from .fits import extract_object_tokens
 
-SESSION_GAP_H = 12.0
 MATCH_RADIUS_DEG = 0.75     # max angular distance for coordinate matching
 
 
@@ -179,11 +178,7 @@ def effective_session_date(image: dict) -> str | None:
 
 
 def _session_epoch(value: str | None) -> float | None:
-    """Compare logical capture/anchor dates in UTC, retaining fractions.
-
-    The imported date_epoch alias remains the legacy filesystem naming clock;
-    logical grouping must not inherit its machine-local treatment of naive dates.
-    """
+    """Compare measured/anchor ranges in UTC, retaining fractions."""
     if not isinstance(value, str) or not value:
         return None
     try:
@@ -195,23 +190,31 @@ def _session_epoch(value: str | None) -> float | None:
         return None
 
 
+SESSION_FIELDS = ("session_key", "session_kind", "session_start", "session_end")
+
+
+def image_session_metadata(image: dict) -> dict:
+    """Stored explicit membership wins; otherwise derive a solar/date bucket."""
+    if image.get("session_key"):
+        return {key: image.get(key) for key in SESSION_FIELDS}
+    from .solar import session_metadata
+    return session_metadata(effective_session_date(image), image.get("site_lat"),
+                            image.get("site_lon"))
+
+
 def _session_groups(images: list[dict]) -> list[list[dict]]:
-    """Keep exact membership alongside the shared chronological gap rule."""
-    dated, undated = [], []
-    for im in images:
-        ep = _session_epoch(effective_session_date(im))
-        (dated if ep is not None else undated).append((ep, im))
-    groups: list[list[dict]] = []
-    previous = None
-    for ep, im in sorted(dated, key=lambda pair: pair[0]):
-        if previous is not None and ep - previous < SESSION_GAP_H * 3600.0:
-            groups[-1].append(im)
-        else:
-            groups.append([im])
-        previous = ep
-    if undated:
-        groups.append([im for _, im in undated])
-    return groups
+    """Group exact physical night/day intervals, never chronological gaps."""
+    groups = {}
+    for image in images:
+        metadata = image_session_metadata(image)
+        groups.setdefault(metadata["session_key"], []).append(image)
+    for members in groups.values():
+        members.sort(key=lambda image: (_session_epoch(effective_session_date(image))
+                                        is None, _session_epoch(effective_session_date(image)) or 0))
+    return sorted(groups.values(), key=lambda members: (
+        image_session_metadata(members[0]).get("session_start") is None,
+        image_session_metadata(members[0]).get("session_start") or "",
+        image_session_metadata(members[0])["session_key"]))
 
 
 def _session_record(members: list[dict]) -> dict:
@@ -221,8 +224,14 @@ def _session_record(members: list[dict]) -> dict:
     capture_members = [im for im in members if im.get("session_date_obs") is None] or members
     start = effective_session_date(capture_members[0])
     end = effective_session_date(capture_members[-1])
-    undated = _session_epoch(start) is None
+    metadata = image_session_metadata(members[0])
+    undated = metadata["session_kind"] == "undated"
+    labels = {"night": "Night", "day": "Day", "polar_day": "Polar day",
+              "polar_night": "Polar night", "unassigned": "Unassigned location",
+              "undated": "Undated"}
     s = {
+        **metadata,
+        "label": labels.get(metadata["session_kind"], "Unassigned location"),
         "start": None if undated else start,
         "end": None if undated else end,
         "n_images": len(members),
@@ -249,10 +258,10 @@ def _session_record(members: list[dict]) -> dict:
 
 
 def compute_sessions(images: list[dict]) -> list[dict]:
-    """Group by logical dates (gap < 12 h), with exact stored-image membership.
+    """Group exact solar intervals or visibly unresolved UTC date buckets.
 
-    Missing dates join one trailing undated session. Explicit calibration
-    anchors affect grouping and session ranges without changing DATE-OBS.
+    Capture ranges remain measured timestamps. Explicit calibration targets
+    copy stored session membership without changing DATE-OBS or site metadata.
     """
     return [_session_record(members) for members in _session_groups(images)]
 
@@ -266,8 +275,9 @@ def session_for_anchor(images: list[dict], anchor_id: int) -> dict | None:
 def session_for_image(images: list[dict], new_im: dict) -> dict | None:
     """The session (as in compute_sessions) that a new frame belongs to when
     appended to `images`, including a session it opens itself. Used by ingest to
-    pick the on-disk session folder, so the folder layout and the session
-    grouping never disagree. Undated frames join the undated session."""
+    select exact stored/derived membership. Solar session folders use their
+    fixed interval boundary, independent of capture order. Existing files are
+    not relocated when metadata is backfilled."""
     for members in _session_groups(list(images) + [new_im]):
         if any(member is new_im for member in members):
             return _session_record(members)

@@ -58,6 +58,8 @@ export {
   scrubBounds, scrubClamp,
 } from './planning.js';
 
+export { solarSessionWindows, solarSession } from './solar_sessions.js';
+
 export {
   aboveHorizon, sampleVisible, statusOf, effectiveMinAlt,
   VISIBILITY_REASON, visibilityReason, summarizeVisibility,

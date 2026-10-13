@@ -28,11 +28,29 @@ build a clean 0.1.0 release. Source validation can use check_release.py with
 
 ## Remote and publication
 
-Decision recorded October 5, 2026: keep the catalog local. No GitHub repository
-or origin remote is configured. main remains the default local development
-branch; future remote setup requires a new user instruction.
+The October 5, 2026 decision kept the catalog local initially. On October 11,
+the user authorized origin setup and source publication to
+https://github.com/Terrazocker/nightseam-catalog.git. main remains the default
+development branch. Feature work uses codex/ branches.
 A GitHub repository and executable release publication are distinct choices.
 Upload only the verified release ZIP and its checksum/manifest when authorized.
 Never commit source data/, dist/data/, logs/, executable backups or credentials.
 The retired combined updater stays disabled until an independent update policy
 is designed and tested. Public releases are not implied by a local build.
+
+## Build environment
+
+Use Windows x64 CPython 3.12 and requirements-build-lock.txt for tested desktop
+artifacts. build.ps1 validates exact package versions and dependency closure
+before modifying build outputs. It does not create environments or install
+packages silently. The initial manual setup is:
+
+```powershell
+py -3.12 -m venv .venv-build
+.venv-build\Scripts\python.exe -m pip install -r requirements-build-lock.txt
+.venv-build\Scripts\python.exe scripts/check_build_dependencies.py
+```
+
+Update the lock deliberately with dependency review, full source validation and
+a freshly compiled private-data browser gate. A package-version lock does not
+claim identical bytes across operating-system or Python patch changes.

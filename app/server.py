@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import re
+import sqlite3
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -14,18 +17,18 @@ from functools import wraps
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi import Path as ApiPath
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from .archive_health import ArchiveHealthManager
 from .database import Database
 from .fits_preview import PreviewUnavailable, preview_image
 from .imglib import CatalogResolver, name_key
-from .ingest import (ArchiveRenameRecoveryError, _archive_io,
+from .ingest import (ArchiveRenameRecoveryError, ReindexCancelled, _archive_io,
                      calibration_import_target, ingest_one, obj_slug,
                      reindex_library, rename_archive_folder, undo_archive_rename)
 from .paths import safe_join, safe_rel, static_dir
@@ -46,30 +49,14 @@ _MAX_REQUEST_BYTES = {
 
 _state = {"last_request": time.time()}
 
-# Content-Security-Policy for the HTML the server serves (SP-02, defence in
-# depth). The load-bearing part is that NO remote origin may provide script:
-# `script-src 'self'` is what makes a hostile DNS/CA/host compromise unable to
-# run code in the 127.0.0.1 origin even if some future code tries a JSONP tag.
-#   * BUG-002: `'unsafe-inline'` is GONE from script-src. The inline bootstrap
-#     and event handlers were removed; imported custom ids and `imagetyp` values
-#     are rendered without executable markup.
-#   * the two inline `onerror=` image fallbacks that used to live in
-#     static/js/{targets,tonight}.js are event listeners now, so no handler needs
-#     the exemption at all.
-#   * style-src keeps `'unsafe-inline'`: the shipped themes and the JS set
-#     `style=`/`element.style` all over the UI, and inline STYLE cannot execute.
-#   * img-src is pinned to the hosts the desktop actually renders images from
-#     (cached Wikipedia/Wikidata thumbnails are full URLs; DSS cutouts and the
-#     API payloads answer from /api/object/..., whose full-size bytes are shown
-#     through a same-page blob URL).
-#   * connect-src keeps the weather panel working and stays restricted to it.
+# The local catalog loads no remote resources. Inline styles support the
+# Workbench layout; scripts must come from this origin.
 CSP_HEADER = (
     "default-src 'self'; "
     "script-src 'self'; "
     "style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data: blob: https://upload.wikimedia.org "
-    "https://commons.wikimedia.org https://alasky.cds.unistra.fr; "
-    "connect-src 'self' https://api.open-meteo.com https://air-quality-api.open-meteo.com; "
+    "img-src 'self' data: blob:; "
+    "connect-src 'self'; "
     "worker-src 'self'; "
     "font-src 'self'"
 )
@@ -101,11 +88,62 @@ def _same_origin_request(request) -> bool:
     return True
 
 
+def _spreadsheet_text(value):
+    """Neutralize formula-leading text at CSV export, retaining stored values."""
+    if isinstance(value, str) and value.lstrip().startswith(
+            ("=", "+", "-", "@", "＝", "＋", "－", "＠")):
+        return "\t" + value
+    return value
+
+
+async def _reindex_with_disconnect(db, request):
+    """Stop the worker cooperatively and drain it before releasing the request."""
+    cancel = threading.Event()
+    def scan_current_archive():
+        # Settings changes use the same lock. Capture the root only after we
+        # own it, so a queued scan cannot index an obsolete archive setting.
+        with db.archive_lock:
+            return reindex_library(db, Path(db.image_dir()), cancel)
+
+    worker = asyncio.create_task(asyncio.to_thread(scan_current_archive))
+    try:
+        while not worker.done():
+            if await request.is_disconnected():
+                cancel.set()
+            await asyncio.wait({worker}, timeout=0.05)
+        return worker.result()
+    except BaseException:
+        cancel.set()
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except BaseException:
+                break
+        if not worker.cancelled():
+            worker.exception()
+        raise
+
+
 # ------------------------------------------------------------------ models
+
+class ObservingSiteIn(BaseModel):
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
+
+    @field_validator("latitude", "longitude", mode="before")
+    @classmethod
+    def reject_boolean(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("Coordinates must be numbers, not booleans")
+        return value
+
 
 class SettingsIn(BaseModel):
     image_dir: Optional[str] = None
     size_unit: Optional[str] = None
+    observing_site: ObservingSiteIn | None = None
 
 
 class LibraryEditIn(BaseModel):
@@ -157,7 +195,7 @@ def create_app(db: Database) -> FastAPI:
     # responses stay unreadable, which makes this the one real vector.
     # Explicitly binding --host to something else + NIGHTSEAM_ALLOW_HOST
     # extends the allowed set for power users.
-    _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1", "testserver"}
+    _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
     _extra_host = os.environ.get("NIGHTSEAM_ALLOW_HOST", "").strip().lower()
     if _extra_host:
         _ALLOWED_HOSTS.add(_extra_host)
@@ -231,21 +269,28 @@ def create_app(db: Database) -> FastAPI:
             "version": APP_VERSION,
             "image_dir": db.image_dir(),
             "size_unit": db.setting("size_unit", "arcmin"),
+            "observing_site": db.setting("observing_site"),
         }
 
     @app.post("/api/settings")
     @serialize_archive
     def api_set_settings(body: SettingsIn):
+        changes = {}
         if body.size_unit is not None:
             if body.size_unit not in ("arcmin", "arcsec", "deg"):
                 raise HTTPException(400, "size_unit must be arcmin, arcsec or deg")
-            db.set_setting("size_unit", body.size_unit)
+            changes["size_unit"] = body.size_unit
         if body.image_dir is not None:
             # F-15: reject (never truncate) an oversized archive path - a
             # silently cut path would name a DIFFERENT folder.
             if len(body.image_dir.strip()) > 1024:
                 raise HTTPException(400, "image_dir must be 1024 characters or fewer")
-            db.set_setting("image_dir", body.image_dir.strip() or "")
+            changes["image_dir"] = body.image_dir.strip() or ""
+        if "observing_site" in body.model_fields_set:
+            changes["observing_site"] = (body.observing_site.model_dump()
+                                         if body.observing_site is not None else None)
+        if changes:
+            db.update_settings(changes)
         return {"ok": True}
 
     # ---------------- image archive ----------------
@@ -311,11 +356,12 @@ def create_app(db: Database) -> FastAPI:
             raise HTTPException(409, str(exc)) from None
 
     @app.post("/api/library/reindex")
-    @serialize_archive
-    def api_library_reindex():
-        """Scan the archive folder and record files not yet in the DB."""
+    async def api_library_reindex(request: Request):
+        """Index new files and repair uniquely fingerprinted missing paths."""
         try:
-            return reindex_library(db, Path(db.image_dir()))
+            return await _reindex_with_disconnect(db, request)
+        except ReindexCancelled:
+            raise HTTPException(409, "Reindex cancelled before publication; no library records changed.") from None
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
 
@@ -380,10 +426,28 @@ def create_app(db: Database) -> FastAPI:
                 "n_files": 1, "total_exposure": float(r.get("exposure") or 0.0),
                 "first_obs": r.get("date_obs"), "image_dir": str(current_archive)})
 
-        results = [await ingest_one(db, catalog, archive, f, frame, sess,
-                                    resolver=resolver, on_import=record_import,
-                                    enforce_archive_root=True, session_target=target)
-                   for f in files]
+        results = []
+        for index, upload in enumerate(files):
+            try:
+                result = await ingest_one(
+                    db, catalog, archive, upload, frame, sess,
+                    resolver=resolver, on_import=record_import,
+                    enforce_archive_root=True, session_target=target)
+            except ValueError:
+                log.exception("Exposure validation failed for %s", upload.filename)
+                result = {"file": Path(upload.filename or "image.fit").name,
+                          "ok": False, "error": "Exposure has an invalid archive filename or metadata."}
+            except sqlite3.Error:
+                log.exception("Database failure during exposure import")
+                results.append({"file": Path(upload.filename or "image.fit").name,
+                                "ok": False, "unconfirmed": True,
+                                "error": "Database error; this file's outcome is unconfirmed. Refresh the library before retrying."})
+                results.extend({"file": Path(item.filename or "image.fit").name,
+                                "ok": False, "unattempted": True,
+                                "error": "Not imported because the database failed earlier in this request."}
+                               for item in files[index + 1:])
+                break
+            results.append(result)
         return {"results": results}
 
     @app.get("/api/library/imports")
@@ -460,6 +524,15 @@ def create_app(db: Database) -> FastAPI:
         archive = Path(db.image_dir())
         source_slug = obj_slug(name).casefold()
         if source_slug != obj_slug(new_name).casefold():
+            # One folder move cannot relocate all members of a multi-root group.
+            for row in rows:
+                rel = safe_rel(row.get("file"))
+                path = safe_join(archive, rel)
+                if (rel is None or rel.split("/", 1)[0].casefold() != source_slug
+                        or path is None or not path.is_file()):
+                    raise HTTPException(
+                        409, "Cannot rename this object: its files span different archive folders "
+                             "or a stored file is missing. Preserve the archive and repair its paths first.")
             # Different logical objects can share a physical slug (Obj! and
             # Obj?), including resolved objects. Refuse a whole-folder move
             # before touching any bytes when another group's row lives there.
@@ -485,8 +558,8 @@ def create_app(db: Database) -> FastAPI:
                 500, "Archive rename failed and recovery is incomplete. "
                      "Database records were not changed. Inspect and preserve "
                      "the affected archive files, resolve the filesystem "
-                     "problem, then run Reindex folders to reconcile the "
-                     "library with the files on disk; "
+                     "problem, then run Reindex folders. It repairs only unique "
+                     "full-file fingerprint matches and reports ambiguous matches; "
                      "unrestored paths: " +
                      ", ".join(path for path, _ in exc.failures)) from exc
         if moved is None:
@@ -511,9 +584,9 @@ def create_app(db: Database) -> FastAPI:
                     500, "Archive rename database update failed and recovery "
                          "is incomplete. Inspect and preserve the affected "
                          "archive files, resolve the filesystem problem, then "
-                         "run Reindex folders to reconcile the library with "
-                          "the files on disk; unrestored "
-                          "paths: " + ", ".join(path for path, _ in failures)) from exc
+                         "run Reindex folders. It repairs only unique full-file "
+                         "fingerprint matches and reports ambiguous matches; unrestored "
+                         "paths: " + ", ".join(path for path, _ in failures)) from exc
             raise
         return {"ok": True, "name": new_name, "otype": otype}
 
@@ -540,18 +613,14 @@ def create_app(db: Database) -> FastAPI:
             import csv as csvmod
             import io
             buf = io.StringIO()
-            w = csvmod.writer(buf)
-            w.writerow(["id", "file", "orig_name", "object_id", "object_name",
-                        "otype", "ra_hours", "dec_deg", "exposure", "date_obs",
-                        "filter", "telescope", "imagetyp", "ingested_at"])
+            # Keep protective tabs inside quoted cells; stored text is unchanged.
+            w = csvmod.writer(buf, quoting=csvmod.QUOTE_ALL)
+            columns = ["id", "file", "orig_name", "object_id", "object_name",
+                       "otype", "ra_hours", "dec_deg", "exposure", "date_obs",
+                       "filter", "telescope", "imagetyp", "ingested_at"]
+            w.writerow(columns)
             for i in imgs:
-                w.writerow([i.get("id"), i.get("file"), i.get("orig_name"),
-                            i.get("object_id"), i.get("object_name"),
-                            i.get("otype"), i.get("ra_hours"),
-                            i.get("dec_deg"), i.get("exposure"),
-                            i.get("date_obs"), i.get("filter"),
-                            i.get("telescope"), i.get("imagetyp"),
-                            i.get("ingested_at")])
+                w.writerow([_spreadsheet_text(i.get(column)) for column in columns])
             return Response(
                 content=buf.getvalue().encode("utf-8-sig"),
                 media_type="text/csv",

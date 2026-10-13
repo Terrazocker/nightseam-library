@@ -1,5 +1,28 @@
 # Independent catalog release record
 
+## Local main merge - October 13, 2026
+
+Merged codex/partial-review-fixes with main's archive health acknowledgements and
+FITS previews. Conflict resolution retains transactional ingest/reindex, original
+integrity baselines, strict capture timestamps, solar session membership and
+exact preview exposure selection. The Windows build lock now covers all 46 pins,
+including Astropy 7.2.2, NumPy 2.5.4 and their active dependency closure; build
+preflight remains read-only and retains the Astropy hooks and MiniRacer collection.
+
+Native checks exposed a Python 3.12 Windows stat/fstat ctime mismatch after file
+edits. Archive/preview readers now compare ctime only within the same metadata
+source. New regressions verify a completed edit remains previewable and that a
+mutation during hashing is refused even with restored size and modification time.
+
+Validation: **708 passed, 1 POSIX-only skip in 161.38 seconds** using the locked
+Windows build interpreter with native filesystem access. Initial sandbox runs
+could not resolve private archive directories and failed visibly; elevated
+archive/preview checks passed (64 passed, 1 POSIX-only skip) before the complete
+suite. JS/DOM/encoding/core checks pass for 47 modules with two existing advisory
+names. All 46 dependency pins and source release checks pass. Source release
+validation uses --no-stage because this local merge does not restage an existing
+public release. Evidence: logs/merge-main-20261013/.
+
 ## Archive health and grayscale FITS previews - October 13, 2026
 
 Added Quick metadata and Deep whole-file SHA-256 archive health scans, background
@@ -43,6 +66,146 @@ checks passed. Evidence is retained in logs/recovery/.
 
 Native Windows packaging/browser acceptance remains open in BUGS.md. VERSION,
 tags and public executable/release artifacts are unchanged.
+
+## Solar night/day sessions - October 11, 2026
+
+The user-selected session policy replaces twelve-hour capture gaps: each object's
+night runs sunset to next sunrise, and its day runs sunrise to sunset at the
+capture location. Exact UTC intervals and site identity make grouping and new
+folder names independent of upload order, host timezone and long winter gaps.
+FITS coordinates take priority over the new observing-location fallback. Missing
+location remains visibly Unassigned location; unreliable capture time remains
+Undated. DATE-OBS preserves fractions and explicit offsets; DATE is not a capture
+fallback and ambiguous dates/unsupported explicit time scales are not guessed.
+
+Explicit calibration keeps its own capture instant/site and the chosen logical
+target. Transactional reindex backfills solar metadata without moving files and
+keeps calibration with its target when previously missing location is supplied.
+Integration fixes cover the removed calibration date-helper call, atomic settings
+requests, invalid unrelated legacy anchor dates and calibration backfill. Duplicates
+retain their original records, classes and associations.
+
+core/solar_sessions.js uses existing shared astronomy functions, with extrema
+refinement for brief grazing phases. app/solar.py executes its generated bake in
+embedded mini-racer 0.14.1; no Node runtime or duplicate Python astronomy was added.
+The build closure now has 41 verified pins. Original MiniRacer/V8/ICU notices are
+included in NOTICE and the executable. Authorized core regeneration produced hash
+2cd86208d501eff7, token 48, retaining b7bcc0f836fe6da0. Existing astronomy reference
+fixtures are unchanged.
+
+Final full suite: **637 passed in 152.84 seconds** on the locked build interpreter
+after the final application and test-isolation changes. Focused archive/database checks passed
+**122 tests**; the source JS/import/DOM/encoding/core guards pass, with the same two
+existing advisory names. The source release guard reports **zero errors**.
+An earlier full run exposed an omitted core-guard export registration; it was fixed
+and independently rerun. Reproduced settings/reindex regressions pass after repair.
+
+Read-only inspection classified all **4,354** provided Seestar headers into **five
+nights**. All contain observing coordinates. A private-copy import/reindex of
+12 representative files preserved complete records and IDs, with zero additions,
+repairs, failures or conflicts on reindex; original sample sizes/mtimes were
+unchanged. These samples contain lights/stacks, so calibration uses private
+synthetic regression data. No actual source/packaged library was reindexed.
+
+The development candidate compiled and initially passed **11/11** browser checks,
+including real uploads using embedded solar calculations. Review of a subsequent
+gate failure exposed two test-setup errors: input was filled before initial state
+had loaded, and a private database still used the default Documents archive.
+Exactly three synthetic FITS files were verified byte-for-byte and removed; all
+unrelated files and archive roots were preserved. The harness now sets and verifies
+a private archive before any check, fails closed on a mismatch and waits for boot
+before filling the observing form. All **9** harness tests pass, including private
+archive acceptance/refusal. Cleanup evidence is in profile-test-cleanup.json.
+The corrected private-archive browser run passes **11/11**, including calibration
+backfill with a different original capture date and site.
+The final clean source revision is rebuilt for handoff; its strengthened packaged
+check also exercises calibration location backfill. Final build/browser/artifact outcomes and
+commit identity are retained in logs/solar-sessions-20261011/final-*.log and
+reviews/solar-session-implementation-20261011.md. Candidate housekeeping removed
+74.23 MiB with zero failures and retained three executable backups. VERSION, tags,
+user data, external archives and D:/seestar originals are preserved. No public
+release or website deployment is implied.
+
+## Final full-byte deduplication follow-up - October 11, 2026
+
+A final review reproduced another cache edge case: an externally replaced
+original with unchanged size and modification time could be skipped as a
+candidate because its cached digest differed from newly imported/discovered
+bytes. Reindex and upload now compare current complete bytes of same-size
+originals. Reindex hashes an original at most once per plan; known-only scans
+retain their caching optimization. New-content comparisons can require more I/O
+to preserve complete-byte identity rather than trusting negative cache hints.
+
+Both private regressions pass, including the single-new-digest reindex case.
+Focused archive/session tests: **113 passed**. Final full suite on the locked
+build interpreter: **574 passed in 141.00 seconds**, after these last code changes.
+Evidence: logs/partial-review-fixes-20261011/full-tests-final.log. The final source
+revision is built and checked with private packaged data for handoff; final
+build/browser/artifact evidence is retained in final-*.log and the implementation
+report alongside the earlier successful packaged verification below.
+
+## Packaged verification of partial-review implementation - October 11, 2026
+
+Built clean source commit cad47686 as **NightSeam 0.1.0-gcad47686**, using the
+existing locked Windows x64 CPython 3.12 build environment. Dependency preflight,
+source guards and compilation passed; no dependencies were installed. The
+previous executable was backed up and verified before replacement. Automatic
+housekeeping removed **50.28 MiB** with zero failures and retained three recovery
+executables.
+
+The packaged private-data browser gate passed **10/10**, including the new
+partial-import response/chunk-stop regression. The local artifact guard reported
+**zero errors**. Evidence: logs/partial-review-fixes-20261011/build-cad4768.log,
+browser-cad4768.log and release-cad4768.log. User data and external archives were
+preserved; VERSION, tags and public release artifacts were unchanged.
+
+This final documentation revision is rebuilt for handoff, with build/browser/
+artifact results recorded in final-*.log in the same ignored evidence directory
+and in reviews/partial-review-fixes-20261011.md. No public release is implied.
+
+## Verified partial-review implementation - October 11, 2026
+
+Implemented the substantiated issues in reviews/partial-review-verification-20261011.md:
+
+- Renames refuse missing files, mismatched stored roots and logical groups spanning
+  multiple physical roots before moving anything. Database path updates use only
+  proven move mappings, never guessed destinations.
+- Reindex plans before one atomic database publication, preserves IDs and manual
+  metadata when a unique trusted full-byte fingerprint identifies a missing file,
+  reports ambiguous repairs without guessing, and cooperatively cancels before
+  publication. Connection reads remain available while scanning/hashing. Existing
+  duplicate rows and missing records without trustworthy fingerprints need manual
+  recovery; reindex never deletes them.
+- Import session lookup uses the same normalized unresolved/resolved identity as
+  the library. The documented twelve-hour gap policy remains; historical folders
+  and backdated imports are not automatically relocated.
+- Database opening preserves validated, dated snapshots before migration and
+  after opening, retaining five of each plus the rolling backup. Snapshot failures
+  stop initialization instead of replacing recovery evidence.
+- Upload responses preserve confirmed earlier results, isolate validation errors,
+  stop on database failure, distinguish committed-but-unconfirmed outcomes and
+  files not attempted, and stop subsequent browser chunks. Import-history errors
+  roll back their transaction so following operations can proceed.
+- CSV text uses quoted, tab-prefixed formula neutralization; numeric columns and
+  lossless JSON/database values are preserved. CSP and production host checks
+  permit only current local dependencies; testserver is explicit test setup.
+- Build dependencies have a complete 40-pin Windows x64 CPython 3.12 closure and
+  a read-only preflight. Builds no longer install packages automatically. Cleanup
+  tests own private scratch and preserve unrelated evidence. Current remote,
+  recovery, timestamp and module documentation was corrected.
+
+Validation with the locked build interpreter: **572 passed in 133.59 seconds**.
+The first full-suite attempt exposed an existing missing Path import in a test
+annotation under Python 3.12; it was corrected before the passing rerun. Focused
+archive/session, database recovery, build/cleanup and API regressions also passed.
+check_js.py passed for 42 modules with zero syntax errors/broken imports; DOM,
+encoding and core gates passed, with two existing advisory names. The dependency
+preflight verified all 40 pins; source release checks reported zero errors and
+git diff --check passed. Evidence: logs/partial-review-fixes-20261011/.
+
+No core formulas, reference fixtures, generated core bakes, VERSION, tags or
+public release artifacts changed. Packaged verification is recorded separately
+after compiling this implementation.
 
 ## Packaged verification of audit fixes - October 11, 2026
 

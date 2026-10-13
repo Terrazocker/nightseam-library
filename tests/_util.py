@@ -28,6 +28,8 @@ def m31_fits(exposure: float = 300.0) -> bytes:
         ("OBJECT", "'M 31                     ' / Andromeda"),
         ("EXPTIME", str(exposure)),
         ("DATE-OBS", "'2026-08-22T23:14:05'"),
+        ("SITELAT", "50.0383"),
+        ("SITELONG", "7.81667"),
         ("FILTER", "'L'"),
         ("TELESCOP", "'Seestar S50'"),
         ("NAXIS", "2"),
@@ -42,4 +44,6 @@ def unresolved_fits() -> bytes:
         ("OBJECT", "'TestObj42'"),
         ("EXPTIME", "60.0"),
         ("DATE-OBS", "'2026-08-22T22:00:00'"),
+        ("SITELAT", "50.0383"),
+        ("SITELONG", "7.81667"),
     ])

@@ -32,7 +32,10 @@ archive remains read-only. No remote repository is configured by this split.
 - Dedup identity is SHA-256 of complete exposure bytes. A duplicate keeps its
   original record, class and location. Explicit session calibration attachment
   uses a validated stored image anchor and preserves the original date_obs;
-  logical session_date_obs and exact image_ids determine membership.
+  stored solar session_key and exact image_ids determine membership, with
+  session_date_obs retaining explicit calibration anchors. Automatic sessions
+  use sunset-to-sunrise or sunrise-to-sunset at the FITS/default observing site;
+  missing location/time stays visibly unresolved, never a twelve-hour gap guess.
 - Reindex requires recognized frame-directory structure and reports malformed
   layouts before replacement. Archive operations honor the independent archive
   lock, cancellation and staging cleanup; do not block the async event loop or
@@ -49,7 +52,8 @@ archive remains read-only. No remote repository is configured by this split.
 - Tests: python -m pytest tests/ -q --tb=no. Run relevant modules while editing
   and the full suite once at the end. JS: python scripts/check_js.py.
 - Browser: python scripts/check_browser.py --desktop, using a freshly compiled
-  executable and a private data copy. A browser launch failure is a failure,
+  executable, a private data copy and an explicitly configured/verified private
+  archive before any upload. A browser launch failure is a failure,
   never a skip; this machine may need elevated browser execution.
 - Build: powershell -ExecutionPolicy Bypass -File build.ps1. Never kill a user's
   application to run a gate. Back up an executable before replacement.
