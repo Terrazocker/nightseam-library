@@ -23,6 +23,24 @@ names. All 46 dependency pins and source release checks pass. Source release
 validation uses --no-stage because this local merge does not restage an existing
 public release. Evidence: logs/merge-main-20261013/.
 
+The merged implementation was compiled from clean source 9827be22 as a local
+**NightSeam 0.1.0-g9827be22** development executable. The prior executable was
+backed up and verified, three recovery executables were retained and build scratch
+was removed. **14/14 Windows packaged browser checks passed**, including solar
+sessions, archive health, acknowledgements, previews, import/dedup, export and
+responsive layouts. The gate verifies its private archive before uploads.
+
+A separate private frozen-app smoke decoded plain primary and RICE-compressed
+extension images, verified two exposures, detected an edited and a missing file,
+confirmed both acknowledgement actions and then verified the remaining exposure.
+No source/packaged application data or profile archive was used. Browser startup
+initially failed visibly because the build interpreter lacked Playwright; a
+separate Playwright 1.62.0/Pillow 12.3.0 test environment completed the gate. Its
+third-party JS initially tripped the encoding guard at the checkout root; the
+environment and browser artifacts were relocated under ignored validation logs
+before the final guard. Existing public release packages were not restaged,
+VERSION/tags are unchanged and no remote push was performed.
+
 ## Archive health and grayscale FITS previews - October 13, 2026
 
 Added Quick metadata and Deep whole-file SHA-256 archive health scans, background

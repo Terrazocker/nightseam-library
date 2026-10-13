@@ -17,11 +17,13 @@ cleanup to actual ProgramData or any application database.
 
 ## Acceptance still open
 
-- Validate Archive health and FITS previews in a fresh Windows executable:
-  native directory pinning/reparse rejection, permissions, scan cancellation,
-  shutdown, acknowledgement confirmations, Astropy/NumPy binaries and compressed
-  image decoding, viewer keyboard focus and narrow layouts. Linux source/browser
-  and frozen decoder checks do not establish native Windows acceptance.
+- Windows automated archive health and FITS preview acceptance passed on
+  October 13: 708 source tests, 14 packaged browser checks and a private frozen
+  plain/RICE decoder and acknowledgement smoke. The Windows stat/fstat ctime
+  mismatch discovered during validation is fixed. Manual acceptance remains for
+  real archive directory pinning/reparse races, actual permission changes and
+  cancellation/shutdown under production workloads; automated fixtures do not
+  establish those environment-specific results.
 
 - Filesystem refusal can prevent archive rename undo after a database failure.
   Fault-injection tests reproduce this recovery limit. The API now reports
