@@ -131,27 +131,31 @@ handles/reparse rejection on Windows. Reports retain 10,000 findings (200 shown)
 and count omitted findings. Private acknowledgement snapshots never enter API
 reports. Starts/acknowledgements serialize without holding SQLite during IO.
 
-GET /api/images/{id}/preview returns PNG with X-FITS-Size, X-FITS-HDU and
-X-FITS-Plane. Optional size is 64..1024 (default 512). app/fits_preview.py uses
-Astropy row sections without full-array loads; a narrow borrowed-file interface
-enforces 64 MiB reads even on actual disk files. Row width is limited to 100,000,
-HDU traversal to 64, axes to eight, and compressed tile bands to eight million
-decoded pixels. Finite samples use a 1/99.5-percentile interval and AsinhStretch(.1);
-Pillow encodes 8-bit grayscale with lower FITS origin. No derivatives are stored.
-Containment/opened/final identities are checked; archive conflicts fail promptly.
-Import's primary-header parser remains unchanged; legacy preview helpers delegate
-to the Astropy renderer. Runtime dependencies are Astropy 7.x, NumPy and Pillow.
-The authored scripts/pyinstaller_hooks/hook-astropy.py bundles runtime modules,
-metadata/data/parser tables without optional WCS plotting or upstream tests;
-Astropy's initializer-required tests.runner helper stays included.
+The exposure preview, thumbnails, inline session expansion and Trash application
+features were retired on October 14, 2026. Their JS modules, modal markup, pixel
+renderer and public API routes are removed. Selecting a session only updates
+its facts/calibration actions, keeping exact image-ID membership for folder
+access and attachment anchors. Import's primary-header parser remains intact.
+ASGI lifespan stops/joins health workers, and main.py signals shutdown before
+Uvicorn drains active requests. Health retains host/origin and no-store/nosniff
+response guards.
 
-ASGI lifespan stops/joins health workers. main.py signals shutdown before Uvicorn
-drains active requests; acknowledgement and preview reads honor that signal.
-The vanilla JS health/preview modules guard stale requests, clean up blob URLs,
-and manage modal inert/focus state. Health uses the existing archive-action lock;
-preview selection uses exact session image IDs and loads only on demand.
-Health and preview APIs retain host/origin guards and no-store/nosniff responses.
-Native Windows packaged validation is tracked in BUGS.md.
+Legacy image_trash rows, retained payloads and recovery manifests are preserved.
+app/archive_trash.py is recovery-only: it cannot create new trash entries.
+Startup reconciles previously interrupted operations without waiting on a busy
+archive lock. Unresolved legacy intents continue to block archive changes and
+health acknowledgements. Managed retained-file folders remain excluded from
+health/reindex discovery so they cannot be accidentally reimported or discarded.
+Completed retained entries are never automatically restored or deleted.
+
+With NightSeam closed, for explicit maintenance recovery use
+`python scripts/restore_legacy_trash.py --database PATH` to list existing entries,
+or add `--restore TOKEN` to restore one. The database must already exist and is
+never inferred from a user profile. Restore keeps original ID, metadata/session
+membership and integrity baseline, verifies retained bytes and refuses occupied
+paths or known active duplicate bytes. Use the selected original archive and
+preserve files if recovery reports a conflict. This is a separate maintenance
+command, not an application feature.
 
 VERSION is the catalog version authority. Build and release tooling belong here;
 no website version.json, changelog, database or deploy is required. core/ and
@@ -173,7 +177,7 @@ The complete artifact closure now has 46 pins. Runtime requirements live in
 requirements.txt; the lock describes tested artifacts, not byte-for-
 byte reproducibility across OS or Python patch versions.
 
-Archive health and preview readers compare Windows path/descriptor identity
+Archive health and legacy recovery readers compare Windows path/descriptor identity
 using device, inode, size and modification time. Python 3.12 can report creation
 time through stat and change time through fstat, so ctime is compared only within
 the same metadata source. Descriptor observations before/after reading retain

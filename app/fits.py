@@ -1,7 +1,7 @@
-"""Primary-HDU import metadata parsing, plus compatible Astropy preview helpers.
+"""Primary-HDU import metadata parsing.
 
 Ingest keeps the original primary-header parser and .fit/.fits extension rules.
-Pixel previews delegate to app.fits_preview; originals are never rewritten.
+Original exposures are never rewritten.
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 __all__ = [
     "read_fits_header", "parse_ra_hours", "parse_dec_deg", "parse_date_obs",
     "date_epoch", "parse_site_coordinates", "capture_date_obs", "extract_object_tokens", "header_size", "image_geometry",
-    "preview_png", "preview_png_file",
 ]
 
 _BLOCK = 2880
@@ -335,18 +334,3 @@ def image_geometry(header: dict) -> dict | None:
         return None
     return {"bitpix": bp, "naxis1": n1, "naxis2": n2,
             "bps": {8: 1, 16: 2, 32: 4, -32: 4, -64: 8}[bp]}
-
-
-
-def preview_png(data: bytes, max_px: int = 256) -> bytes | None:
-    """Grayscale preview of the first FITS image, using Astropy."""
-    return preview_png_file(io.BytesIO(data), max_px)
-
-
-def preview_png_file(f, max_px: int = 256) -> bytes | None:
-    """Compatibility wrapper; keep the caller's binary file open."""
-    from .fits_preview import PreviewUnavailable, render_preview
-    try:
-        return render_preview(f, max_px).png
-    except PreviewUnavailable:
-        return None

@@ -44,6 +44,11 @@ Keep the object rail, Capture Sessions workspace and selected-session inspector.
 
 Map dot radius reflects capture-session count. Keep object labels near their dots and draw a leader when displaced. Progress shows processed files / total and elapsed time; failures add a counter. Calibration actions clearly identify the selected object/session. Use exposures in visible copy and Import for the toolbar action.
 
+Clicking a capture-session row selects it and updates the selected-session
+inspector. Sessions remain ordinary table rows. Keep dates, frame totals,
+filters, folder access and calibration attachment actions visible. The Library
+has no exposure preview, thumbnail grid, session expansion or Trash controls.
+
 Preserve keyboard operation, visible focus, accessible names, reduced motion and non-color status labels. Native DPI scaling and browser zoom remain independent of window resizing.
 
 The packaged catalog uses stable interface density. At unchanged OS DPI and

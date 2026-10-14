@@ -1,8 +1,6 @@
 """Browser acceptance for health workflows and session FITS previews."""
-import io
 import json
 
-from PIL import Image
 from harness import check
 
 
@@ -121,61 +119,30 @@ def health_acknowledgements(c):
     c.expect_eq(payload["acknowledged_count"], 2, "report must retain acknowledgements")
 
 
-@check("desktop-catalog-fits-preview", "catalog")
-def exposure_preview(c):
-    stamp = "2026-08-12T01:10:00"
-    hostile = '<img src=x onerror="window.__previewInjected=true">.fit'
-    images = [dict(id=601, file="M31/lights/a.fit", orig_name=hostile, date_obs=stamp, imagetyp="light"),
-        dict(id=602, file="M31/darks/b.fit", orig_name="dark.fit", date_obs="2026-08-01T01:10:00", session_date_obs=stamp, imagetyp="dark"),
-        dict(id=603, file="M31/other/c.fit", orig_name="other.fit", date_obs="2026-08-11T01:10:00", imagetyp="light")]
-    sessions = [dict(start=stamp, end=stamp, n_images=2, exposure=120, image_ids=[601, 602], types={"light": {"n": 1, "exposure": 60}, "dark": {"n": 1, "exposure": 60}}, filters={}),
-        dict(start="2026-08-11T01:10:00", end="2026-08-11T01:10:00", n_images=1, exposure=60, image_ids=[603], types={"light": {"n": 1, "exposure": 60}}, filters={})]
-    library = dict(image_dir="D:/archive", total_images=3, total_exposure=180, objects=[dict(name="M31", object_id=None,
-        otype="galaxy", n_images=3, n_sessions=2, total_exposure=180, images=images, sessions=sessions)])
-    stream = io.BytesIO(); Image.new("L", (80, 40), color=128).save(stream, format="PNG"); png = stream.getvalue()
-    requests, pending = [], []
-    hold, missing = True, False
-    def fulfill(route): route.fulfill(body=png, content_type="image/png", headers={"X-FITS-HDU": "1", "X-FITS-Size": "800x400", "X-FITS-Plane": "1"})
-    def handler(route):
-        requests.append(route.request.url)
-        if hold: pending.append(route)
-        elif missing: route.fulfill(status=404, json={"detail": "The exposure or archive folder is missing."})
-        else: fulfill(route)
-    c.page.route("**/api/library", lambda route: route.fulfill(json=library))
-    c.page.route("**/api/library/imports", lambda route: route.fulfill(json=[]))
-    c.page.route("**/api/images/*/preview", handler)
-    c.goto("/catalog.html"); c.wait_hidden("#busy")
-    selector = c.page.locator("#libraryPreviewExposure")
-    c.expect_eq(len(requests), 0, "previews must load on demand")
-    c.expect_eq(selector.locator("option").count(), 2, "selection must use exact session membership")
-    c.expect(hostile in selector.inner_text(), "filename must remain literal")
-    c.expect_eq(c.page.locator("#libraryExposurePreview img").count(), 1, "filename must not create image markup")
-    c.page.locator("#libraryPreviewShow").focus()
-    with c.page.expect_request(lambda request: request.url.endswith("/601/preview")): c.page.keyboard.press("Enter")
-    selector.focus()
-    with c.page.expect_request(lambda request: request.url.endswith("/602/preview")): c.page.keyboard.press("ArrowDown")
-    c.page.evaluate("() => 0"); fulfill(pending[1])
-    c.page.wait_for_function("() => !document.querySelector('#libraryPreviewImage').hidden")
-    fulfill(pending[0])
-    c.expect("dark.fit" in c.page.locator("#libraryPreviewImage").get_attribute("alt"), "old response must not replace newer preview")
-    c.expect("first plane" in c.page.locator("#libraryPreviewCaption").inner_text(), "cube plane must be identified")
-    c.page.locator("#libraryPreviewExpand").click(); c.wait_visible("#fitsPreviewModal")
-    c.expect(c.page.evaluate("() => document.querySelector('main').inert"), "expanded viewer must isolate focus")
-    c.page.keyboard.press("Escape")
-    c.expect_eq(c.page.evaluate("() => document.activeElement.id"), "libraryPreviewExpand", "closing restores focus")
-    c.page.locator("#librarySessions tr.library-session").nth(1).click()
-    c.expect_eq(selector.input_value(), "603", "session change must update exposure selection")
-    c.expect(c.page.locator("#libraryPreviewImage").is_hidden(), "session change must clear old image")
-    hold, missing = False, True
-    c.allow_failed_responses("one intentionally missing preview")
-    c.allow_console_errors("one intentionally missing preview")
-    c.page.locator("#libraryPreviewShow").click()
-    c.page.wait_for_function("() => document.querySelector('#libraryPreviewStatus').textContent.includes('missing')")
-    missing = False; c.page.locator("#libraryPreviewShow").click()
-    c.page.wait_for_function("() => !document.querySelector('#libraryPreviewImage').hidden")
-    for width in (480, 1440):
-        c.page.set_viewport_size({"width": width, "height": 850})
-        c.page.locator("#libraryPreviewImage").scroll_into_view_if_needed()
-        c.expect(c.page.evaluate("() => { const p=document.querySelector('#librarySessionDetail'); return p.scrollWidth <= p.clientWidth+1; }"), "preview must fit inspector width")
-        c.page.locator("#librarySessionActions button").first.scroll_into_view_if_needed()
-        c.expect(c.page.locator("#librarySessionActions button").first.is_visible(), "session actions remain reachable")
+@check("desktop-catalog-session-selection", "catalog")
+def session_selection(c):
+    images=[dict(id=601,file="M31/first/lights/a.fit",orig_name="a.fit",date_obs="2026-08-12T01:10:00",imagetyp="light"),
+            dict(id=602,file="M31/second/darks/b.fit",orig_name="b.fit",date_obs="2026-08-11T01:10:00",imagetyp="dark")]
+    sessions=[dict(start="2026-08-12T01:10:00",end="2026-08-12T01:10:00",n_images=1,exposure=60,image_ids=[601],types={"light":{"n":1,"exposure":60}},filters={}),
+              dict(start="2026-08-11T01:10:00",end="2026-08-11T01:10:00",n_images=1,exposure=30,image_ids=[602],types={"dark":{"n":1,"exposure":30}},filters={})]
+    library=dict(image_dir="D:/archive",total_images=2,total_exposure=90,objects=[dict(name="M31",object_id=None,otype="galaxy",n_images=2,n_sessions=2,total_exposure=90,images=images,sessions=sessions)])
+    retired=[]
+    c.page.on('request',lambda request: retired.append(request.url) if '/preview' in request.url or '/trash' in request.url else None)
+    c.page.route('**/api/library',lambda route:route.fulfill(json=library))
+    c.page.route('**/api/library/imports',lambda route:route.fulfill(json=[]))
+    c.goto('/catalog.html'); c.wait_hidden('#busy')
+    rows=c.page.locator('#librarySessions tr.library-session')
+    c.expect_eq(rows.count(),2)
+    c.expect_eq(c.page.locator('#btnTopTrash,#fitsPreviewModal,#trashListModal,#trashConfirmModal,.session-exposure-row,.session-exposure-tile,[data-preview-image],[data-trash-image],[aria-expanded][data-select-session]').count(),0,'retired controls and expansion markup must be absent')
+    first=c.page.locator('[data-select-session="0"]'); second=c.page.locator('[data-select-session="1"]')
+    second.click()
+    c.expect_eq(rows.nth(1).get_attribute('aria-selected'),'true')
+    c.expect_in('Darks',c.page.locator('#librarySessionFacts').inner_text())
+    c.expect_eq(c.page.locator('[data-library-anchor]').first.get_attribute('data-library-anchor'),'602','calibration attachment retains exact selected session membership')
+    first.press('Enter'); c.expect_eq(rows.first.get_attribute('aria-selected'),'true')
+    first.click(); first.click()
+    c.expect_eq(c.page.locator('#librarySessions tr').count(),2,'repeated session clicks never expand or add rows')
+    c.expect_eq(retired,[],'session selection never requests image previews or trash')
+    for width in (480,1440):
+        c.page.set_viewport_size({'width':width,'height':850})
+        c.page.screenshot(path=str(c.artifacts/f'session-selection-{width}.png'),full_page=True)

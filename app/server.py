@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi import Path as ApiPath
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -26,7 +25,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .archive_health import ArchiveHealthManager
 from .database import Database
-from .fits_preview import PreviewUnavailable, preview_image
+from .archive_trash import recover_pending, pending_current
 from .imglib import CatalogResolver, name_key
 from .ingest import (ArchiveRenameRecoveryError, ReindexCancelled, _archive_io,
                      calibration_import_target, ingest_one, obj_slug,
@@ -173,6 +172,7 @@ def create_app(db: Database) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app):
         try:
+            await run_in_threadpool(recover_pending, db, health.stopping.is_set)
             yield
         finally:
             await run_in_threadpool(health.shutdown)
@@ -222,13 +222,15 @@ def create_app(db: Database) -> FastAPI:
                     {"detail": f"upload too large (max "
                                f"{limit // (1024 * 1024)} MB per request)"},
                     status_code=413)
+        if (request.method == 'POST' and request.url.path in
+                ('/api/images/ingest', '/api/library/reindex', '/api/library/edit') and pending_current(db)):
+            return JSONResponse({'detail': 'An interrupted trash operation needs recovery. Inspect retained recovery records with scripts/restore_legacy_trash.py before changing the archive.'}, status_code=409)
         resp = await call_next(request)
         # F-16: every response the app serves carries nosniff - cheap defense
         # that also covers non-HTML responses (the SVG placeholder) which the
         # CSP attachment below deliberately skips.
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
-        if request.url.path.startswith("/api/library/health") or (
-                request.url.path.startswith("/api/images/") and request.url.path.endswith("/preview")):
+        if request.url.path.startswith("/api/library/health"):
             resp.headers["Cache-Control"] = "no-store"
         # SP-02: the privileged localhost origin must not accept remote script.
         # Attach the policy to every HTML document the server serves (the SPA
@@ -281,6 +283,8 @@ def create_app(db: Database) -> FastAPI:
                 raise HTTPException(400, "size_unit must be arcmin, arcsec or deg")
             changes["size_unit"] = body.size_unit
         if body.image_dir is not None:
+            if pending_current(db) and body.image_dir.strip() != db.image_dir():
+                raise HTTPException(409, 'An interrupted trash operation needs recovery before changing the archive folder. Use scripts/restore_legacy_trash.py to inspect retained recovery records.')
             # F-15: reject (never truncate) an oversized archive path - a
             # silently cut path would name a DIFFERENT folder.
             if len(body.image_dir.strip()) > 1024:
@@ -294,17 +298,6 @@ def create_app(db: Database) -> FastAPI:
         return {"ok": True}
 
     # ---------------- image archive ----------------
-
-    @app.get("/api/images/{image_id}/preview")
-    def api_image_preview(image_id: int = ApiPath(gt=0, le=(1 << 63) - 1),
-                          size: int = Query(512, ge=64, le=1024)):
-        try:
-            result = preview_image(db, image_id, size, health.stopping.is_set)
-        except PreviewUnavailable as exc:
-            raise HTTPException(exc.status, str(exc)) from None
-        return Response(result.png, media_type="image/png", headers={
-            "X-FITS-HDU": str(result.hdu), "X-FITS-Size": f"{result.width}x{result.height}",
-            "X-FITS-Plane": "1" if result.first_plane else "none", "Cache-Control": "no-store"})
 
     @app.post("/api/library/health", status_code=202)
     def api_health_start(body: HealthScanIn):
@@ -497,6 +490,8 @@ def create_app(db: Database) -> FastAPI:
     @serialize_archive
     def api_library_edit(body: LibraryEditIn):
         """Rename/retype an unresolved library object (object_id IS NULL)."""
+        if db.pending_trash():
+            raise HTTPException(409, 'Interrupted trash recovery must finish before editing archive objects. Use scripts/restore_legacy_trash.py to inspect retained recovery records.')
         # F-15: names become ARCHIVE FOLDER names (obj_slug keeps letters,
         # digits, spaces, _ and - but has no length bound) - the UI's
         # maxlength=80 is the real contract, and the stored object_name column

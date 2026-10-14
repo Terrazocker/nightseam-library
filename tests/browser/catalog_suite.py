@@ -9,13 +9,18 @@ import archive_features
 def desktop_catalog_solar_sessions(c):
     """Exercise packaged V8, actual uploads and the observing-location form."""
     def capture(stamp, identity, object_name='M31', site=None):
-        cards = [("SIMPLE", "T"), ("OBJECT", repr(object_name)), ("EXPTIME", "60"),
+        import struct
+        cards = [("SIMPLE", "T"), ("BITPIX", "16"), ("NAXIS", "2"),
+                 ("NAXIS1", "4"), ("NAXIS2", "4"),
+                 ("OBJECT", repr(object_name)), ("EXPTIME", "60"),
                  ("DATE-OBS", repr(stamp)), ("IMAGETYP", "'LIGHT'")]
         if site:
             cards += [('SITELAT', str(site[0])), ('SITELONG', str(site[1]))]
         header = "".join(f"{key:<8}= {value}".ljust(80) for key, value in cards)
         header += "END".ljust(80)
-        return header.ljust(2880).encode("ascii") + identity.encode("ascii")
+        offset = sum(map(ord, identity))
+        pixels = struct.pack('>16h', *[offset + index for index in range(16)])
+        return header.ljust(2880).encode("ascii") + pixels.ljust(2880, b'\0')
 
     c.goto()
     c.page.wait_for_function("() => document.querySelector('#versionTag').textContent.includes('NightSeam v')")
@@ -45,6 +50,7 @@ def desktop_catalog_solar_sessions(c):
     c.expect(night['session_start'] < night['start'] and night['session_end'] > night['end'],
              'packaged solar windows must cover both captures')
     c.page.locator('#catalog-tab-library').click()
+    c.page.locator('[data-library-object]').filter(has_text=obj['name']).first.click()
     c.page.locator('#librarySessions tr.library-session').first.wait_for()
     c.expect_eq(c.page.locator('#librarySessions tr.library-session').count(), 2)
     c.expect_in('Night', c.page.locator('#librarySessions').inner_text())

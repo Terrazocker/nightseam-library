@@ -217,7 +217,7 @@ def test_extract_object_tokens():
     assert "crabnebula" in fits.extract_object_tokens("Crab Nebula_300s.fit")
 
 
-# ---------------------------------------------------------------- previews
+# --------------------------------------------------------------- geometry
 
 def test_header_size_and_geometry():
     hdr = make_fits([("SIMPLE", "T"), ("BITPIX", "16"), ("NAXIS", "2"),
@@ -228,54 +228,3 @@ def test_header_size_and_geometry():
     assert fits.image_geometry({}) is None
     assert fits.image_geometry({"NAXIS": 1, "NAXIS1": 100}) is None
     assert fits.image_geometry({"NAXIS": 2, "NAXIS1": 0, "NAXIS2": 0}) is None
-
-
-def test_preview_png_16bit():
-    data = struct.pack(">16h", 100, 200, 300, 400, 500, 600, 700, 800,
-                       900, 1000, 1100, 1200, 1300, 1400, 1500, 1600)
-    fits_bytes = make_fits_with_data([
-        ("SIMPLE", "T"), ("BITPIX", "16"), ("NAXIS", "2"),
-        ("NAXIS1", "4"), ("NAXIS2", "4")], data)
-    png = fits.preview_png(fits_bytes)
-    assert png and png.startswith(b"\x89PNG\r\n\x1a\n")
-    # IHDR: signature(8) + len(4) + "IHDR" -> width/height at offset 16
-    assert struct.unpack(">II", png[16:24]) == (4, 4)
-
-
-def test_preview_png_float():
-    vals = struct.pack(">9f", 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 1.0)
-    fits_bytes = make_fits_with_data([
-        ("SIMPLE", "T"), ("BITPIX", "-32"), ("NAXIS", "2"),
-        ("NAXIS1", "3"), ("NAXIS2", "3")], vals)
-    png = fits.preview_png(fits_bytes)
-    assert png and png.startswith(b"\x89PNG\r\n\x1a\n")
-    assert struct.unpack(">II", png[16:24]) == (3, 3)
-
-
-def test_preview_png_rejects_non_image():
-    assert fits.preview_png(b"GIF89a not a fits file") is None
-    hdr_only = make_fits([("SIMPLE", "T"), ("NAXIS", "0")])
-    assert fits.preview_png(hdr_only) is None
-
-
-def test_preview_png_8bit_unsigned():
-    # FITS 8-bit pixels are UNSIGNED (128..255 must not flip negative)
-    fits_bytes = make_fits_with_data([
-        ("SIMPLE", "T"), ("BITPIX", "8"), ("NAXIS", "2"),
-        ("NAXIS1", "2"), ("NAXIS2", "2")],
-        bytes([0, 128, 255, 10]))
-    png = fits.preview_png(fits_bytes)
-    assert png and png.startswith(b"\x89PNG\r\n\x1a\n")
-    assert struct.unpack(">II", png[16:24]) == (2, 2)
-
-
-def test_preview_png_downsamples():
-    vals = struct.pack(">400h", *range(400))
-    fits_bytes = make_fits_with_data([
-        ("SIMPLE", "T"), ("BITPIX", "16"), ("NAXIS", "2"),
-        ("NAXIS1", "20"), ("NAXIS2", "20")], vals)
-    png = fits.preview_png(fits_bytes, max_px=10)
-    assert struct.unpack(">II", png[16:24]) == (10, 10)
-    # stopwords / junk are not emitted as name candidates
-    for bad in ("light", "300s", "fits", "dark", "frame"):
-        assert bad not in fits.extract_object_tokens(f"{bad}_M31.fit")

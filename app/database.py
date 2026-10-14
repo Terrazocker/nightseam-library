@@ -119,6 +119,19 @@ CREATE TABLE IF NOT EXISTS archive_health_actions (
     accepted_sha256 TEXT,
     acknowledged_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS image_trash (
+    token TEXT PRIMARY KEY,
+    archive TEXT NOT NULL,
+    root_dev TEXT NOT NULL,
+    root_ino TEXT NOT NULL,
+    image_json TEXT NOT NULL,
+    integrity_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    payload_size INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    trashed_at TEXT NOT NULL,
+    recovery_error TEXT
+);
 CREATE TABLE IF NOT EXISTS import_batches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
@@ -690,6 +703,12 @@ class Database:
         with self.lock:
             return [dict(r) for r in self.conn.execute(
                 "SELECT * FROM images ORDER BY id")]
+
+    def pending_trash(self) -> bool:
+        with self.lock:
+            return bool(self.conn.execute(
+                "SELECT 1 FROM image_trash WHERE archive=? AND state LIKE 'pending_%' LIMIT 1",
+                (self.image_dir(),)).fetchone())
 
     def images_with_digest(self, digest: str) -> list[dict]:
         """Fingerprint candidates in deterministic order, using the index."""

@@ -223,6 +223,9 @@ def scan_archive(db, mode, cancel, publish):
                             if os.path.normcase(relative) not in known:
                                 finding("unsafe_path", relative, "Linked archive paths are not followed.")
                         elif directory:
+                            from .trash_paths import TRASH_FOLDER, managed_trash
+                            if not folder and name == TRASH_FOLDER and managed_trash(root):
+                                continue
                             pending.append(relative)
                         elif name.lower().endswith((".fit", ".fits")) and os.path.normcase(relative) not in known:
                             untracked.append(relative)
@@ -393,6 +396,8 @@ class ArchiveHealthManager:
             acquired = self.db.archive_lock.acquire(blocking=False)
             if not acquired:
                 raise ValueError("Another archive operation is in progress. Wait for it to finish.")
+            if self.db.pending_trash():
+                raise ValueError('An interrupted trash operation needs recovery before acknowledging archive findings. Use scripts/restore_legacy_trash.py to inspect retained recovery records.')
             if self.db.image_dir() != report["archive"]:
                 raise ValueError("The archive location changed. Run a new check.")
             root = Path(report["archive"]).resolve(strict=True)

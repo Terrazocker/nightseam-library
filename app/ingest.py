@@ -484,6 +484,9 @@ def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
         # Upload/reindex publication is serialized independently of SQLite.
         # File hashing/copying never holds the database connection lock.
         with db.archive_lock:
+            if db.pending_trash():
+                return {'file': name, 'ok': False,
+                        'error': 'Interrupted trash recovery must finish before importing exposures. Use scripts/restore_legacy_trash.py to inspect retained recovery records.'}
             if enforce_archive_root and Path(db.image_dir()).resolve() != archive:
                 return {"file": name, "ok": False,
                         "error": "Archive location changed during import; import this file again."}
@@ -793,6 +796,8 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
     guessed. Missing rows and every physical archive file remain untouched.
     Hashing, parsing and filesystem validation precede the SQLite transaction.
     """
+    if db.pending_trash():
+        raise ValueError('Interrupted trash recovery must finish before reindex. Use scripts/restore_legacy_trash.py to inspect retained recovery records.')
     result = {"found": 0, "added": 0, "skipped": 0, "failed": 0,
               "repaired": 0, "conflicts": 0}
     _check_reindex_cancelled(cancel_event)
@@ -824,7 +829,8 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
             live[rec["id"]] = (rec, target, stat)
 
     candidates = []
-    for entry in archive.rglob("*"):
+    from .trash_paths import archive_paths
+    for entry in archive_paths(archive):
         _check_reindex_cancelled(cancel_event)
         if entry.suffix.lower() not in (".fit", ".fits"):
             continue

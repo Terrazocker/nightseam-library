@@ -4,7 +4,6 @@ import { $, esc, api, toast, setBusy, fmtSize, fmtDT, TYPE_LABEL } from "./util.
 import { S } from "./state.js";
 import { renderSkyMap } from "./skymap.js";
 import { catalogIcon } from "./catalog_icons.js";
-import { clearExposurePreview, setPreviewImages } from "./fits_preview.js";
 
 let _bound = false;
 let _selectedLibraryObject = null;
@@ -375,7 +374,6 @@ function fmtDur(sec) {
 }
 
 export function renderLibrary() {
-  clearExposurePreview();
   if (!$("#libraryObjectList")) return;
   const L = S.library;
   const unit = S.cfg?.size_unit || "arcmin";
@@ -410,10 +408,14 @@ export function renderLibrary() {
   const objs = q ? allObjects.filter((o) =>
     [o.name, o.designation, o.otype].some((x) => String(x || "").toLocaleLowerCase().includes(q))) : allObjects;
   const selected = objs.find((o) => o.name === _selectedLibraryObject) || objs[0] || null;
-  if (selected?.name !== _selectedLibraryObject) _selectedLibrarySession = 0;
+  if (selected?.name !== _selectedLibraryObject) {
+    _selectedLibrarySession = 0;
+  }
   _selectedLibraryObject = selected?.name || null;
   const selectedSessions = selected?.sessions || [];
-  if (_selectedLibrarySession >= selectedSessions.length) _selectedLibrarySession = 0;
+  if (_selectedLibrarySession >= selectedSessions.length) {
+    _selectedLibrarySession = 0;
+  }
   const selectedSession = selectedSessions[_selectedLibrarySession] || null;
   $("#libObjectCount").textContent = q
     ? `${objs.length} of ${allObjects.length} objects` : `${allObjects.length} objects`;
@@ -513,6 +515,12 @@ function sessionFolderPaths(object, session) {
   return [...new Map(folders.map((folder) => [folder.toLowerCase(), folder])).values()];
 }
 
+function selectLibrarySession(index) {
+  _selectedLibrarySession = index;
+  renderLibrary();
+  $(`#librarySessions [data-select-session="${index}"]`)?.focus({ preventScroll: true });
+}
+
 function renderLibrarySessions(object, sessions, activeSession) {
   const heading = $("#librarySessionsHeading");
   const count = $("#librarySessionCount");
@@ -541,8 +549,9 @@ function renderLibrarySessions(object, sessions, activeSession) {
     const folder = folders.length ? `<button class="library-folder-link" type="button" data-open-library-folder="${esc(folders[0])}" title="${esc(folders.join(" · ") || "Archive root")}">${esc(folders[0].split("/").slice(-2).join("/") || "Archive root")}${folders.length > 1 ? ` +${folders.length - 1}` : ""}</button>` : '<span class="hint">Not recorded</span>';
     const lightEntry = Object.entries(s.types || {}).find(([name]) => name.toLowerCase().includes("light"));
     const lightExposure = Number(lightEntry?.[1]?.exposure) || 0;
-    return `<tr class="library-session${sessions.indexOf(activeSession) === i ? " active" : ""}" data-library-session="${i}" tabindex="0" aria-selected="${sessions.indexOf(activeSession) === i}">
-      <td>${esc(when)}</td><td class="mono">${typeCount("light")}</td><td class="mono">${typeCount("dark")}</td><td class="mono">${typeCount("flat")}</td><td class="mono">${typeCount("bias")}</td>
+    return `<tr class="library-session${sessions.indexOf(activeSession) === i ? " active" : ""}" data-library-session="${i}" tabindex="-1" aria-selected="${sessions.indexOf(activeSession) === i}">
+      <td><button class="session-select" type="button" data-select-session="${i}" title="${esc(when)}">${esc(when)}</button></td>
+      <td class="mono">${typeCount("light")}</td><td class="mono">${typeCount("dark")}</td><td class="mono">${typeCount("flat")}</td><td class="mono">${typeCount("bias")}</td>
       <td class="mono" title="Light frames only">${esc(fmtDur(lightExposure))}</td><td>${esc(filters || "—")}</td><td>${folder}</td></tr>`;
   }).join("");
   if (!activeSession) {
@@ -570,7 +579,6 @@ function renderLibrarySessions(object, sessions, activeSession) {
     <div class="library-frame-rollup">${typeRows || '<p class="hint">No frame-type rollup recorded.</p>'}</div>
     <p class="library-filter-rollup"><span class="hint">Filters</span><br>${filterText || "No filter recorded"}</p>
     <div class="library-folder-rollup"><span class="hint">Archive folders</span><div class="library-archive-folders" role="group" aria-label="Archive folders">${folders.length ? folders.map((rel) => `<button class="library-folder-link" data-open-library-folder="${esc(rel)}" title="${esc(rel || "Archive root")}" type="button">${esc(rel || "Archive root")}</button>`).join("") : "Not recorded"}</div></div>`;
-  setPreviewImages(sessionImages(object, activeSession));
   const actions = $("#librarySessionActions");
   if (actions) {
     actions.hidden = false;
@@ -630,7 +638,6 @@ async function saveEdit() {
 export function bindArchive() {
   if (_bound) return;
   _bound = true;
-
   document.querySelectorAll("[data-frame-override]").forEach((button) => {
     button.addEventListener("click", () => {
       const requested = button.dataset.frameOverride;
@@ -808,15 +815,13 @@ export function bindArchive() {
     if (folder) { e.stopPropagation(); openFolder(folder.dataset.openLibraryFolder); return; }
     const button = e.target.closest("[data-library-session]");
     if (!button) return;
-    _selectedLibrarySession = Number(button.dataset.librarySession) || 0;
-    renderLibrary();
+    selectLibrarySession(Number(button.dataset.librarySession) || 0);
   });
   $("#librarySessions").addEventListener("keydown", (e) => {
     const row = e.target.closest("tr[data-library-session]");
     if (!row || e.target.closest("[data-open-library-folder]") || !["Enter", " "].includes(e.key)) return;
     e.preventDefault();
-    _selectedLibrarySession = Number(row.dataset.librarySession) || 0;
-    renderLibrary();
+    selectLibrarySession(Number(row.dataset.librarySession) || 0);
   });
   $("#librarySessionRail").addEventListener("click", (e) => {
     const folderButton = e.target.closest("[data-open-library-folder]");

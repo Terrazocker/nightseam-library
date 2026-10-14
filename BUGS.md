@@ -15,6 +15,33 @@ its exact location, contents and absence of links. Its creating process is not
 confirmed. Watch for recurrence during browser validation; do not generalize
 cleanup to actual ProgramData or any application database.
 
+## Intermittent Windows directory rename validation - October 13, 2026
+
+Preview validation encountered transient WinError 5 (access denied) while renaming
+synthetic directories under logs/.pytest-tmp/. The concurrent source/browser run
+failed test_library_database_failure_reports_occupied_whole_directory_origin and
+test_root_replacement_during_scan_is_unavailable; both passed in isolation. A
+standalone full-suite run then failed the unchanged
+test_whole_folder_rename_does_not_enumerate_after_publication (712 passed, 1 failed,
+1 POSIX-only skip), which also passed immediately in isolation. The cause of the
+transient filesystem refusal remains unconfirmed. No archive rename implementation
+or assertion was weakened for the preview changes. Preserve evidence under
+logs/preview-stretch-20261013/; a fully clean whole-suite result is not claimed.
+
+The subsequent inline-session validation repeated the same unchanged
+whole-folder rename failure in a standalone full run (713 passed, 1 failed,
+1 POSIX-only skip in 154.63 seconds). Its isolated rerun passed in 0.89 seconds.
+Evidence is retained under logs/session-expansion-20261013/. The filesystem
+refusal remains unresolved; preview and grouping validation passed.
+
+The later visible-thumbnail full-suite gate passed all 714 tests with one
+POSIX-only skip in 146.46 seconds, including the rename test. This passing run
+does not establish the cause or resolution of the earlier intermittent refusal.
+
+Recoverable-trash validation subsequently passed all 737 source tests with one
+POSIX-only skip (final run 179.21 seconds). The earlier rename-refusal evidence
+remains retained; these passing runs do not establish its underlying cause.
+
 ## Acceptance still open
 
 - Windows automated archive health and FITS preview acceptance passed on

@@ -168,19 +168,6 @@
               <strong>No session selected</strong><p>Choose a capture session<br>from the library to view details<br>and frames.</p>
             </div>
           </div>
-            <section id="libraryExposurePreview" class="exposure-preview" aria-label="Exposure preview" hidden>
-              <h3>Exposure preview</h3>
-              <label for="libraryPreviewExposure">Exposure</label>
-              <select id="libraryPreviewExposure"></select>
-              <p id="libraryPreviewInfo" class="hint"></p>
-              <div class="preview-actions">
-                <button id="libraryPreviewShow" type="button">Show preview</button>
-                <button id="libraryPreviewExpand" class="ghost" type="button" hidden>Expand preview</button>
-              </div>
-              <p id="libraryPreviewStatus" class="hint" role="status" aria-live="polite"></p>
-              <img id="libraryPreviewImage" alt="Grayscale FITS preview" hidden>
-              <p id="libraryPreviewCaption" class="hint"></p>
-            </section>
           </div>
           <div id="librarySessionActions" class="library-session-actions" aria-label="Selected session actions" hidden></div>
         </aside>
@@ -283,15 +270,6 @@
     <p id="healthReportLimit" class="hint"></p>
     <div class="health-actions"><button id="healthDownload" type="button" disabled>Download JSON report</button></div>
     <p class="hint">The latest report remains until another scan starts or the app closes. Download it to keep a copy. Acknowledgements require confirmation and leave files unchanged.</p>
-  </div>
-</div>
-<div id="fitsPreviewModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="fitsPreviewTitle">
-  <div class="modal-box fits-preview-box">
-    <header><h2 id="fitsPreviewTitle">Exposure preview</h2>
-      <button id="fitsPreviewClose" class="close" type="button" aria-label="Close exposure preview">&times;</button></header>
-    <p id="fitsPreviewFilename" class="mono preview-filename"></p>
-    <img id="fitsPreviewLarge" alt="Grayscale FITS preview">
-    <p id="fitsPreviewCaption" class="hint"></p>
   </div>
 </div>
 <div id="toasts"></div>

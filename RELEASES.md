@@ -1,5 +1,211 @@
 # Independent catalog release record
 
+## Preview, session expansion and Trash retired - October 14, 2026
+
+Removed exposure previews/thumbnails, inline session expansion and Trash from
+the application. Session clicks and Enter/Space now select an ordinary row and
+update its facts/calibration actions. Folder access and exact session membership
+remain intact. Removed the feature JS modules, modals, associated CSS, pixel
+renderer/compatibility helpers and preview/trash application API routes. No new
+trash entries can be created.
+
+Existing image_trash records and retained archive payloads/manifests are preserved.
+Recovery-only startup reconciliation and scan exclusions remain for old data.
+Explicit listing/restoration is available through scripts/restore_legacy_trash.py
+with a required existing --database path; restoration keeps original metadata,
+IDs and integrity baselines and refuses conflicts. No actual retained user file
+was restored or discarded during this removal. Current documentation describes
+the simplified interface and the separate maintenance recovery path.
+
+Validation: **75 focused tests passed with 1 POSIX-only skip in 19.31 seconds**.
+The final full suite passed **683 tests with 1 POSIX-only skip in 162.26 seconds**.
+Retired renderer/grouping/action tests were removed and replaced with legacy
+recovery and retired-endpoint checks. **14/14 packaged browser checks passed** on
+the newly compiled executable. New selection coverage verifies absent controls,
+no extra rows on repeated clicks, keyboard/focus operation, correct calibration
+anchors and no preview/trash requests. Layouts were inspected at 480px and 1440px.
+JS/DOM/encoding/core checks pass (46 modules; the two existing skymap advisory
+names remain); source/artifact validation reports zero release errors.
+
+The user closed the running application before replacement. The main executable
+was rebuilt as **NightSeam 0.1.0-gc2238303-dirty**, with a verified prior backup,
+three retained recovery executables and automatic build scratch cleanup. Evidence
+is retained under logs/remove-preview-trash-20261014/. Source changes remain local
+and uncommitted on codex/preview-stretch-ui. VERSION, tags, public release packages
+and configured archive data are unchanged.
+
+## Recoverable exposure trash and main executable update - October 13, 2026
+
+Added a separate Move to trash action beneath exposure thumbnails, a filename
+confirmation and a toolbar Trash view with Restore. Files remain inside the
+configured archive. Durable pending intents, versioned recovery manifests and
+atomic no-overwrite moves preserve originals across failed/interrupted operations.
+Restore reinstates original catalog IDs, classification, capture/session metadata
+and exact integrity baselines. Changed originals retain their prior baseline;
+the retained payload hash is a separate verification value. Occupied destinations,
+shared/hard-linked files and known active duplicate bytes are refused. There is
+no permanent purge. Managed trash is excluded from active health/reindex scans.
+
+Recovery writes use pinned Windows directory lineage or anchored Linux handles.
+Startup recovery is nonblocking; unresolved operations keep their files/records,
+show diagnostics in Trash and block archive-changing actions and health
+acknowledgements. Trash listing remains readable during thumbnail/scan activity.
+Thumbnail, grouping, autostretch and preview-backdrop improvements remain intact.
+Quality scoring is still the documented investigation, not an implemented score.
+
+Validation: **23 focused trash tests passed in 9.20 seconds**, including exact
+roundtrip, database publication failures, cancellation, interruption/reopen,
+occupied rollback/restore locations, metadata/payload tampering, parent replacement,
+archive/root changes, dedup, scan exclusions and health-acknowledgement protection.
+The affected trash/health/reindex run passed **157 tests with 1 POSIX-only skip**;
+the final full suite passed **737 tests with 1 POSIX-only skip in 179.21 seconds**.
+The earlier full run also passed all 737 tests (185.20 seconds).
+
+The freshly compiled main executable passed **15/15 packaged browser checks**.
+The new real private-archive workflow verifies Cancel, removal, restoration of
+exact metadata/ID/FITS bytes, session totals, unchanged neighboring files and
+focus restoration. Confirmation and Restore layouts were visually inspected.
+Initial checks caught a startup-lock wait and a Trash-list/thumbnail lock conflict;
+both were corrected. The new persistent browser fixture also required the solar
+check to select its actual resolved catalog object explicitly. Final JS/DOM,
+encoding/core, dependency and source/artifact gates pass (50 JS modules, zero
+release errors; six reviewed advisory names including callback methods/globals).
+
+After the user closed NightSeam, **dist/NightSeam.exe** was rebuilt as
+**NightSeam 0.1.0-gc2238303-dirty**. Verified executable backups, retention of
+three backups and build scratch cleanup succeeded. No actual user exposure was
+trashed/restored during validation; all operation tests used private stores.
+Evidence is retained under logs/archive-trash-20261013/. Changes remain local
+on codex/preview-stretch-ui, uncommitted and unpushed. VERSION, tags and public
+release packages are unchanged.
+
+## Visible thumbnails and backdrop closing - October 13, 2026
+
+Session exposure tiles now show small grayscale thumbnails with filenames below.
+IntersectionObserver queues only visible tiles; one FITS read runs at a time,
+with at most 64 decoded images retained. Eviction releases offscreen URLs, and
+session rerenders release cached images and discard stale responses. The large
+viewer pauses thumbnail loading and waits for its active bounded read. Thumbnail
+errors leave the filename and large-preview action available. Clicking the
+backdrop closes the viewer and restores tile focus; interior clicks keep it open.
+Pointer presses that start inside do not dismiss it on a backdrop click.
+
+Validation: **37 focused tests passed in 5.36 seconds**; the full source suite
+passed **714 tests with 1 POSIX-only skip in 146.46 seconds**. The previously
+recorded intermittent Windows rename test passed in this run. **14/14 packaged
+browser checks passed** on the freshly compiled candidate, including serialized
+thumbnail requests, stale-session responses, outside/inside clicks, keyboard
+focus and a 150-exposure session proving visible-only loading and the 64-image
+limit. Thumbnail/name layouts were visually inspected at 480px and 1440px.
+JS/DOM/encoding/core and source release checks pass: 49 modules, zero release
+errors. The advisory name checker reports four reviewed browser globals
+(IntersectionObserver, queueMicrotask, and the two existing skymap names).
+
+A synthetic 4096x4096 uncompressed FITS benchmark produced a 158x158, 23,285-byte
+thumbnail in 45/16/15.5 ms over three runs; the 1024px preview took
+187/173.5/178.4 ms. These are local synthetic measurements, not a real-archive or
+compressed-file performance guarantee.
+
+The build script correctly refused to replace the running application. A separate
+candidate was compiled using the same locked interpreter, PyInstaller hooks and
+resources, tested with private stores and copied with matching SHA-256 to
+**dist/NightSeam-preview-update.exe**. Its version is
+**NightSeam 0.1.0-gc2238303-dirty**. The running dist/NightSeam.exe remains intact;
+the adjacent update uses the same executable-adjacent data directory when launched
+after the current app is closed. Evidence is retained under
+logs/thumbnail-preview-20261013/. VERSION, tags, public releases, source data and
+user archives are unchanged; changes remain uncommitted and unpushed.
+
+The requested quality/deletion investigation is in
+docs/exposure-quality-feasibility.md. Advisory scores from comparable original
+light frames are feasible; detecting cloud/foliage causes needs real-data
+validation. Safe in-app deletion needs a dedicated reversible trash/restore
+operation, recovery records and scan integration. Neither scoring nor deletion
+is implemented by this UI update.
+
+## Inline session exposure tiles - October 13, 2026
+
+Clicking a session now expands its exposure files inline. Filename-only square
+tiles are sorted by original capture time and grouped into local 30-minute
+intervals, with missing/invalid timestamps grouped last. Exact session image_ids
+remain authoritative; calibration anchors do not replace capture timestamps.
+Repeated daylight-saving half-hours remain distinct, and fractional seconds are
+preserved for ordering. Clicking a tile opens the selected exposure in a modal;
+expanding a session does not request image pixels. The inspector preview,
+exposure dropdown and Previous/Next controls are removed. Escape/Close restore
+tile focus, and retry, cancellation and stale-response handling remain covered.
+The preceding autostretch corrections are retained.
+
+Focused preview/grouping checks: **37 passed**. Final freshly compiled desktop
+browser gate: **14/14 passed**, including keyboard operation, exact membership,
+time buckets, no automatic preview requests, retry/focus, cancellation and square
+tile layouts at 480px and 1440px. Screenshots were visually inspected at both
+widths. The initial browser run caught a retry focus defect, which was fixed
+before the final build and gate.
+
+The final full source suite finished with **713 passed, 1 failed, 1 POSIX-only
+skip in 154.63 seconds**. The unchanged whole-folder rename publication test
+again encountered WinError 5 in private test scratch; its isolated rerun passed
+in 0.89 seconds. BUGS.md retains this unresolved environment finding; no clean
+whole-suite result is claimed. JS/DOM/encoding/core and source/artifact checks
+passed (48 JS modules, two existing skymap advisory names, zero release errors).
+
+Local executable: **NightSeam 0.1.0-gc2238303-dirty**, on the uncommitted
+codex/preview-stretch-ui branch. Build backup verification and automatic scratch
+cleanup succeeded. Evidence is preserved under logs/session-expansion-20261013/.
+VERSION, tags, public releases and user data/archives are unchanged; no commit
+or push is part of this local build.
+
+## Autostretch and immediate exposure previews - October 13, 2026
+
+Replaced the fixed percentile/asinh display with median/MAD sky estimation,
+2.8-sigma shadow clipping and a midtones transfer targeting a 0.25 background.
+The brightest sample remains the white endpoint. This avoids spreading sky noise
+across most of the display and clipping the entire upper half-percent of pixels.
+Constant/zero-noise frames retain explicit fallback behavior. Small 2x2 averages
+prevent an even downsampling stride from selecting only one Bayer phase; sampling
+is reduced when necessary to retain the 64 MiB read limit at larger preview sizes.
+Original FITS bytes and catalog integrity baselines remain unchanged.
+
+Session/exposure selection now loads its preview automatically, initially
+preferring a Light. Previous/Next controls avoid repeatedly opening the file
+selector, and the image opens an expanded viewer that supports arrow-key browsing
+without closing. Stable image stages avoid layout jumps while loading, the viewer
+fits the available area, and disabled endpoint controls hand focus to an enabled
+control. Refresh/retry remains explicit. The UI requests up to 1024 pixels with
+bounded reduction for large exposures; this remains grayscale, not full-resolution
+processing or debayering.
+
+Focused rendering/IO validation: **36 passed in 5.44 seconds**, including realistic
+noisy-sky/faint-signal fixtures, sparse hot pixels, ADU scaling, Bayer phases,
+preview-size consistency and measured read-budget limits. A synthetic before/after
+comparison is retained under logs/preview-stretch-20261013/. Browser fixtures now
+include real FITS pixels so automatic previews exercise the decoder rather than
+produce expected errors from header-only captures.
+
+The standalone full suite finished with **712 passed, 1 failed, 1 POSIX-only
+skip in 169.61 seconds**. The failure was the unchanged whole-directory rename
+publication test with transient WinError 5; its isolated rerun passed. Two other
+archive tests failed only in the initial overlapping source/browser run and also
+passed in isolation. This environment limitation is recorded in BUGS.md rather
+than claiming a clean whole-suite result. Preview/rendering tests remain passing.
+
+Final local build: **NightSeam 0.1.0-gc2238303-dirty**, reflecting the local
+uncommitted preview fixes. The build verified its prior executable backup, retained
+three backups and removed build scratch. **14/14 packaged browser checks passed**
+after correcting disabled-endpoint focus and replacing header-only browser fixtures
+with real image data. The viewer was visually inspected at 1440px and layout checks
+also cover 480px. A private frozen-app smoke decoded plain and RICE images and
+verified archive scans/acknowledgements; source/artifact, JS/DOM/encoding/core and
+dependency gates passed. Two existing advisory names remain in skymap.js.
+
+The first build attempt correctly refused to replace the user's running app; it
+continued only after the user closed NightSeam. An approval-review usage limit
+briefly prevented a later test command from running; the explicitly resumed review
+succeeded. Evidence is preserved in logs/preview-stretch-20261013/. VERSION, tags,
+public release packages and user data/archives are unchanged; no commit or push is
+part of this local fix.
+
 ## Local main merge - October 13, 2026
 
 Merged codex/partial-review-fixes with main's archive health acknowledgements and
