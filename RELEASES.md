@@ -1,5 +1,433 @@
 # Independent catalog release record
 
+## Session compression symbols - October 16, 2026
+
+Every capture-session row now shows a compact, distinct symbol for compressed,
+uncompressed, mixed or unknown storage. Hover and accessible labels give exposure
+counts; the selected-session inspector shows the same storage state. The symbols
+refresh after a completed compression/uncompression job and preserve table density.
+
+Storage classification is recorded from the existing metadata read, detecting
+gzip wrappers and tiled compressed images even when named plain .fits. Conversion,
+restoration, reindex and copied catalogs maintain it atomically; accepting changed
+external contents clears it. Historical Rice mappings are classified by matching
+the current full-file digest, including restored originals. Other historical
+records remain visibly unknown until reindex. Library rendering performs no extra
+file reads. Metadata tests cover misleading extensions, gzip/plain bytes, legacy
+backfill and accepted changes; the UI gate checks all symbols and actual conversion.
+
+Validation: full suite **798 passed, 1 skipped in 229.89 seconds**; final focused
+session rollup run **25 passed**. The fresh final packaged browser gate passed
+**23/23**, including all four symbols, keyboard selection and real compression /
+restoration updates. The compact inspector screenshot was visually checked.
+JS/core/encoding checks passed; local --allow-dirty --no-stage release validation
+reported **0 errors**. All checks used private workspace test archives.
+
+## Full import/session pipeline and phased progress - October 15, 2026
+
+The representative 512-file HTTP investigation reproduced slow import: 2.12 GB
+took 168.51 seconds, with the final full 24-file batch taking 15.78 seconds.
+Request-scoped negative dedup indexes now pin earlier same-size bytes and
+directory lineage once per batch. Unrelated archive mutations wait for the lease;
+positive duplicates still hash actual bytes. Index admission is bounded and
+unsupported versions/open writers fall back conservatively. Waiting imports use
+asynchronous admission; index preparation cooperates with cancellation and closes
+pins before releasing its lease. Images, integrity, compression mappings and
+history now share one short commit per file. Browser batches contain up to 24
+plain or compressed uploads. The final same HTTP workload measured **24.58
+seconds**, with the last full batch taking **1.35 seconds** (6.9x faster overall).
+
+Manual session conversion and library copying now prepare files and publish
+replacements concurrently with up to CPU count/24 workers. Per-image verification
+filenames replace the shared roundtrip path. Complete journal plans precede any
+swap; originals remain available through commit. Workers drain explicitly before
+recovery even when a coordinator progress callback fails. Reused directory pins
+and source-version checks remove repeated work while retaining integrity gates.
+Behavioral tests found attribute-only Windows handles did not enforce sharing;
+file/directory pins now use GENERIC_READ. Tests prove writes/renames are blocked
+until closure and reject cached/previously unseen symlink leaves. Cached directory
+lookups check immediate-parent identity/reparse state before each leaf lookup.
+
+The session/copy dialog has an independent **Fast / Safe** slider, default Safe
+for manual conversion and omitted API choices. Safe restores and compares the
+original complete-file hash; Fast skips the round trip and records distinct
+provenance. Both verify stored bytes; Uncompress always checks a known original
+hash. Mode is locked during work and restored when reopening a job.
+
+Separate **Preparing files** and **Writing and replacing files** bars expose real
+counts. Checking originals, catalog commit, retained-original cleanup and library
+refresh remain visibly active after preparation. Complete appears only after
+refresh. The packaged gate caught and fixed newly rendered session buttons staying
+disabled after refresh, verification controls remaining visible for Uncompress,
+and resumed jobs retaining the reopening action. A resumed job requires a fresh
+action before restarting. UI captures were visually inspected.
+
+Final full suite: **796 passed, 1 skipped in 240.29 seconds**. Fresh final
+packaged browser gate: **22/22 passed**, including mode keyboard/explanation,
+actual roundtrip/copy, writing progress, final refresh and restored session
+actions. JS/core/encoding checks passed; local --allow-dirty --no-stage release
+validation reported **0 errors**. Complete 48-file session conversion measured
+**13.27 to 2.50 seconds Safe**, with **2.00 seconds Fast**, including actual swaps,
+catalog commit and cleanup. Tests/measurements used synthetic private stores,
+never user archives or supplied example data. Executable replacement retained
+three backups.
+Final housekeeping completed with zero failures. Eight generated benchmark
+archives were removed after measurement; scripts, profiles, progress snapshots
+and batch summaries remain under ignored logs/.
+
+## Session deletion acknowledgements and import throughput - October 15, 2026
+
+Archive Health now groups missing exposures by object identity and canonical
+capture session. **Acknowledge session** resolves every retained missing record
+in that session; **Accept all deletions** resolves retained deletions across the
+report. Expandable exposure details keep individual actions available. Present
+members and changed-content findings remain untouched. Counts include retained
+findings beyond the 200-detail display; omitted findings explicitly require a
+subsequent scan. One confirmation covers the selected batch. All file paths and
+record snapshots are revalidated before one SQLite transaction removes records,
+baselines and obsolete compression aliases and records action history. Restored
+files, stale records or transaction failures refuse/roll back the whole batch.
+
+Import now prepares uploads and optional Rice conversion concurrently outside
+archive_lock, bounded by CPU count and at most 24 files. Publication and catalog
+writes retain their order and archive lock. A SQL failure stops later publication;
+cancellation drains workers before cleaning staging. Known duplicates receive a
+fresh-byte check before encoding. Negative same-size candidates use a bounded
+hash memo guarded by pinned NTFS/ReFS identity/change time, with conservative
+fallback elsewhere; positive duplicates always rehash. The cache retains useful
+entries above its admission limit rather than thrashing. The catalog resolver
+survives upload chunks with explicit revision invalidation and repeated target
+matching is memoized/offloaded. Native tool integrity checks use strong versions;
+compression alias/history lookups gained indexes.
+
+Final private 48-file/199 MB direct-ingest measurement: plain FITS **12.70 to
+2.83 seconds**, Fast Rice **6.56 to 1.66 seconds** using 12 preparation workers.
+Earlier archive reads fell from **1,128 / 4.68 GB** to **47 / 195 MB**. This is
+a local synthetic result, not universal disk/CPU saturation; plain equal-size
+metadata inspection and unsupported filesystem fallback remain documented in
+BUGS.md and docs/import-performance-20261015.md.
+
+Validation: final full suite **787 passed, 1 skipped in 194.86 seconds**. Coverage
+includes actual parallel native conversion, ordered commits, failure boundaries,
+restored-mtime edits, unsupported-version fallback, tool tampering, duplicate
+encoding avoidance, bounded cache behavior, same-session healthy/calibration
+members, >200 findings, retained-limit overflow and atomic batch rollback.
+Fresh final executable browser gate **21/21 passed**, including session/all
+acknowledgements and 24-file compression chunks. Pending/resolved UI captures
+were visually inspected. Build JS/core/encoding checks and git diff --check
+passed; local --allow-dirty --no-stage release validation reported **0 errors**.
+Executable replacement preserved three backups. Tests and profiling used private
+synthetic archives; user stores and supplied example files were untouched.
+Final housekeeping completed with zero failures. Ten owned synthetic benchmark
+archives were removed after measurement; scripts, summaries and profiles remain.
+
+## Fast / Safe ingest switch - October 15, 2026
+
+The Import compression checkbox now has a compact sliding **Fast / Safe**
+switch: Fast on the left is the initial UI choice; Safe on the right enables
+native decompression and original full-file SHA-256/size comparison. The circle
+slides between positions. The switch is disabled when compression is off and
+locked during archive work; the selected mode is captured once per import and
+sent on every chunk, including calibration attachments.
+
+Fast trusts Rice reversibility and skips the decoder/restored-file read. Both
+modes still validate Rice output, recheck original input stability, hash/flush
+compressed staging, and flush/re-read the published compressed file before the
+catalog commits. Original hashes remain available for later Uncompress. Fast
+integrity provenance is rice_ingest_fast; Safe remains verified_rice_ingest.
+The validated API compression_mode defaults to Safe when omitted, preserving
+existing clients. Manual session/library conversions and missing-file recovery
+retain mandatory strict restoration checks independently of the ingest choice.
+
+An **i** explanation opens on hover, keyboard focus and tap/click, with explicit
+Fast/Safe tradeoffs and source preservation. Escape dismisses it. Review added
+screen-reader description links and hoverable pointer travel; the packaged gate
+caught and fixed clipping in the scrolling import card by placing the tooltip
+outside that scroll container and choosing a position within the viewport.
+The native checkbox switch supports Space, visible focus and reduced motion.
+Import results distinguish Fast (restoration unchecked) from Safe (verified).
+
+Validation: **771 passed, 1 skipped in 261.70 seconds**; **42 focused native
+checks passed**. Coverage proves Fast invokes fpack only, Safe invokes funpack
+and rejects hash mismatch, and both reject tool, publication and SQL failures.
+Missing-file recovery still verifies strictly when Fast is requested. Fresh
+packaged browser verification passed **20/20**, including circle movement,
+hover/focus/tap/dismissal, readable tooltip placement/pointer travel, both real
+ingest modes, calibration, exact later restoration and per-chunk mode locking.
+The captured UI was visually inspected. JS/encoding and whitespace guards passed;
+the local --allow-dirty --no-stage release check reported **0 errors**. The
+executable was backed up before replacement and three recovery copies remain.
+Repository housekeeping completed without failures. Tests used private synthetic
+catalogs/archives and left user stores and supplied example data untouched.
+
+## Opt-in lossless Rice during ingest - October 15, 2026
+
+Import Exposures now has an unchecked **Compress on import with lossless Rice**
+checkbox. Its per-window choice is captured once for every upload action and
+sent on every multipart chunk, including calibration attachments. The API's
+compress form flag defaults to false. Results show converted files and explicit
+reasons when unsupported/already-compressed files were imported unchanged.
+
+Supported integer uploads use the same native encode_verified gate as manual
+session conversion: fpack -r, funpack -C, complete-file SHA-256/size comparison,
+source stability check and flushed compressed staging. The final published
+destination is flushed and rehashed before commit, including the copy fallback
+on filesystems without hard links. Image, stored-byte integrity baseline and
+original/compressed identity mapping commit together. Only verified compressed
+output remains; temporary original/verification stages are removed after commit.
+External source files are never changed or deleted. Conversion failure publishes
+neither representation; cancellation signals native checkpoints and drains the
+worker before cleaning staging.
+
+Duplicates retain existing records and representations. Re-uploading either
+known representation of a missing managed exposure restores its current recorded
+format under the same ID/path, preserving metadata, frame class and session
+anchors. Restoration verifies bytes and commits fingerprint, integrity baseline
+and mapping together. Collision-resolved names survive Uncompress safely.
+
+Validation: **765 passed, 1 skipped in 279.61 seconds** in the pinned environment.
+Focused native/auto-ingest verification passed **36 tests**; ingest/API regression
+checks also passed. Coverage includes exact restoration and untouched physical
+sources, unsupported floats/gzip/existing Rice/directives, tool/hash/SQL failures,
+corrupted publication, cancellation, dedup, missing restoration in both directions,
+collision names and multipart defaults. Fresh packaged browser verification
+passed **19/19**, including checking the actual checkbox, physical file upload,
+compressed-only archive storage, compressed calibration attachment, exact native
+Uncompress restoration, option propagation across 8+2 chunks and unchanged-file
+reason text. Existing compression/copy and responsive UI gates also passed.
+
+The development executable was rebuilt with a verified backup before replacement;
+three recovery executables remain. JS/encoding and whitespace guards passed;
+the local --allow-dirty --no-stage release check reported **0 errors**. Repository
+housekeeping completed without failures. Tests used private synthetic catalogs
+and archives; user catalog data and supplied example exposures were untouched.
+
+## Manual lossless Rice compression and library copies - October 15, 2026
+
+The selected-session inspector now offers **Compress losslessly** and
+**Uncompress**. Whole-session requests validate exact membership against a
+stored anchor, including attached calibration frames. Native fpack -r creates
+Rice files; funpack -C must reproduce each original complete-file SHA-256 before
+any original is replaced. Every HDU is checked; compression accepts integer
+BITPIX 8/16/32 and refuses unsupported images or conflicting FZ directives.
+Managed decompression verifies the retained original hash and filename. Existing
+Rice files can be decompressed without claiming an unknown historical file hash.
+
+Current stored-byte fingerprints and integrity baselines transition atomically;
+original/compressed representation provenance preserves duplicate detection,
+record IDs and session/classification metadata. Conversion runs in cancellable
+workers under the independent archive lock. A durable journal retains originals
+until commit, rolls back failed publication and recovers interrupted work on
+startup. Pending recovery blocks archive mutations. Review caught and fixed an
+empty-journal startup lock regression; archive-health regressions then passed.
+
+**Copy library** manually creates a new destination folder with usable individual
+FITS files, manifest.json and a coherent nightseam.db snapshot pointing to the
+copied files. Supported integer images use verified Rice; existing Rice and
+unsupported files copy intact. Destination files are independently read back and
+hashed. Destination-side staging supports an archive without source scratch
+space. SQLite backup uses a separate connection, without holding the live
+connection lock while copying. Cancellation removes incomplete copies.
+No daily automation or automatic ingest conversion was introduced.
+
+Official CFITSIO 4.7.0 / zlib 1.3.2 utilities are embedded with source/binary
+hashes, compiler/SDK/CMake provenance and upstream notices. Their static-runtime
+PE imports require only KERNEL32.dll. scripts/build_fits_tools.py reproduces the
+build. The normal build dependency gate verifies bundled utility hashes.
+
+Validation: **751 passed, 1 skipped in 246.00 seconds** in the pinned environment;
+the focused native suite passed **22 tests**. Coverage includes byte-exact native
+round trips, calibration anchors, another object's isolation, every image HDU,
+unsupported/directive refusal, successful decoder hash mismatch, cancellation,
+tool/publication/SQL failure rollback, collisions, stale membership, external
+changes, dedup, deep health, portable copies and startup recovery. Fresh packaged
+browser verification passed **17/17**, including real native conversion, exact
+restoration, copy, rejected-start handling, resume/focus, cancellation and layout.
+JS/encoding guards and whitespace checks passed. The local dirty-build release
+gate (--allow-dirty --no-stage) reported **0 errors**; no public release was made.
+The installed executable was backed up before replacement; three recovery
+executables remain. No user catalog, profile archive or supplied example exposure
+was used as a test destination. Private build/test scratch and repository caches
+were cleaned, preserving source archives, build logs and test evidence.
+
+## Native Rice full-file round trip - October 15, 2026
+
+The [native fpack/funpack report](<docs/fpack-funpack-roundtrip-20261015.md>)
+records **2,057/2,057 exact original complete-file SHA-256 matches**, using
+`fpack -r` followed by `funpack -C`. No saved header, sidecar or postdecode repair
+was used. Every packed output was checked for RICE_1. Original bytes total
+8,542,638,720; compressed bytes total 4,698,034,560 (45.00% saved).
+
+Five sample option combinations each covered 32 distributed frames. Default
+funpack and fpack-only `-C` restored 0/32 original hashes while preserving all
+pixel payloads; checksum updates changed header values. All three sample modes
+using funpack `-C` restored 32/32 hashes, including the whole-image tile variant.
+Two earlier-workflow Astropy Rice probes preserved pixels but changed header
+serialization after funpack `-C`. The research and benchmark reports now correct
+the overly broad suggestion that a separate saved header would be needed.
+
+Unmodified official CFITSIO 4.7.0 / zlib 1.3.2 utilities were built privately;
+source archives, binary/script hashes, build logs, command lines and per-file
+results remain in logs/fpack-roundtrip-20261015/. Final independent source audit
+confirmed all original hashes, sizes, mtimes and file membership unchanged.
+Temporary compressed/restored files and five private build/scratch directories
+were removed with zero failures. No application feature, dependency, installed
+executable or catalog data changed in this experiment. Concurrent workspace
+tests make the recorded utility timings unsuitable for performance comparisons.
+
+Full pinned-environment verification: **729 passed, 1 skipped in 257.06 seconds**.
+The encoding guard and whitespace check passed; repository housekeeping completed
+without failures.
+
+## Real exposure compression benchmark - October 15, 2026
+
+Read-only study of the supplied Example-data collection: 2,057 Seestar S30
+unsigned-16-bit Light frames, 8,542,638,720 bytes (7.956 GiB), across two nights.
+The [report](<docs/example-data-compression-benchmark-20261015.md>)
+and accompanying CSV distinguish 37 byte-exact archive configurations and eight
+pixel-exact FITS rewrite configurations, each screened twice on 32 distributed
+exposures, from three actual complete-collection runs.
+
+Full native ZIP/Bzip2 Normal: 4,299,845,611 bytes, 49.67% saved, 202.35 seconds
+creation, 134.09 seconds restoration, 28.76 seconds separate SHA verification.
+Full TAR/Zstd6: 4,934,975,367 bytes, 42.23% saved, 47.34/37.13/30.17 seconds.
+Independent Zstd6: 4,941,270,104 bytes, 42.16% saved, 147.65/31.76/30.43 seconds.
+Whole-session Zstd saved only 6.00 MiB over independent files for this collection.
+The space-priority recommendation is one ZIP/Bzip2 archive per session; Zstd6
+is the fast alternative. LZMA2 and the tested scientific filters/FITS rewrites
+did not justify replacing that choice for these supplied Light frames.
+
+All archive sample/full runs restored exact path membership, file sizes and
+complete-file SHA-256; all FITS rewrite samples preserved pixel dtype/bits.
+Native full ZIPs used Bzip2 method 12 and four members also passed independent
+Python ZIP decoding/hash checks. Final audit confirmed all 2,057 source hashes,
+sizes, mtimes and membership unchanged. Full run timings are single measurements;
+sample timings are two-run medians, with OS caching and implementation/thread
+differences documented. No cold-drive, durability or universal-FITS claim is made.
+
+Evidence and reproducible harnesses remain under ignored
+logs/example-compression-benchmark-20261015/. Every generated archive/restored
+copy was verified then removed. Isolated benchmark dependencies, pip cache/temp
+and empty scratch were removed (96.85 MiB, zero cleanup failures); the failed
+sandbox pip attempt's five exact temporary directories were separately verified
+absent. Application dependencies, installed executable and actual catalog stores
+were unchanged. No backup, archive button or restore feature was implemented.
+
+Final workspace validation: **729 tests passed, 1 skipped in 197.53 seconds**
+using the pinned build environment. The encoding guard and whitespace diff
+check passed. Benchmark and repository housekeeping completed without failures.
+
+## Compressed FITS metadata implemented - October 15, 2026
+
+Import, reindex and untracked Archive Health discovery now recognize .fit/.fits/
+.fts, tiled .fz (including .fits.fz), and their gzip wrappers. Header-only file
+traversal uses the primary image or first nonempty image extension after an empty
+primary. Selected-extension fields override primary fallbacks; exposure and
+instrument aliases and sky/site coordinate pairs are kept coherent. Standard
+CONTINUE strings are joined while duplicate keys retain their first value.
+
+Original upload bytes, complete-file SHA-256 identity, independent integrity
+baselines, classification and explicit calibration/session anchors are preserved.
+Compound extensions survive filename collisions. Malformed or excessive metadata
+reads refuse publication and clean staging. Traversal bounds header bytes, HDU
+and axis counts, gzip compressed/expanded bytes and cooperative scan time; gzip
+optional header fields are bounded too. Pixel codecs are never invoked. Metadata
+success does not validate unread pixels, later HDUs or unread gzip trailers.
+Plain primary headers retain legacy tolerance, including missing END at the old
+bounded header cap; review caught and regression tests cover that compatibility.
+
+Final full validation: **729 tests passed, 1 POSIX-only skip in 200.00 seconds**.
+The earlier implementation suite also passed **728 tests, 1 skip in 190.86
+seconds** before adding the independent browser-fixture decoder test. New
+coverage includes gzip/tiled/wrapped-tiled metadata, primary/extension precedence,
+long strings, preserved bytes/hashes, duplicates, calibration anchors, compound
+collisions, refusal/rollback, cancellation, bounds, reindex and health discovery.
+
+**15/15 packaged browser checks passed** on a freshly compiled private executable.
+The new real file-picker workflow imports .fits.gz, .fits.fz and .fz.gz, compares
+stored bytes with synthetic originals, verifies metadata/session membership,
+repeats a duplicate, reindexes and selects the Library session. The standard-
+library browser fixtures are independently pixel-decoded with Astropy in source
+tests. The harness verified its private archive before any uploads and cleaned
+only its own processes and files.
+
+The first browser attempt failed visibly because the Python 3.12 build environment
+lacks Playwright. The final gate used the existing system Python/Playwright runner;
+no dependencies were installed or changed. ENVIRONMENT.md records this separation.
+JavaScript/DOM/syntax/encoding/core guards pass (46 modules; the two existing
+skymap advisory names), all 46 build dependency pins verify, and the source-only
+release guard reports zero errors.
+
+Private build: **0.1.0-gd941c9ff-dirty**, 37,142,363 bytes. Its --version and all
+61 copied application source files were verified against the current checkout;
+SHA-256/source manifest and evidence are retained under
+logs/fits-compression-research-20261015/private-build/. Compilation scratch was
+removed after success. The installed dist/NightSeam.exe, its version bake/backups,
+VERSION, tags, staged release ZIP and source/packaged user stores were unchanged.
+No actual user exposure or configured archive was read, converted or reindexed.
+Source changes remain uncommitted on codex/compressed-fits-metadata.
+Final housekeeping and Git whitespace checks pass; disposable caches were
+removed without cleanup failures and research/build evidence remains preserved.
+
+## FITS compression research - October 15, 2026
+
+Added docs/fits-compression-research.md with primary-source references, codec and
+preservation comparisons, quantization analysis, repository constraints and a
+proposed implementation sequence. No compression feature or application change
+was implemented. Actual source/packaged data and configured archives were not
+read or converted.
+
+A memory-only synthetic probe used Astropy 7.2.2/NumPy 2.5.4 on the existing
+Python 3.12 build environment: 22 image/method cases with three timed repetitions
+each, plus two float special-value probes. All completed without exceptions or
+warnings. Integer codecs preserved tested pixels; whole gzip restored original
+FITS bytes. GZIP_1/GZIP_2 with q=0 preserved the finite float32 samples, and
+GZIP_2/q=0 preserved the tested float32/64 special-value bits. Quantized Rice
+cases changed pixels as expected. Rice/q=0 unexpectedly truncated float fractions
+(RMS error 0.5772), confirmed by installed-source inspection and a small independent
+reproduction; the integration hazard is recorded in BUGS.md.
+
+Evidence is retained under logs/fits-compression-research-20261015/. These are
+synthetic Astropy measurements, not real-camera benchmarks or independent
+fpack/CFITSIO acceptance. No full product test rerun, build or packaged browser
+gate was performed for this documentation-only research.
+
+The saved evidence passed explicit consistency checks for all 22 cases and the
+expected preservation/loss outcomes. Encoding and Git whitespace guards pass.
+Housekeeping completed with zero failures and preserved the research evidence.
+
+## Workspace exploration and source validation - October 15, 2026
+
+Inspected an initially clean main at d941c9ffa8f7c1269a45ee50ef42704d39eeb77d,
+matching the local origin/main reference. Origin is configured for the independent
+GitHub catalog repository; no fetch or publication was performed. VERSION remains
+0.1.0. Current code implements Library, Import Exposures, Sky Map and Archive
+Health, with legacy retained-file recovery available only through maintenance.
+
+Fresh validation: **683 passed, 1 POSIX-only skip in 186.73 seconds** using the
+existing .venv-build Python 3.12 environment outside the restricted sandbox.
+The sandbox run reported **656 passed, 27 failed, 1 skipped in 175.20 seconds**;
+an isolated probe reproduced WinError 5 during strict archive path resolution.
+The default Python 3.14 interpreter lacks py_mini_racer; its exploratory suite
+was interrupted after a focused test confirmed the missing dependency. The same
+focused test passed in Python 3.12. See BUGS.md for these environment constraints.
+
+JavaScript import/DOM/syntax, encoding and core-bake guards pass (46 modules,
+the two existing skymap browser-global advisories). Build dependency validation
+passes all **46 exact pins**. The source-only release guard with --allow-dirty
+--source-only --no-stage reports **zero errors**.
+
+No application build or packaged browser gate was run. The existing executable
+and ignored version bake retain 0.1.0-gc2238303-dirty; the staged 0.1.0 ZIP remains
+the October 2 artifact. October 14 packaged-browser evidence is historical, not
+a new run. Application code, source/packaged data and configured archives were
+unchanged; only these validation and issue records were updated.
+
+Housekeeping removed 4.98 MiB of disposable caches with zero failures. The
+interrupted exploratory run's private scratch was removed after verifying its
+exact contained path and inactive owner. Final encoding and Git whitespace
+checks pass; Git changes are limited to BUGS.md and RELEASES.md.
+
 ## Preview, session expansion and Trash retired - October 14, 2026
 
 Removed exposure previews/thumbnails, inline session expansion and Trash from

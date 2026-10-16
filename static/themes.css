@@ -834,6 +834,20 @@ body.catalog-only #frameTypeHelp + .import-divider {
   margin-bottom: 1.2857rem;
 }
 body.catalog-only .add-files-label { margin: 0 0 1rem !important; }
+body.catalog-only .ingest-compression-mode { position: relative; display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+body.catalog-only .ingest-compression-mode[hidden] { display: none; }
+body.catalog-only .ingest-mode-switch { display: inline-flex; align-items: center; gap: 9px; color: var(--dim); cursor: pointer; }
+body.catalog-only :is(#ingestSafeMode, #compressionSafeMode) { width: 40px; min-width: 40px; height: 22px; min-height: 22px; border: 1px solid var(--border2); border-radius: 12px; background: var(--bg2); }
+body.catalog-only :is(#ingestSafeMode, #compressionSafeMode)::after { content: ""; position: absolute; left: 3px; top: 3px; width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--dim); transform: none; transition: transform .15s ease, background .15s ease; }
+body.catalog-only :is(#ingestSafeMode, #compressionSafeMode):checked { border-color: var(--accent); }
+body.catalog-only :is(#ingestSafeMode, #compressionSafeMode):checked::after { transform: translateX(18px); background: var(--accent); }
+body.catalog-only :is(#ingestSafeMode, #compressionSafeMode):disabled { opacity: .45; cursor: default; }
+body.catalog-only .ingest-compression-mode[data-mode="fast"] .ingest-mode-switch > span:first-child,
+body.catalog-only .ingest-compression-mode[data-mode="safe"] .ingest-mode-switch > span:last-child { color: var(--text); font-weight: 600; }
+body.catalog-only .ingest-mode-info { display: inline-flex; align-items: center; justify-content: center; width: 22px; min-width: 22px; height: 22px; padding: 0; border: 1px solid var(--border2); border-radius: 50%; color: var(--dim); background: transparent; font: 600 12px/1 sans-serif; cursor: help; }
+body.catalog-only .ingest-mode-info:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+body.catalog-only .ingest-mode-tip { position: fixed; z-index: 25; width: min(290px, calc(100vw - 32px)); padding: 10px 12px; border: 1px solid var(--border2); border-radius: 6px; background: var(--bg2); color: var(--text); font-size: 12px; line-height: 1.5; }
+@media (prefers-reduced-motion: reduce) { body.catalog-only :is(#ingestSafeMode, #compressionSafeMode)::after { transition: none; } }
 body.catalog-only #dropZone.import-drop-zone {
   display: flex;
   flex: 1 0 180px;
@@ -1180,6 +1194,12 @@ body.catalog-only .library-session-table th:nth-child(6) { width: 18.7%; }
 body.catalog-only .library-session-table th:nth-child(7) { width: 10.3%; }
 body.catalog-only .library-session-table th:nth-child(8) { width: 15.8%; }
 body.catalog-only .library-session-table td:nth-child(6) { font-family: var(--font-mono); }
+body.catalog-only .session-select { display: flex; align-items: center; gap: .4rem; }
+body.catalog-only .session-select-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+body.catalog-only .session-compression { display: inline-flex; flex: 0 0 16px; color: var(--dim); }
+body.catalog-only .session-compression svg { width: 16px; height: 18px; }
+body.catalog-only .session-compression[data-compression="compressed"] { color: var(--good); }
+body.catalog-only .session-compression[data-compression="mixed"] { color: var(--warn); }
 body.catalog-only .library-session-table .session-empty-state {
   height: 100%;
   min-height: 0;
@@ -1558,3 +1578,8 @@ body.catalog-only .selected-map-empty .empty-icon { width: 4.5714rem; height: 4.
   body.catalog-only .skywrap { grid-template-columns: 2.5rem minmax(0, 1fr); }
   body.catalog-only .sky-axis { font-size: .72rem; }
 }
+
+body.catalog-only .compression-mode-help { position: relative; font-size: 12px; }
+body.catalog-only .compression-mode-help summary { border: 1px solid var(--border2); border-radius: 50%; width: 22px; height: 22px; text-align: center; cursor: help; list-style: none; color: var(--dim); }
+body.catalog-only .compression-mode-help p { max-width: 540px; color: var(--dim); line-height: 1.5; }
+body.catalog-only #compressionPrepareLabel, body.catalog-only #compressionWriteLabel { display: block; margin-top: 12px; font-size: 12px; color: var(--dim); }

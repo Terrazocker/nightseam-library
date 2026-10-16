@@ -7,13 +7,86 @@ import logging
 import os
 from pathlib import Path
 import stat
+import threading
 import uuid
 
-from .archive_health import _contained, _inspect, _signature
-from .paths import safe_rel, safe_token
+from .archive_health import _contained, _inspect, _signature, _PINNED_PATHS
+from .paths import safe_rel, safe_token, safe_join
 from .trash_paths import TRASH_FOLDER, MARKER, managed_trash
 
 log = logging.getLogger(__name__)
+_PINNED_LINEAGE = threading.local()
+
+
+class PinnedParents:
+    """Reuse live Windows directory pins across workers in one operation."""
+    def __init__(self, locations):
+        self.stack, self.parents = ExitStack(), set()
+        self.folders, self.targets, self.folder_ids = {}, {}, {}
+        try:
+            if os.name == 'nt':
+                for root, relative, identity in locations:
+                    target = _contained(root, relative, identity)
+                    key = root, identity, target.parent
+                    if key not in self.parents:
+                        self.stack.enter_context(_parent(root, relative, identity))
+                        self.parents.add(key)
+                    clean = safe_rel(relative)
+                    parent = clean.rsplit('/', 1)[0] if '/' in clean else ''
+                    self.folders[root, identity, parent] = target.parent
+                    info = target.parent.lstat()
+                    self.folder_ids[root, identity, parent] = info.st_dev, info.st_ino
+                    self.targets[root, identity, clean] = target
+        except BaseException:
+            self.close()
+            raise
+
+    @contextmanager
+    def use(self):
+        previous = getattr(_PINNED_LINEAGE, 'parents', ())
+        previous_paths = getattr(_PINNED_PATHS, 'context', None)
+        _PINNED_LINEAGE.parents = self.parents
+        _PINNED_PATHS.context = self
+        try:
+            yield
+        finally:
+            _PINNED_LINEAGE.parents = previous
+            _PINNED_PATHS.context = previous_paths
+
+    def target(self, root, relative, identity):
+        clean = safe_rel(relative)
+        if clean is None:
+            raise ValueError('Invalid relative archive path.')
+        parent = clean.rsplit('/', 1)[0] if '/' in clean else ''
+        folder = self.folders.get((root, identity, parent))
+        if folder is None:
+            return None
+        info = folder.lstat()
+        if (info.st_file_attributes & 0x400 or not stat.S_ISDIR(info.st_mode) or
+                (info.st_dev, info.st_ino) != self.folder_ids[root, identity, parent]):
+            raise ValueError('The pinned archive directory changed.')
+        lexical = folder / clean.rsplit('/', 1)[-1]
+        try:
+            leaf_info = lexical.lstat()
+        except FileNotFoundError:
+            leaf_info = None
+        if leaf_info is not None and leaf_info.st_file_attributes & 0x400:
+            raise ValueError('Linked archive paths are not followed.')
+        key = root, identity, clean
+        target = self.targets.get(key)
+        if target is None:
+            target = safe_join(root, clean)
+            if target is None or target != lexical:
+                raise ValueError('The archive path changed.')
+            self.targets[key] = target
+        return target
+
+    def close(self):
+        self.stack.close()
+        self.parents.clear()
+        self.folders.clear()
+        self.targets.clear()
+        self.folder_ids.clear()
 
 
 class TrashUnavailable(ValueError):
@@ -91,6 +164,9 @@ def _payload(entry):
 def _parent(root, relative, identity):
     """Pin Windows directory lineage; anchor POSIX renames to directory handles."""
     target = _contained(root, relative, identity)
+    if os.name == 'nt' and (root, identity, target.parent) in getattr(_PINNED_LINEAGE, 'parents', ()):
+        yield None
+        return
     with ExitStack() as stack:
         if os.name == "nt":
             kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -101,7 +177,7 @@ def _parent(root, relative, identity):
             for folder in [*reversed(target.parent.parents), target.parent]:
                 if folder.is_symlink() or folder.is_junction():
                     raise TrashUnavailable("Linked archive paths cannot be moved.")
-                handle = kernel.CreateFileW(str(folder), 0x80, 3, None, 3, 0x02000000 | 0x00200000, None)
+                handle = kernel.CreateFileW(str(folder), 0x80000000, 3, None, 3, 0x02000000 | 0x00200000, None)
                 if handle == ctypes.c_void_p(-1).value:
                     raise ctypes.WinError(ctypes.get_last_error())
                 stack.callback(kernel.CloseHandle, handle)

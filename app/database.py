@@ -5,7 +5,7 @@ for new databases; databases that still carry them keep those tables untouched
 (additive-migration policy) and no code reads them."""
 
 from __future__ import annotations
-from contextlib import nullcontext
+from contextlib import nullcontext, contextmanager
 
 import csv
 import json
@@ -22,6 +22,7 @@ from pathlib import Path
 from . import catalog_data
 from .paths import resource_dir, safe_rel
 from .theme import normalize_theme
+from .archive_lock import ArchiveLock
 
 log = logging.getLogger(__name__)
 BACKUP_HISTORY_LIMIT = 5
@@ -94,6 +95,7 @@ CREATE TABLE IF NOT EXISTS images (
     content_sha256 TEXT,
     file_size INTEGER,
     file_mtime_ns INTEGER,
+    storage_compressed INTEGER,
     ingested_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_images_object_id_id
@@ -107,6 +109,23 @@ CREATE TABLE IF NOT EXISTS image_integrity (
     mtime_ns INTEGER,
     source TEXT NOT NULL,
     recorded_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS image_compression (
+    image_id INTEGER PRIMARY KEY,
+    original_sha256 TEXT NOT NULL,
+    original_size INTEGER NOT NULL,
+    original_name TEXT NOT NULL,
+    compressed_sha256 TEXT NOT NULL,
+    compressed_size INTEGER NOT NULL,
+    current_sha256 TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS compression_journal (
+    token TEXT PRIMARY KEY,
+    archive TEXT NOT NULL,
+    root_dev TEXT NOT NULL,
+    root_ino TEXT NOT NULL,
+    state TEXT NOT NULL,
+    plan_json TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS archive_health_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -187,7 +206,7 @@ class Database:
         self.lock = threading.RLock()
         # Serialize archive import/reindex publication without blocking reads of
         # the shared SQLite connection during filesystem work.
-        self.archive_lock = threading.RLock()
+        self.archive_lock = ArchiveLock()
         existing = self.path.exists() and self.path.stat().st_size > 0
         self.conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
@@ -235,7 +254,7 @@ class Database:
                              ("session_key", "TEXT"), ("session_kind", "TEXT"),
                              ("session_start", "TEXT"), ("session_end", "TEXT"),
                              ("content_sha256", "TEXT"), ("file_size", "INTEGER"),
-                             ("file_mtime_ns", "INTEGER")):
+                             ("file_mtime_ns", "INTEGER"), ("storage_compressed", "INTEGER")):
             try:
                 self.conn.execute(f"ALTER TABLE images ADD COLUMN {column} {kind}")
             except sqlite3.OperationalError:
@@ -245,6 +264,14 @@ class Database:
             "ON images(content_sha256)")
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_images_file_size ON images(file_size)")
+        self.conn.execute('CREATE INDEX IF NOT EXISTS idx_compression_original ON image_compression(original_sha256,original_size)')
+        self.conn.execute('CREATE INDEX IF NOT EXISTS idx_compression_packed ON image_compression(compressed_sha256,compressed_size)')
+        # Only known byte identities can classify old records without opening files.
+        self.conn.execute('''UPDATE images SET storage_compressed=(
+            SELECT CASE WHEN images.content_sha256=c.compressed_sha256 THEN 1
+                        WHEN images.content_sha256=c.original_sha256 THEN 0 END
+            FROM image_compression c WHERE c.image_id=images.id)
+            WHERE storage_compressed IS NULL AND id IN (SELECT image_id FROM image_compression)''')
         self.conn.execute(
             "INSERT OR IGNORE INTO image_integrity "
             "SELECT id,content_sha256,file_size,file_mtime_ns,'existing_fingerprint',? "
@@ -254,6 +281,7 @@ class Database:
             self.conn.execute("ALTER TABLE import_batches ADD COLUMN run_id TEXT")
         except sqlite3.OperationalError:
             pass
+        self.conn.execute('CREATE INDEX IF NOT EXISTS idx_import_run ON import_batches(run_id,slug,session,frame)')
         try:  # migration: popularity scores for tiebreaking
             self.conn.execute("ALTER TABLE objects ADD COLUMN popularity INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
@@ -267,6 +295,21 @@ class Database:
         self.apply_popularity()
         self.migrate_legacy_object_ids()
         self.make_backup()
+        # Resolver snapshots survive upload chunks. Track local SQL changes to
+        # catalog tables, including legacy/custom callers; data_version below
+        # also catches writes committed by another SQLite connection.
+        self.conn.execute('CREATE TEMP TABLE catalog_revision(value INTEGER)')
+        self.conn.execute('INSERT INTO catalog_revision VALUES(0)')
+        for table in ('objects', 'custom_objects', 'advanced_objects'):
+            for operation in ('INSERT', 'UPDATE', 'DELETE'):
+                self.conn.execute(f'CREATE TEMP TRIGGER catalog_{table}_{operation} AFTER {operation} ON main.{table} '
+                    'BEGIN UPDATE catalog_revision SET value=value+1; END')
+        self.conn.commit()
+
+    def catalog_revision(self):
+        with self.lock:
+            return (self.conn.execute('SELECT value FROM catalog_revision').fetchone()[0],
+                    self.conn.execute('PRAGMA data_version').fetchone()[0])
 
     def make_backup(self) -> None:
         """Publish a validated snapshot and retain five per recovery phase.
@@ -527,12 +570,49 @@ class Database:
 
     # ---------------- ingested images ----------------
 
+    @contextmanager
+    def import_unit(self):
+        """Commit one image and its history together, with no IO in this lock."""
+        with self.lock:
+            try:
+                self.conn.execute('BEGIN IMMEDIATE')
+                self._import_unit = True
+                yield
+                self.conn.commit()
+            except BaseException:
+                self.conn.rollback()
+                raise
+            finally:
+                self._import_unit = False
+
     def add_image(self, rec: dict) -> int:
         with self.lock:
             try:
                 image_id = self._insert_image(rec)
-                self.conn.commit()
+                if rec.get('compression'):
+                    self._set_compression(image_id, rec['compression'])
+                if not getattr(self, '_import_unit', False):
+                    self.conn.commit()
                 return image_id
+            except BaseException:
+                self.conn.rollback()
+                raise
+
+    def _set_compression(self, image_id, mapping):
+        """Record input/output identities; integrity provenance records the check policy."""
+        self.conn.execute('INSERT OR REPLACE INTO image_compression VALUES(?,?,?,?,?,?,?)',
+            (image_id, *(mapping[k] for k in ('original_sha256', 'original_size',
+                'original_name', 'compressed_sha256', 'compressed_size', 'current_sha256'))))
+
+    def restore_compressed_image(self, image_id, digest, size, mtime_ns, mapping):
+        with self.lock:
+            try:
+                self.conn.execute('UPDATE images SET content_sha256=?,file_size=?,file_mtime_ns=?,storage_compressed=? WHERE id=?',
+                    (digest, size, mtime_ns, int(digest == mapping['compressed_sha256']), image_id))
+                self.conn.execute('INSERT OR REPLACE INTO image_integrity VALUES(?,?,?,?,?,?)',
+                    (image_id, digest, size, mtime_ns, 'verified_rice_restore', datetime.now(UTC).isoformat()))
+                self._set_compression(image_id, mapping)
+                self.conn.commit()
             except BaseException:
                 self.conn.rollback()
                 raise
@@ -543,8 +623,8 @@ class Database:
             "INSERT INTO images(file,orig_name,object_id,object_name,"
             "ra_hours,dec_deg,exposure,date_obs,session_date_obs,filter,telescope,imagetyp,"
             "ingested_at,content_sha256,file_size,file_mtime_ns,"
-            "site_lat,site_lon,session_key,session_kind,session_start,session_end) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "site_lat,site_lon,session_key,session_kind,session_start,session_end,storage_compressed) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (rec["file"], rec["orig_name"], rec.get("object_id"),
              rec["object_name"], finite_or_none(rec.get("ra_hours")),
              finite_or_none(rec.get("dec_deg")),
@@ -555,7 +635,7 @@ class Database:
              rec.get("file_size"), rec.get("file_mtime_ns"),
              finite_or_none(rec.get("site_lat")), finite_or_none(rec.get("site_lon")),
              rec.get("session_key"), rec.get("session_kind"),
-             rec.get("session_start"), rec.get("session_end")))
+             rec.get("session_start"), rec.get("session_end"), rec.get("storage_compressed")))
         if rec.get("content_sha256"):
             self.conn.execute(
                 "INSERT INTO image_integrity VALUES(?,?,?,?,?,?)",
@@ -607,11 +687,13 @@ class Database:
                         raise ValueError("Reindex session update refers to an unknown image")
                     self.conn.execute(
                         "UPDATE images SET site_lat=?,site_lon=?,session_key=?,session_kind=?,"
-                        "session_start=?,session_end=?,date_obs=CASE WHEN ? THEN ? ELSE date_obs END WHERE id=?",
+                        "session_start=?,session_end=?,date_obs=CASE WHEN ? THEN ? ELSE date_obs END,"
+                        "storage_compressed=CASE WHEN ? THEN ? ELSE storage_compressed END WHERE id=?",
                         (finite_or_none(rec.get("site_lat")), finite_or_none(rec.get("site_lon")),
                          rec.get("session_key"), rec.get("session_kind"),
                          rec.get("session_start"), rec.get("session_end"), "date_obs" in rec,
-                         rec.get("date_obs"), rec["id"]))
+                         rec.get("date_obs"), "storage_compressed" in rec,
+                         rec.get("storage_compressed"), rec["id"]))
                 for rec in additions:
                     if cancel_check is not None:
                         cancel_check()
@@ -665,34 +747,43 @@ class Database:
 
     def acknowledge_integrity(self, record, archive, job_id, action, *,
                               digest=None, size=None, mtime_ns=None):
-        """Revalidated user resolution and its history commit atomically."""
+        return self.acknowledge_integrity_batch([record], archive, job_id, action,
+            digest=digest, size=size, mtime_ns=mtime_ns)
+
+    def acknowledge_integrity_batch(self, records, archive, job_id, action, *,
+                                    digest=None, size=None, mtime_ns=None):
+        """Validate every snapshot before one atomic resolution/history commit."""
         with self.lock:
             try:
-                current = self.conn.execute(
-                    "SELECT images.*,i.sha256 AS expected_sha256,i.size AS expected_size,"
-                    "i.mtime_ns AS expected_mtime_ns,i.source AS baseline_source,"
-                    "i.recorded_at AS baseline_recorded_at FROM images "
-                    "LEFT JOIN image_integrity i ON i.image_id=images.id WHERE images.id=?",
-                    (record["id"],)).fetchone()
-                if current is None or dict(current) != record or self.image_dir() != archive:
-                    raise ValueError("The catalog record changed since the scan. Run a new check.")
+                self.conn.execute('BEGIN IMMEDIATE')
+                for record in records:
+                    current = self.conn.execute(
+                        "SELECT images.*,i.sha256 AS expected_sha256,i.size AS expected_size,"
+                        "i.mtime_ns AS expected_mtime_ns,i.source AS baseline_source,"
+                        "i.recorded_at AS baseline_recorded_at FROM images "
+                        "LEFT JOIN image_integrity i ON i.image_id=images.id WHERE images.id=?",
+                        (record["id"],)).fetchone()
+                    if current is None or dict(current) != record or self.image_dir() != archive:
+                        raise ValueError("The catalog record changed since the scan. Run a new check.")
                 stamp = datetime.now(UTC).isoformat()
-                if action == "forget_missing":
-                    self.conn.execute("DELETE FROM image_integrity WHERE image_id=?", (record["id"],))
-                    self.conn.execute("DELETE FROM images WHERE id=?", (record["id"],))
-                elif action == "accept_contents":
+                for record in records:
+                    self.conn.execute("DELETE FROM image_compression WHERE image_id=?", (record["id"],))
+                    if action == "forget_missing":
+                        self.conn.execute("DELETE FROM image_integrity WHERE image_id=?", (record["id"],))
+                        self.conn.execute("DELETE FROM images WHERE id=?", (record["id"],))
+                    elif action == "accept_contents":
+                        self.conn.execute(
+                            "UPDATE image_integrity SET sha256=?,size=?,mtime_ns=?,source=?,recorded_at=? "
+                            "WHERE image_id=?", (digest, size, mtime_ns, "user_accepted", stamp, record["id"]))
+                        self.conn.execute(
+                            "UPDATE images SET content_sha256=?,file_size=?,file_mtime_ns=?,storage_compressed=NULL WHERE id=?",
+                            (digest, size, mtime_ns, record["id"]))
+                    else:
+                        raise ValueError("Unsupported acknowledgement action.")
                     self.conn.execute(
-                        "UPDATE image_integrity SET sha256=?,size=?,mtime_ns=?,source=?,recorded_at=? "
-                        "WHERE image_id=?", (digest, size, mtime_ns, "user_accepted", stamp, record["id"]))
-                    self.conn.execute(
-                        "UPDATE images SET content_sha256=?,file_size=?,file_mtime_ns=? WHERE id=?",
-                        (digest, size, mtime_ns, record["id"]))
-                else:
-                    raise ValueError("Unsupported acknowledgement action.")
-                self.conn.execute(
-                    "INSERT INTO archive_health_actions(job_id,image_id,action,archive,file,"
-                    "previous_sha256,accepted_sha256,acknowledged_at) VALUES(?,?,?,?,?,?,?,?)",
-                    (job_id, record["id"], action, archive, record["file"], record["expected_sha256"], digest, stamp))
+                        "INSERT INTO archive_health_actions(job_id,image_id,action,archive,file,"
+                        "previous_sha256,accepted_sha256,acknowledged_at) VALUES(?,?,?,?,?,?,?,?)",
+                        (job_id, record["id"], action, archive, record["file"], record["expected_sha256"], digest, stamp))
                 self.conn.commit()
                 return stamp
             except BaseException:
@@ -709,6 +800,10 @@ class Database:
             return bool(self.conn.execute(
                 "SELECT 1 FROM image_trash WHERE archive=? AND state LIKE 'pending_%' LIMIT 1",
                 (self.image_dir(),)).fetchone())
+
+    def pending_compression(self) -> bool:
+        with self.lock:
+            return bool(self.conn.execute('SELECT 1 FROM compression_journal LIMIT 1').fetchone())
 
     def images_with_digest(self, digest: str) -> list[dict]:
         """Fingerprint candidates in deterministic order, using the index."""
@@ -812,7 +907,8 @@ class Database:
                      rec["slug"], rec["session"], rec["frame"], rec["n_files"],
                      round(float(rec.get("total_exposure") or 0.0), 1),
                      rec.get("first_obs"), rec["image_dir"], rec.get("run_id")))
-                self.conn.commit()
+                if not getattr(self, '_import_unit', False):
+                    self.conn.commit()
                 return c.lastrowid
             except BaseException:
                 self.conn.rollback()
@@ -835,7 +931,8 @@ class Database:
                          round(row["total_exposure"] + rec["total_exposure"], 1),
                          min((value for value in (row["first_obs"], rec.get("first_obs"))
                               if value), default=None), row["id"]))
-                    self.conn.commit()
+                    if not getattr(self, '_import_unit', False):
+                        self.conn.commit()
                     return row["id"]
                 return self.add_import_batch({**rec, "run_id": run_id})
             except BaseException:

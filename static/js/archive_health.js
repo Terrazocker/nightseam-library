@@ -61,6 +61,36 @@ function render(report) {
     : "Deep verification compares preserved import hashes. Scans never establish or replace an integrity baseline.";
   const list = $("#healthFindings");
   list.replaceChildren();
+  const sessions = report.deletion_sessions || [];
+  const pending = report.pending_deletions || 0;
+  $("#healthAcceptAll").hidden = !pending || report.status !== "completed";
+  $("#healthAcceptAll").disabled = Boolean(busy);
+  $("#healthAcceptAll").textContent = `Accept all deletions (${pending})`;
+  const grouped = new Map();
+  for (const session of sessions) {
+    const item = document.createElement("li");
+    const title = document.createElement("strong");
+    title.textContent = `${session.object_name} · ${session.label}`;
+    const count = document.createElement("p");
+    count.textContent = `${session.pending_count} missing exposure${session.pending_count === 1 ? "" : "s"} to acknowledge${session.acknowledged_count ? ` · ${session.acknowledged_count} acknowledged` : ""}`;
+    item.append(title, count);
+    if (session.pending_count && report.status === "completed") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Acknowledge session";
+      button.disabled = Boolean(busy);
+      button.addEventListener("click", () => acknowledge(null, session));
+      item.append(button);
+    }
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "Exposure details";
+    const members = document.createElement("ul");
+    details.append(summary, members);
+    item.append(details);
+    list.append(item);
+    grouped.set(session.id, members);
+  }
   for (const finding of report.findings || []) {
     const item = document.createElement("li");
     const label = document.createElement("strong");
@@ -84,12 +114,12 @@ function render(report) {
       action.addEventListener("click", () => acknowledge(finding));
       item.appendChild(action);
     }
-    list.appendChild(item);
+    (finding.code === "missing" && grouped.get(finding.session_id) || list).appendChild(item);
   }
   const shown = (report.findings || []).length;
   $("#healthReportLimit").textContent = report.omitted_findings
-    ? `Showing ${shown} of ${findings} findings. The report retains the first ${report.finding_limit}; ${report.omitted_findings} further findings are counted but omitted.`
-    : findings > shown ? `Showing the first ${shown} of ${findings} findings. Download the report for retained findings.` : "";
+    ? `Showing ${shown} of ${findings} exposure details. Session and all actions cover retained deletions only. The report retains the first ${report.finding_limit}; ${report.omitted_findings} further findings are omitted. Run another check after acknowledgement for remaining deletions.`
+    : findings > shown ? `Showing the first ${shown} of ${findings} exposure details. Session and all actions include every retained deletion, including those beyond this display. Download the report for all details.` : "";
 }
 
 async function poll() {
@@ -137,10 +167,14 @@ async function start(mode) {
   await poll();
 }
 
-async function acknowledge(finding) {
+async function acknowledge(finding, session = null) {
   if (!job || running || acknowledging || job.acknowledging) return;
-  const action = finding.code === "missing" ? "forget_missing" : "accept_contents";
-  const message = action === "forget_missing"
+  const action = !finding || finding.code === "missing" ? "forget_missing" : "accept_contents";
+  const scope = session ? "session" : finding ? "image" : "all";
+  const count = session ? session.pending_count : job.pending_deletions;
+  const message = scope !== "image"
+    ? `Acknowledge deletion of ${count} missing exposures${session ? ` in ${session.object_name} · ${session.label}` : " across all sessions in this report"}?\n\nTheir catalog records will be removed and library counts will update. Existing exposures stay in the catalog. No files will be deleted.${job.omitted_findings ? "\n\nOnly retained findings are included. Run another check afterwards for omitted findings." : ""}`
+    : action === "forget_missing"
     ? `Acknowledge intentional deletion of this exposure?\n\n${finding.path}\n\nIts catalog record will be removed and library counts will update. No files will be deleted.`
     : `Accept the changed contents of this exposure?\n\n${finding.path}\n\nThe contents observed by the Deep scan will become the new integrity baseline. Only accept this if the change was expected.`;
   if (!window.confirm(message)) return;
@@ -153,7 +187,8 @@ async function acknowledge(finding) {
   try {
     const result = await api(`/api/library/health/${acknowledgementId}/acknowledge`, { method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image_id: finding.image_id, action, confirmed: true }), silent: true });
+      body: JSON.stringify({ ...(scope === "image" ? { image_id: finding.image_id } : { scope,
+        ...(session ? { session_id: session.id } : {}) }), action, confirmed: true }), silent: true });
     if (acknowledgementGeneration === generation) render(result);
   } catch (error) { failure = error.message; }
   finally {
@@ -203,6 +238,7 @@ async function open() {
 }
 
 export function bindArchiveHealth() {
+  $("#healthAcceptAll").addEventListener("click", () => acknowledge(null));
   $("#btnTopHealth").addEventListener("click", open);
   $("#healthClose").addEventListener("click", close);
   $("#archiveHealthModal").addEventListener("keydown", event => {

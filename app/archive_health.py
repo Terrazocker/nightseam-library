@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -15,10 +16,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .paths import safe_join, safe_rel
+from .fits_metadata import is_fits_name
+from . import imglib
 
 log = logging.getLogger(__name__)
 MAX_FINDINGS = 10_000
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_PINNED_PATHS = threading.local()
 
 
 class ScanCancelled(Exception):
@@ -50,6 +54,11 @@ def _check_root(root, identity):
 
 
 def _contained(root, relative, identity):
+    pinned = getattr(_PINNED_PATHS, 'context', None)
+    if pinned is not None:
+        target = pinned.target(root, relative, identity)
+        if target is not None:
+            return target
     _check_root(root, identity)
     clean = safe_rel(relative)
     if clean is None:
@@ -84,7 +93,7 @@ def _directory_entries(root, relative, identity, checkpoint):
             # No FILE_SHARE_DELETE: pin the entire directory lineage against
             # renames/reparse replacement while Windows enumerates it.
             for directory in [*reversed(folder.parents), folder]:
-                handle = kernel.CreateFileW(str(directory), 0x80, 3, None, 3,
+                handle = kernel.CreateFileW(str(directory), 0x80000000, 3, None, 3,
                                             0x02000000 | 0x00200000, None)
                 if handle == ctypes.c_void_p(-1).value:
                     raise ctypes.WinError(ctypes.get_last_error())
@@ -174,6 +183,12 @@ def scan_archive(db, mode, cancel, publish):
                     image_id=record["id"] if record else None, **extra)
         if record and code in ("missing", "content_changed"):
             item["_record"] = dict(record)
+            metadata = imglib.image_session_metadata(record)
+            object_key = record.get("object_id") or "u:" + imglib.name_key(record.get("object_name") or "")
+            item["session_id"] = hashlib.sha256(json.dumps(
+                [object_key, metadata["session_key"]]).encode("utf-8")).hexdigest()[:24]
+            item["session_object"] = record.get("object_name") or "Unresolved object"
+            item["session_label"] = metadata.get("session_start") or metadata["session_key"]
         report["findings"].append(item)
 
     def read_progress(amount):
@@ -227,7 +242,7 @@ def scan_archive(db, mode, cancel, publish):
                             if not folder and name == TRASH_FOLDER and managed_trash(root):
                                 continue
                             pending.append(relative)
-                        elif name.lower().endswith((".fit", ".fits")) and os.path.normcase(relative) not in known:
+                        elif is_fits_name(name) and os.path.normcase(relative) not in known:
                             untracked.append(relative)
                         progress()
                 finally:
@@ -319,6 +334,17 @@ class ArchiveHealthManager:
         result["findings"] = [{key: value for key, value in item.items() if key != "_record"} for item in items]
         result["finding_limit"] = MAX_FINDINGS
         result["acknowledged_count"] = sum(bool(item.get("acknowledged_at")) for item in self.job["findings"])
+        groups = {}
+        for item in self.job["findings"]:
+            if item["code"] != "missing":
+                continue
+            group = groups.setdefault(item["session_id"], dict(id=item["session_id"],
+                object_name=item["session_object"], label=item["session_label"], missing_count=0,
+                pending_count=0, acknowledged_count=0))
+            group["missing_count"] += 1
+            group["acknowledged_count" if item.get("acknowledged_at") else "pending_count"] += 1
+        result["deletion_sessions"] = list(groups.values())
+        result["pending_deletions"] = sum(group["pending_count"] for group in groups.values())
         if self.job["status"] in ("running", "cancelling"):
             result["elapsed_seconds"] = round(time.monotonic() - self.started, 2)
         return result
@@ -373,7 +399,7 @@ class ArchiveHealthManager:
                 self.job["status"] = "cancelling"
                 self.cancel_event.set()
 
-    def acknowledge(self, job_id, image_id, action):
+    def acknowledge(self, job_id, image_id, action, *, scope="image", session_id=None):
         if not self.operation_lock.acquire(blocking=False):
             raise ValueError("Another acknowledgement is in progress.")
         acquired = False
@@ -386,10 +412,15 @@ class ArchiveHealthManager:
                 if self.job["status"] != "completed":
                     raise ValueError("Only completed scans can be acknowledged. Run a new check.")
                 code = {"forget_missing": "missing", "accept_contents": "content_changed"}.get(action)
-                issue = next((item for item in self.job["findings"] if item.get("image_id") == image_id and item["code"] == code), None)
-                if not issue:
+                if scope not in ("image", "session", "all") or (scope != "image" and action != "forget_missing"):
+                    raise ValueError("Only deletions support session or all acknowledgement.")
+                issues = [item for item in self.job["findings"] if item["code"] == code and (
+                    (scope == "image" and item.get("image_id") == image_id) or scope == "all" or
+                    (scope == "session" and session_id and item.get("session_id") == session_id))]
+                if not issues:
                     raise ValueError("This finding does not support that action.")
-                if issue.get("acknowledged_at"):
+                issues = [item for item in issues if not item.get("acknowledged_at")]
+                if not issues:
                     return self._snapshot_locked()
                 report = dict(self.job)
                 self.job["acknowledging"] = True
@@ -398,6 +429,8 @@ class ArchiveHealthManager:
                 raise ValueError("Another archive operation is in progress. Wait for it to finish.")
             if self.db.pending_trash():
                 raise ValueError('An interrupted trash operation needs recovery before acknowledging archive findings. Use scripts/restore_legacy_trash.py to inspect retained recovery records.')
+            if self.db.pending_compression():
+                raise ValueError('Compression recovery must finish before acknowledging archive findings.')
             if self.db.image_dir() != report["archive"]:
                 raise ValueError("The archive location changed. Run a new check.")
             root = Path(report["archive"]).resolve(strict=True)
@@ -412,14 +445,16 @@ class ArchiveHealthManager:
                 listing.close()
             digest = size = mtime_ns = None
             if action == "forget_missing":
-                target = _contained(root, issue["path"], identity)
-                try:
-                    target.lstat()
-                except FileNotFoundError:
-                    _check_root(root, identity)
-                else:
-                    raise ValueError("The exposure exists again. Run a new check.")
+                for issue in issues:
+                    target = _contained(root, issue["path"], identity)
+                    try:
+                        target.lstat()
+                    except FileNotFoundError:
+                        _check_root(root, identity)
+                    else:
+                        raise ValueError("An exposure exists again. Run a new check; no deletions were acknowledged.")
             else:
+                issue = issues[0]
                 def checkpoint():
                     if self.stopping.is_set():
                         raise ValueError("Acknowledgement stopped during application shutdown.")
@@ -430,10 +465,11 @@ class ArchiveHealthManager:
             _check_root(root, identity)
             if self.stopping.is_set():
                 raise ValueError("Acknowledgement stopped during application shutdown.")
-            stamp = self.db.acknowledge_integrity(issue["_record"], report["archive"], job_id,
+            stamp = self.db.acknowledge_integrity_batch([issue["_record"] for issue in issues], report["archive"], job_id,
                 action, digest=digest, size=size, mtime_ns=mtime_ns)
             with self.lock:
-                issue.update(acknowledged_at=stamp, acknowledgement=action)
+                for issue in issues:
+                    issue.update(acknowledged_at=stamp, acknowledgement=action)
                 self.job["acknowledging"] = False
                 return self._snapshot_locked()
         except (OSError, RuntimeError, ArchiveUnavailable):

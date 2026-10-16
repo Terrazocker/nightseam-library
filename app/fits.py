@@ -1,7 +1,7 @@
-"""Primary-HDU import metadata parsing.
+"""FITS header values and astronomy metadata parsing.
 
-Ingest keeps the original primary-header parser and .fit/.fits extension rules.
-Original exposures are never rewritten.
+The tolerant primary-header parser is retained for legacy files. File traversal
+and gzip metadata reads live in fits_metadata; exposures are never rewritten.
 """
 
 from __future__ import annotations
@@ -76,14 +76,33 @@ def _is_end_card(rec: str) -> bool:
 
 def _parse_records(records: list[str]) -> dict:
     out: dict = {}
-    for rec in records:
+    for index, rec in enumerate(records):
         if rec.startswith(("COMMENT", "HISTORY")) or not rec.strip():
             continue
         m = _KEYWORD_RE.match(rec)
         if not m:
             continue
         key, raw = m.group(1), m.group(2)
-        out.setdefault(key, _parse_value(raw))
+        value = _parse_value(raw)
+        # Standard long strings can span CONTINUE cards (without an equals
+        # sign). Only remove an ampersand when a quoted continuation follows.
+        if isinstance(value, str) and value.endswith("&"):
+            parts = [value]
+            following = index + 1
+            while parts[-1].endswith("&") and following < len(records):
+                continuation = records[following]
+                if continuation[:8].strip() != "CONTINUE":
+                    break
+                text = continuation[8:].strip()
+                if not text.startswith("'"):
+                    break
+                fragment = _parse_value(text)
+                if not isinstance(fragment, str):
+                    break
+                parts.append(fragment)
+                following += 1
+            value = "".join(part[:-1] for part in parts[:-1]) + parts[-1]
+        out.setdefault(key, value)
     return out
 
 

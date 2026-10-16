@@ -131,6 +131,13 @@ def test_catalog_resolver_uses_coordinates_then_preserves_unresolved_result():
 
 # ---------------------------------------------------------------- sessions
 
+def test_session_compression_counts_exact_members_including_unknowns():
+    frames = [img(id=i, storage_compressed=state) for i, state in enumerate([1, 1, 0, None], 1)]
+    session, = imglib.compute_sessions(frames)
+    assert session['image_ids'] == [1, 2, 3, 4]
+    assert session['compression'] == dict(compressed=2, uncompressed=1, unknown=1)
+
+
 def test_sessions_merge_across_midnight():
     imgs = [
         img(date_obs="2026-08-22T23:00:00", exposure=300),

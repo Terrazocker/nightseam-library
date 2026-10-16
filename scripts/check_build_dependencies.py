@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
 LOCK = REPO / "requirements-build-lock.txt"
 ROOT_PACKAGES = {"fastapi", "uvicorn", "python-multipart", "pywebview",
                  "pytest", "httpx", "httpx2", "pillow", "pyinstaller", "mini-racer", "astropy", "numpy"}
@@ -91,6 +92,9 @@ def main() -> int:
         errors += inventory_errors(pins)
         if not errors:
             errors += closure_errors(pins)
+        if not errors:
+            from app.compression import tools
+            tools()
     except (OSError, ValueError, metadata.PackageNotFoundError) as exc:
         errors.append(str(exc))
     if errors:

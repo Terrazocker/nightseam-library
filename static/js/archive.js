@@ -50,7 +50,8 @@ export function applyArchiveUI() {
 
 /* ---------------- import pane ---------------- */
 
-const BATCH = 8;
+const BATCH = 24;
+const COMPRESSED_BATCH = 24;
 let _archiveOperation = null;
 let _reindexErrorNotice = null;
 
@@ -63,7 +64,7 @@ function elapsedLabel(ms) {
 }
 
 function lockArchiveActions() {
-  const selectors = "#btnTopIngest, #btnIngest, #btnTopReindex, #btnArcReindex, #btnTopExport, #btnTopHealth, #btnClearResults, #btnArcSave, #btnArcBrowse, #arcDir, #siteLat, #siteLon, #btnSiteSave, #libEditSave, [data-edit], [data-frame-override], [data-library-add], [data-imp]";
+  const selectors = "#btnTopIngest, #btnIngest, #btnTopReindex, #btnArcReindex, #btnTopExport, #btnTopCopy, #btnTopHealth, #btnClearResults, #btnArcSave, #btnArcBrowse, #arcDir, #siteLat, #siteLon, #btnSiteSave, #compressOnIngest, #ingestSafeMode, #libEditSave, [data-edit], [data-frame-override], [data-library-add], [data-rice-mode], [data-imp]";
   const controls = [...document.querySelectorAll(selectors)];
   const previous = controls.map(control => control.disabled);
   controls.forEach(control => { control.disabled = true; });
@@ -80,6 +81,18 @@ export function beginArchiveHealth() {
   $("#btnTopHealth").disabled = false;
   setBusy(true, "Checking archive health...");
   return () => { unlock(); _archiveOperation = null; setBusy(false); };
+}
+
+export function beginCompression() {
+  if (_archiveOperation) {
+    toast("Wait for the current archive operation to finish.", "info", 4000);
+    return null;
+  }
+  _archiveOperation = "compression";
+  const unlock = lockArchiveActions();
+  $("#btnTopCopy").disabled = false;
+  setBusy(true, "Converting FITS files...");
+  return () => { unlock(); _archiveOperation = null; renderLibrary(); setBusy(false); };
 }
 
 function startImportActivity(total) {
@@ -154,13 +167,16 @@ async function ingestFiles(files, frame, session, sessionAnchorId) {
     return;
   }
   const list = Array.from(files || []).filter(
-    f => /\.(fit|fits)$/i.test(f.name));
+    f => /\.(fit|fits|fts|fz)(\.gz)?$/i.test(f.name));
   if (!list.length) {
-    toast("No supported exposures selected (.fit or .fits).", "err", 4000);
+    toast("No supported exposures selected (FITS, .fz or FITS.gz).", "err", 4000);
     return;
   }
   const fromFrameSelector = frame == null && session == null;
   const selectedFrame = fromFrameSelector ? _importFrameOverride : frame;
+  const compress = $("#compressOnIngest").checked;
+  const compressionMode = $("#ingestSafeMode").checked ? "safe" : "fast";
+  const batchSize = compress ? COMPRESSED_BATCH : BATCH;
   // one run id per import action: the server merges the per-chunk history
   // rows, so a whole session stays ONE entry in "Recent imports"
   const runId = crypto.randomUUID();
@@ -170,14 +186,16 @@ async function ingestFiles(files, frame, session, sessionAnchorId) {
   const unlock = lockArchiveActions();
   const activity = startImportActivity(list.length);
   try {
-    for (let i = 0; i < list.length; i += BATCH) {
-      const chunk = list.slice(i, i + BATCH);
+    for (let i = 0; i < list.length; i += batchSize) {
+      const chunk = list.slice(i, i + batchSize);
       const fd = new FormData();
       for (const f of chunk) fd.append("files", f);
       if (selectedFrame) fd.append("frame", selectedFrame);
       if (session) fd.append("session", session);
       if (sessionAnchorId) fd.append("session_anchor_id", sessionAnchorId);
       fd.append("run_id", runId);
+      fd.append("compress", String(compress));
+      fd.append("compression_mode", compressionMode);
       let res;
       try {
         // FITS batches can take longer than the helper's generic 30s timeout.
@@ -269,11 +287,13 @@ function renderIngestResults(results) {
   const ok = results.filter(r => r.ok && !r.skipped && !r.restored).length;
   const skipped = results.filter(r => r.ok && r.skipped).length;
   const restored = results.filter(r => r.ok && r.restored).length;
+  const compressed = results.filter(r => r.ok && r.compression === "rice").length;
   const fails = results.filter(r => !r.ok);
   if (clear) clear.hidden = false;
   if (summary) summary.textContent = `${ok} of ${results.length} files imported` +
     (skipped ? ` · ${skipped} already imported` : "") +
     (restored ? ` · ${restored} original${restored === 1 ? "" : "s"} restored` : "") +
+    (compressed ? ` · ${compressed} Rice compressed` : "") +
     (fails.length ? ` · ${fails.length} failed` : "");
   box.innerHTML = results.map((result) => {
     const object = result.object || {};
@@ -288,7 +308,7 @@ function renderIngestResults(results) {
     return `<div class="ingest-item ${status}">
       ${catalogIcon(alreadyImported || originalRestored ? "file" : result.ok ? "check" : "warning", "ingest-item-icon")}
       <span class="nm" title="${esc(result.file)}">${esc(result.file)}</span>
-      <span class="obj">${esc(description)}</span>
+      <span class="obj">${esc(description)}${result.compression === "rice" ? ` · Rice compressed${result.compression_mode === "fast" ? ' · Fast (restoration unchecked)' : result.compression_mode === "safe" ? ' · Safe (restoration verified)' : ''}` : result.compression_reason ? ` · ${esc(result.compression_reason)}` : ''}</span>
       ${result.ok ? "" : `<span class="bad">${esc(result.error || "failed")}</span>`}
     </div>`;
   }).join("");
@@ -521,6 +541,19 @@ function selectLibrarySession(index) {
   $(`#librarySessions [data-select-session="${index}"]`)?.focus({ preventScroll: true });
 }
 
+function sessionCompression(session) {
+  const counts = session.compression || {};
+  const compressed = Number(counts.compressed) || 0;
+  const plain = Number(counts.uncompressed) || 0;
+  const unknown = Math.max(Number(counts.unknown) || 0, (Number(session.n_images) || 0) - compressed - plain);
+  const state = unknown || !compressed && !plain ? "unknown"
+    : compressed && plain ? "mixed" : compressed ? "compressed" : "uncompressed";
+  const label = { compressed: "Compressed", uncompressed: "Uncompressed", mixed: "Mixed compression", unknown: "Compression unknown" }[state];
+  const detail = `${label} · ${compressed} compressed, ${plain} uncompressed` +
+    (unknown ? `, ${unknown} unknown. Reindex the archive to identify older files.` : "");
+  return { state, label, detail, icon: state === "uncompressed" ? "file" : state };
+}
+
 function renderLibrarySessions(object, sessions, activeSession) {
   const heading = $("#librarySessionsHeading");
   const count = $("#librarySessionCount");
@@ -542,6 +575,7 @@ function renderLibrarySessions(object, sessions, activeSession) {
   }
   list.innerHTML = sessions.map((s, i) => {
     const when = `${s.label || "Session"} · ` + (s.undated ? "No date recorded" : `${fmtDT(s.start)} – ${fmtDT(s.end)}`);
+    const compression = sessionCompression(s);
     const filters = Object.keys(s.filters || {}).filter((name) => name !== "?").join(" · ");
     const folders = sessionFolderPaths(object, s);
     const typeCount = (needle) => Object.entries(s.types || {}).reduce((sum, [name, value]) =>
@@ -550,7 +584,7 @@ function renderLibrarySessions(object, sessions, activeSession) {
     const lightEntry = Object.entries(s.types || {}).find(([name]) => name.toLowerCase().includes("light"));
     const lightExposure = Number(lightEntry?.[1]?.exposure) || 0;
     return `<tr class="library-session${sessions.indexOf(activeSession) === i ? " active" : ""}" data-library-session="${i}" tabindex="-1" aria-selected="${sessions.indexOf(activeSession) === i}">
-      <td><button class="session-select" type="button" data-select-session="${i}" title="${esc(when)}">${esc(when)}</button></td>
+      <td><button class="session-select" type="button" data-select-session="${i}" title="${esc(when + ' · ' + compression.detail)}"><span class="session-compression" data-compression="${compression.state}" role="img" aria-label="${esc(compression.detail)}" title="${esc(compression.detail)}">${catalogIcon(compression.icon)}</span><span class="session-select-label">${esc(when)}</span></button></td>
       <td class="mono">${typeCount("light")}</td><td class="mono">${typeCount("dark")}</td><td class="mono">${typeCount("flat")}</td><td class="mono">${typeCount("bias")}</td>
       <td class="mono" title="Light frames only">${esc(fmtDur(lightExposure))}</td><td>${esc(filters || "—")}</td><td>${folder}</td></tr>`;
   }).join("");
@@ -570,9 +604,11 @@ function renderLibrarySessions(object, sessions, activeSession) {
   const lightExposure = Number(lightEntry?.[1]?.exposure) || 0;
   const filterText = Object.keys(activeSession.filters || {}).map(esc).join(" · ");
   const folders = sessionFolderPaths(object, activeSession);
+  const compression = sessionCompression(activeSession);
   $("#libraryFrameCount").textContent = `${activeSession.n_images} frames`;
   $("#librarySessionFacts").innerHTML = `<p class="session-date">${esc(activeSession.undated ? "No date recorded" : `${fmtDT(activeSession.start)} – ${fmtDT(activeSession.end)}`)}</p>
     <dl class="library-session-facts"><div><dt>Session</dt><dd>${esc(activeSession.label || "Session")}</dd></div>
+    <div><dt>Storage</dt><dd title="${esc(compression.detail)}">${esc(compression.label)}</dd></div>
     ${activeSession.session_start && activeSession.session_end ? `<div><dt>Session window</dt><dd>${esc(fmtDT(activeSession.session_start))} – ${esc(fmtDT(activeSession.session_end))}</dd></div>` : ""}
     <div><dt>Total exposure</dt><dd>${esc(fmtDur(activeSession.exposure))}</dd></div>
     <div><dt>Light integration</dt><dd>${esc(fmtDur(lightExposure))}</dd></div></dl>
@@ -593,12 +629,15 @@ function renderLibrarySessions(object, sessions, activeSession) {
       <button class="ghost" type="button" data-library-add="flat" ${targetAttrs}>+ Flats</button>
       <button class="ghost" type="button" data-library-add="bias" ${targetAttrs}>+ Bias</button>
       <button class="ghost" type="button" data-open-library-folder="${esc(rel)}" ${folders.length ? "" : "disabled"}>Open folder</button>
+      <button class="ghost" type="button" data-rice-mode="compress" data-rice-ids="${(activeSession.image_ids || []).join(',')}" ${targetAttrs}>Compress losslessly</button>
+      <button class="ghost" type="button" data-rice-mode="uncompress" data-rice-ids="${(activeSession.image_ids || []).join(',')}" ${targetAttrs}>Uncompress</button>
       </div>${canTargetSession ? "" : '<p class="hint">Reload the library before adding calibration exposures.</p>'}`;
+    if (_archiveOperation) actions.querySelectorAll('[data-library-add], [data-rice-mode]').forEach(button => { button.disabled = true; });
   }
 }
 
 function openEdit(name) {
-  if (_archiveOperation === "health") {
+  if (_archiveOperation) {
     toast("Wait for archive health work to finish.", "info", 4000);
     return;
   }
@@ -646,6 +685,50 @@ export function bindArchive() {
     });
   });
   syncFrameSelector();
+
+  const mode = $("#ingestSafeMode"), modeGroup = $("#ingestCompressionMode");
+  const modeInfo = $("#ingestModeInfo"), modeTip = $("#ingestModeTip");
+  // Portal the explanation out of the scrolling import card so it cannot clip.
+  document.body.appendChild(modeTip);
+  let pinnedInfo = false, infoHideTimer = null;
+  const showModeInfo = show => {
+    clearTimeout(infoHideTimer);
+    modeTip.hidden = !show;
+    modeInfo.setAttribute("aria-expanded", String(show));
+    if (show) {
+      const anchor = modeGroup.getBoundingClientRect(), box = modeTip.getBoundingClientRect();
+      modeTip.style.left = `${Math.max(8, Math.min(anchor.left, innerWidth - box.width - 8))}px`;
+      const below = anchor.bottom + 6;
+      modeTip.style.top = `${Math.max(8, below + box.height <= innerHeight - 8 ? below : anchor.top - box.height - 6)}px`;
+    }
+  };
+  const deferModeInfoHide = () => {
+    clearTimeout(infoHideTimer);
+    infoHideTimer = setTimeout(() => {
+      if (!pinnedInfo && !modeGroup.matches(":hover") && !modeTip.matches(":hover") && !modeGroup.contains(document.activeElement)) showModeInfo(false);
+    }, 180);
+  };
+  const syncMode = () => {
+    mode.disabled = Boolean(_archiveOperation) || !$("#compressOnIngest").checked;
+    modeGroup.dataset.mode = mode.checked ? "safe" : "fast";
+  };
+  $("#compressOnIngest").addEventListener("change", syncMode);
+  mode.addEventListener("change", syncMode);
+  modeGroup.addEventListener("mouseenter", () => showModeInfo(true));
+  modeGroup.addEventListener("mouseleave", deferModeInfoHide);
+  modeTip.addEventListener("mouseenter", () => showModeInfo(true));
+  modeTip.addEventListener("mouseleave", deferModeInfoHide);
+  modeGroup.addEventListener("focusin", () => showModeInfo(true));
+  modeGroup.addEventListener("focusout", event => { if (!pinnedInfo && !modeGroup.contains(event.relatedTarget)) deferModeInfoHide(); });
+  modeInfo.addEventListener("click", () => { pinnedInfo = !pinnedInfo; showModeInfo(pinnedInfo); });
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && !modeTip.hidden) { event.preventDefault(); event.stopPropagation(); pinnedInfo = false; showModeInfo(false); }
+  });
+  document.addEventListener("pointerdown", event => { if (!modeGroup.contains(event.target) && !modeTip.contains(event.target)) { pinnedInfo = false; showModeInfo(false); } });
+  const repositionModeInfo = () => { if (!modeTip.hidden) showModeInfo(true); };
+  document.addEventListener("scroll", repositionModeInfo, true);
+  window.addEventListener("resize", repositionModeInfo);
+  syncMode();
 
   // archive folder
   $("#btnArcBrowse").addEventListener("click", async () => {

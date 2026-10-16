@@ -119,6 +119,87 @@ def health_acknowledgements(c):
     c.expect_eq(payload["acknowledged_count"], 2, "report must retain acknowledgements")
 
 
+@check("desktop-catalog-health-session-and-all-deletions", "catalog")
+def health_session_deletions(c):
+    sessions = [dict(id='session-a', object_name='M31', label='Night 2026-08-22', missing_count=2, pending_count=2, acknowledged_count=0),
+                dict(id='session-b', object_name='M42', label='Night 2026-08-22', missing_count=1, pending_count=1, acknowledged_count=0)]
+    findings = [dict(image_id=index + 1, code='missing', path=f'frame-{index}.fit', message='Missing exposure.',
+                     session_id='session-a' if index < 2 else 'session-b') for index in range(3)]
+    findings.append(dict(image_id=9, code='content_changed', path='edited.fit', message='Changed contents.'))
+    report = dict(id='session-ack', mode='deep', status='completed', total=4, processed=4,
+        finding_counts=dict(missing=3, content_changed=1), findings=findings, deletion_sessions=sessions,
+        pending_deletions=3, acknowledged_count=0)
+    requests, confirmations = [], []
+    def handler(route):
+        if route.request.url.endswith('/acknowledge'):
+            body = route.request.post_data_json
+            requests.append(body)
+            selected = [group for group in sessions if body['scope'] == 'all' or group['id'] == body.get('session_id')]
+            for group in selected:
+                group.update(pending_count=0, acknowledged_count=group['missing_count'])
+                for item in findings:
+                    if item.get('session_id') == group['id']:
+                        item.update(acknowledged_at='2026-10-15T12:00:00Z', acknowledgement='forget_missing')
+            report.update(pending_deletions=sum(group['pending_count'] for group in sessions),
+                          acknowledged_count=sum(group['acknowledged_count'] for group in sessions))
+        route.fulfill(json=report)
+    def confirm(dialog):
+        confirmations.append(dialog.message)
+        dialog.accept()
+    c.page.route('**/api/library/health**', handler)
+    c.goto('/catalog.html'); c.wait_hidden('#busy'); c.page.locator('#btnTopHealth').click()
+    buttons = c.page.get_by_role('button', name='Acknowledge session', exact=True)
+    c.expect_eq(buttons.count(), 2, 'deletions group by object and session')
+    c.expect_eq(c.page.locator('#healthAcceptAll').inner_text(), 'Accept all deletions (3)')
+    c.page.screenshot(path=str(c.artifacts / 'health-session-deletions-pending.png'), full_page=True)
+    c.page.once('dialog', lambda dialog: dialog.dismiss()); buttons.first.click()
+    c.expect_eq(len(requests), 0, 'cancelled session confirmation must not acknowledge')
+    c.page.once('dialog', confirm); buttons.first.click()
+    c.page.wait_for_function("() => document.querySelector('#healthAcceptAll').textContent === 'Accept all deletions (1)'")
+    c.expect_eq(requests[0], dict(scope='session', session_id='session-a', action='forget_missing', confirmed=True))
+    c.expect_in('2 missing exposures in M31', confirmations[0])
+    c.page.wait_for_function("() => !document.querySelector('#healthAcceptAll').disabled")
+    c.page.once('dialog', confirm); c.page.locator('#healthAcceptAll').click()
+    c.page.wait_for_function("() => document.querySelector('#healthAcceptAll').hidden && !document.querySelector('#healthQuick').disabled")
+    c.expect_eq(requests[1], dict(scope='all', action='forget_missing', confirmed=True))
+    c.expect(c.page.get_by_role('button', name='Accept current contents', exact=True).is_visible(),
+             'accepting all deletions must leave changed contents pending')
+    c.page.screenshot(path=str(c.artifacts / 'health-session-deletions.png'), full_page=True)
+
+
+@check("desktop-catalog-session-compression-symbols", "catalog")
+def session_compression_symbols(c):
+    summaries = [dict(compressed=2, uncompressed=0, unknown=0),
+                 dict(compressed=0, uncompressed=2, unknown=0),
+                 dict(compressed=1, uncompressed=1, unknown=0),
+                 dict(compressed=0, uncompressed=0, unknown=2)]
+    sessions = [dict(label='Night', start=f'2026-08-{12-i:02}T01:10:00',
+                     end=f'2026-08-{12-i:02}T01:10:00', n_images=2, exposure=60,
+                     image_ids=[], types={}, filters={}, compression=summary)
+                for i, summary in enumerate(summaries)]
+    library = dict(image_dir='D:/archive', total_images=8, total_exposure=240,
+        objects=[dict(name='Compression symbols', object_id=None, n_images=8,
+                      n_sessions=4, total_exposure=240, images=[], sessions=sessions)])
+    c.page.route('**/api/library', lambda route: route.fulfill(json=library))
+    c.page.route('**/api/library/imports', lambda route: route.fulfill(json=[]))
+    c.goto('/catalog.html'); c.wait_hidden('#busy')
+    symbols = c.page.locator('#librarySessions .session-compression')
+    c.expect_eq(symbols.count(), 4, 'every session has a storage symbol')
+    shapes = []
+    for i, state in enumerate(('compressed', 'uncompressed', 'mixed', 'unknown')):
+        symbol = symbols.nth(i)
+        c.expect_eq(symbol.get_attribute('data-compression'), state)
+        c.expect(symbol.is_visible(), state + ' symbol visible')
+        c.expect_eq(symbol.get_attribute('title'), symbol.get_attribute('aria-label'))
+        shapes.append(symbol.inner_html())
+        button = c.page.locator(f'[data-select-session="{i}"]')
+        button.focus(); button.press('Enter')
+        c.expect_eq(c.page.locator('#librarySessionFacts dd[title]').get_attribute('title'), symbol.get_attribute('title'))
+    c.expect_eq(len(set(shapes)), 4, 'status is conveyed by shape as well as color')
+    c.expect_in('Reindex', symbols.nth(3).get_attribute('title'))
+    c.page.screenshot(path=str(c.artifacts / 'session-compression-symbols.png'), full_page=True)
+
+
 @check("desktop-catalog-session-selection", "catalog")
 def session_selection(c):
     images=[dict(id=601,file="M31/first/lights/a.fit",orig_name="a.fit",date_obs="2026-08-12T01:10:00",imagetyp="light"),

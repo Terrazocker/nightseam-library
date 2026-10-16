@@ -5,6 +5,342 @@ from time import monotonic
 import archive_features
 
 
+@check('desktop-catalog-ingest-fast-safe-control', 'catalog')
+def desktop_catalog_ingest_fast_safe_control(c):
+    c.goto()
+    c.page.locator('#catalog-tab-import').click()
+    mode = c.page.locator('#ingestSafeMode')
+    c.expect(not mode.is_checked() and mode.is_disabled(), 'Fast starts selected; mode requires compression')
+    c.page.locator('#ingestCompressionMode .ingest-mode-switch').hover()
+    c.expect(c.page.locator('#ingestModeTip').is_visible(), 'hover explains Fast and Safe')
+    c.expect_in('skips restoring each file', c.page.locator('#ingestModeTip').inner_text())
+    explanation = c.page.locator('#ingestModeTip').bounding_box()
+    c.page.mouse.move(explanation['x'] + 30, explanation['y'] + 25, steps=12)
+    c.expect(c.page.locator('#ingestModeTip').is_visible(), 'pointer can move onto the explanation')
+    c.page.locator('#ingestModeInfo').focus()
+    c.expect(c.page.locator('#ingestModeTip').is_visible(), 'keyboard focus reveals explanation')
+    c.page.keyboard.press('Escape')
+    c.expect(not c.page.locator('#ingestModeTip').is_visible(), 'Escape dismisses explanation')
+    c.page.locator('#ingestModeInfo').click()
+    c.expect(c.page.locator('#ingestModeTip').is_visible(), 'tap/click opens explanation')
+    c.page.keyboard.press('Escape')
+    c.page.locator('#compressOnIngest').check()
+    c.expect(mode.is_enabled(), 'compression enables mode switch')
+    mode.focus()
+    mode.press('Space')
+    c.expect(mode.is_checked(), 'Space selects Safe')
+    c.page.wait_for_function("() => new DOMMatrix(getComputedStyle(document.querySelector('#ingestSafeMode'), '::after').transform).m41 === 18")
+    c.expect(c.page.locator('#ingestModeTip').evaluate("""node => {
+      const box = node.getBoundingClientRect();
+      return box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight &&
+        node.contains(document.elementFromPoint(box.left + box.width / 2, box.bottom - 3));
+    }"""), 'explanation must be painted within the viewport')
+    c.page.screenshot(path=str(c.artifacts / 'ingest-fast-safe.png'))
+    mode.press('Space')
+    c.expect(not mode.is_checked(), 'Space returns to Fast')
+    c.page.keyboard.press('Escape')
+    c.page.locator('#compressOnIngest').uncheck()
+    c.expect(mode.is_disabled(), 'compression off disables mode')
+
+
+@check('desktop-catalog-rice-auto-ingest', 'catalog')
+def desktop_catalog_rice_auto_ingest(c):
+    """Use the opt-in checkbox, physical source file, native codec and Uncompress."""
+    import hashlib
+    from pathlib import Path
+    from fits_fixtures import compressed_gate_image
+
+    c.goto()
+    c.page.locator('#catalog-tab-import').click()
+    c.expect(not c.page.locator('#compressOnIngest').is_checked(), 'automatic Rice is opt-in')
+    c.expect(not c.page.locator('#ingestSafeMode').is_checked(), 'new UI imports default to Fast')
+    archive = Path(c.page.request.get(c.url('/api/state')).json()['image_dir']).resolve()
+    c.expect(archive.is_relative_to((Path(__file__).resolve().parents[2] / 'logs/browser').resolve()), 'private archive required')
+    original = compressed_gate_image(False).replace(b'Compressed gate capture', b'Auto Rice test'.ljust(len(b'Compressed gate capture')))
+    source = archive.parent / 'auto-rice-source.fit'
+    source.write_bytes(original)
+    c.page.locator('#compressOnIngest').check()
+    with c.page.expect_response(lambda response: response.url.endswith('/api/images/ingest') and response.status == 200) as response:
+        c.page.locator('#fitFiles').set_input_files(str(source))
+    result = response.value.json()['results'][0]
+    c.expect(result.get('ok') and result.get('compression') == 'rice', str(result))
+    c.expect_eq(result.get('compression_mode'), 'fast')
+    c.page.wait_for_function("() => !document.querySelector('#btnTopIngest').disabled")
+    c.expect_in('Rice compressed', c.page.locator('#ingestResults').inner_text())
+    c.expect((archive / result['stored']).is_file(), 'compressed exposure is stored')
+    c.expect(not (archive / result['stored'][:-3]).exists(), 'no uncompressed archive duplicate remains')
+    c.expect_eq(hashlib.sha256(source.read_bytes()).digest(), hashlib.sha256(original).digest(), 'selected source file remains untouched')
+    c.page.locator('#ingestSafeMode').check()
+    c.page.locator('#catalog-tab-library').click()
+    c.page.locator('[data-library-object]').filter(has_text='Auto Rice test').first.click()
+    c.page.locator('#librarySessions tr.library-session').first.click()
+    c.page.locator('[data-library-add=dark]').click()
+    with c.page.expect_response(lambda response: response.url.endswith('/api/images/ingest') and response.status == 200) as response:
+        dark = original.replace(b'LIGHT', b'DARK ')
+        c.page.locator('#fitFilesCal').set_input_files([{'name': 'auto-dark.fit', 'mimeType': 'application/octet-stream', 'buffer': dark}])
+    calibration = response.value.json()['results'][0]
+    c.expect(calibration.get('ok') and calibration.get('compression') == 'rice', str(calibration))
+    c.expect_eq(calibration.get('compression_mode'), 'safe')
+    c.expect_eq(calibration['imagetyp'], 'dark')
+    c.page.wait_for_function("() => !document.querySelector('#btnTopIngest').disabled")
+    c.page.locator('#catalog-tab-library').click()
+    c.page.locator('[data-library-object]').filter(has_text='Auto Rice test').first.click()
+    c.page.locator('#librarySessions tr.library-session').first.click()
+    c.page.locator('[data-rice-mode=uncompress]').click()
+    c.page.locator('#compressionStart').click()
+    c.page.wait_for_function("() => document.querySelector('#compressionStatus').textContent.startsWith('Complete')", timeout=30000)
+    c.page.locator('#compressionClose').click()
+    c.expect_eq((archive / result['stored'][:-3]).read_bytes(), original)
+    c.expect_eq((archive / calibration['stored'][:-3]).read_bytes(), dark)
+    c.expect_eq(source.read_bytes(), original)
+
+
+@check('desktop-catalog-rice-ingest-chunks', 'catalog')
+def desktop_catalog_rice_ingest_chunks(c):
+    """Every multipart chunk carries the captured option and the control locks."""
+    requests = []
+
+    def accept(route):
+        body = route.request.post_data_buffer
+        c.expect(b'name="compress"\r\n\r\ntrue' in body, 'every chunk explicitly requests compression')
+        c.expect(b'name="compression_mode"\r\n\r\nsafe' in body, 'every chunk carries the captured Safe choice')
+        count = body.count(b'name="files"; filename=')
+        requests.append(count)
+        c.expect(c.page.locator('#compressOnIngest').is_disabled(), 'checkbox locked during upload')
+        c.expect(c.page.locator('#ingestSafeMode').is_disabled(), 'mode locked during upload')
+        results = [{'file': f'fixture-{len(requests)}-{i}.fit', 'ok': True, 'compression': 'rice'} for i in range(count)]
+        if len(requests) == 2:
+            results[-1].update(compression='unchanged', compression_reason='Floating point FITS stored unchanged.')
+        route.fulfill(json={'results': results})
+    c.page.route('**/api/images/ingest', accept)
+    c.goto()
+    c.page.locator('#catalog-tab-import').click()
+    c.page.locator('#compressOnIngest').check()
+    c.page.locator('#ingestSafeMode').check()
+    c.page.locator('#fitFiles').set_input_files([{'name': f'chunk-{i}.fit', 'mimeType': 'application/octet-stream', 'buffer': b'SIMPLE  = T'} for i in range(26)])
+    c.page.wait_for_function("() => !document.querySelector('#btnTopIngest').disabled")
+    c.expect_eq(requests, [24, 2])
+    c.expect_in('25 Rice compressed', c.page.locator('#ingestSummary').inner_text())
+    c.expect_in('Floating point FITS stored unchanged.', c.page.locator('#ingestResults').inner_text())
+
+
+@check('desktop-catalog-rice-job-controls', 'catalog')
+def desktop_catalog_rice_job_controls(c):
+    """Rejected start, reopen, focus and cancellation keep job state coherent."""
+    c.allow_console_errors('one deliberate rejected conversion start (HTTP 422)')
+    c.allow_failed_responses('one deliberate rejected conversion start (HTTP 422)')
+    library = {'total_images': 1, 'total_exposure': 10, 'objects': [{
+        'object_id': None, 'name': 'Rice UI fixture', 'otype': 'galaxy', 'n_images': 1,
+        'n_sessions': 1, 'total_exposure': 10, 'sessions': [{'start': '2026-08-12T22:00:00',
+            'end': '2026-08-12T22:00:00', 'n_images': 1, 'exposure': 10, 'image_ids': [991], 'types': {}, 'filters': {}}],
+        'images': [{'id': 991, 'file': 'Rice UI fixture/session/lights/frame.fit', 'date_obs': '2026-08-12T22:00:00', 'imagetyp': 'light'}]}]}
+    state = {'reject': True, 'job': {'id': 'old-job', 'mode': 'copy', 'status': 'completed', 'processed': 1, 'total': 1}}
+
+    def compression_route(route):
+        url = route.request.url
+        if url.endswith('/cancel'):
+            state['job'] = {**state['job'], 'status': 'cancelled'}
+        elif route.request.method == 'POST':
+            if state['reject']:
+                state['reject'] = False
+                route.fulfill(status=422, json={'detail': 'Synthetic invalid session'})
+                return
+            payload = route.request.post_data_json
+            c.expect_eq(payload['image_ids'], [991])
+            c.expect_eq(payload['compression_mode'], 'fast')
+            state['job'] = {'id': 'new-job', 'mode': payload['mode'], 'status': 'running', 'phase': 'publishing', 'processed': 1, 'total': 1, 'published': 0, 'publication_total': 1, 'compression_mode': payload['compression_mode']}
+        route.fulfill(json=state['job'])
+
+    c.page.route('**/api/library', lambda route: route.fulfill(json=library))
+    c.page.route('**/api/library/imports', lambda route: route.fulfill(json=[]))
+    c.page.route('**/api/library/compression**', compression_route)
+    c.goto()
+    c.page.locator('#librarySessions tr.library-session').first.click()
+    c.page.locator('[data-rice-mode=compress]').click()
+    c.page.locator('#compressionStart').click()
+    c.page.wait_for_function("() => document.querySelector('#compressionStatus').textContent.includes('Synthetic invalid session')")
+    c.expect(not c.page.locator('#compressionStart').is_disabled(), 'a rejected start can be retried')
+    c.page.locator('#compressionSafeMode').uncheck()
+    c.page.locator('#compressionStart').click()
+    c.page.wait_for_function("() => !document.querySelector('#compressionCancel').disabled")
+    c.expect_eq(c.page.locator('#compressionProgress').get_attribute('value'), '1')
+    c.expect_eq(c.page.locator('#compressionWriteProgress').get_attribute('value'), '0')
+    c.expect_in('Writing and replacing files', c.page.locator('#compressionStatus').inner_text())
+    c.expect(c.page.locator('#compressionSafeMode').is_disabled(), 'running mode is locked')
+    c.page.screenshot(path=str(c.artifacts / 'compression-writing-progress.png'), full_page=True)
+    state['job'].update(published=1, phase='committing')
+    c.page.wait_for_function("() => document.querySelector('#compressionStatus').textContent.startsWith('Updating catalog')")
+    c.expect(c.page.locator('#compressionStart').is_disabled(), 'full bars do not finish catalog publication')
+    state['job']['phase'] = 'cleaning'
+    c.page.wait_for_function("() => document.querySelector('#compressionStatus').textContent.startsWith('Removing retained originals')")
+    c.expect(c.page.locator('#btnTopIngest').is_disabled(), 'conversion locks import')
+    c.page.locator('#compressionClose').click()
+    c.expect(not c.page_errors, f'job controls must have no uncaught script errors: {c.page_errors}')
+    c.expect(c.page.locator('#btnTopCopy').evaluate('node => node === document.activeElement'), 'focus returns to an enabled action')
+    c.page.locator('#btnTopCopy').click()
+    c.page.wait_for_function("() => document.querySelector('#compressionTitle').textContent === 'Compressing session losslessly'")
+    c.expect(not c.page.locator('#compressionDestination').is_visible(), 'session resume does not show copy destination')
+    c.expect(not c.page.locator('#compressionSafeMode').is_checked(), 'reopening restores the running Fast choice')
+    c.page.locator('#compressionCancel').click()
+    c.page.wait_for_function("() => document.querySelector('#compressionStatus').textContent.startsWith('Cancelled')")
+    c.page.wait_for_function("() => !document.querySelector('#btnTopIngest').disabled")
+    c.page.locator('#compressionClose').click()
+
+
+@check('desktop-catalog-compression-refresh-before-complete', 'catalog')
+def desktop_catalog_compression_refresh_before_complete(c):
+    library = dict(total_images=1, total_exposure=10, objects=[dict(name='Refresh fixture', object_id=None,
+        n_images=1, n_sessions=1, total_exposure=10, sessions=[dict(start='2026-08-22T22:00:00',
+        end='2026-08-22T22:00:00', n_images=1, exposure=10, image_ids=[991], types={}, filters={})],
+        images=[dict(id=991, file='Refresh fixture/session/lights/a.fit', date_obs='2026-08-22T22:00:00', imagetyp='light')])])
+    state = dict(hold=False, job=dict(id='resume-refresh', mode='compress', compression_mode='fast',
+        status='running', phase='publishing', total=1, processed=1, publication_total=1, published=0, converted=1, skipped=0))
+    held, starts = [], []
+    def library_route(route):
+        if state['hold']: held.append(route)
+        else: route.fulfill(json=library)
+    def conversion_route(route):
+        if route.request.method == 'POST': starts.append(route.request.post_data_json)
+        route.fulfill(json=state['job'])
+    c.page.route('**/api/library', library_route)
+    c.page.route('**/api/library/imports', lambda route: route.fulfill(json=[]))
+    c.page.route('**/api/library/compression**', conversion_route)
+    c.goto()
+    c.page.wait_for_function("() => document.querySelector('#compressionStatus').textContent.startsWith('Writing and replacing files')")
+    # The background reconnect locks archive buttons. Open the running job's
+    # dialog through the existing action without triggering another operation.
+    c.page.locator('#btnTopCopy').click()
+    c.page.wait_for_function("() => document.querySelector('#compressionTitle').textContent === 'Compressing session losslessly'")
+    state['hold'] = True
+    state['job'].update(status='completed', phase='complete', published=1)
+    c.page.wait_for_function("() => document.querySelector('#compressionStatus').textContent.startsWith('Refreshing library')")
+    c.expect(c.page.locator('#compressionStart').is_disabled(), 'no completion before library refresh')
+    c.page.evaluate('() => 0')
+    c.expect_eq(len(held), 1)
+    state['hold'] = False
+    held.pop().fulfill(json=library)
+    c.page.wait_for_function("() => document.querySelector('#compressionStatus').textContent.startsWith('Complete')")
+    c.expect(c.page.locator('#compressionStart').is_disabled(), 'resumed session cannot restart a hidden Copy action')
+    c.expect_eq(starts, [])
+    c.page.screenshot(path=str(c.artifacts / 'compression-refreshed-complete.png'), full_page=True)
+
+
+@check('desktop-catalog-rice-session-roundtrip', 'catalog')
+def desktop_catalog_rice_session_roundtrip(c):
+    """Packaged native tools, real UI conversion and exact restored bytes."""
+    import hashlib
+    import json
+    from pathlib import Path
+    from fits_fixtures import compressed_gate_image
+
+    raw = compressed_gate_image(False).replace(b'Compressed gate capture', b'Rice session test'.ljust(len(b'Compressed gate capture')))
+    c.goto()
+    c.page.locator('#catalog-tab-import').click()
+    with c.page.expect_response(lambda response: response.url.endswith('/api/images/ingest') and response.status == 200) as response:
+        c.page.locator('#fitFiles').set_input_files([{'name': 'rice-gate.fit', 'mimeType': 'application/octet-stream', 'buffer': raw}])
+    result = response.value.json()['results'][0]
+    c.expect(result.get('ok'), str(result))
+    c.page.wait_for_function("() => !document.querySelector('#btnTopIngest').disabled")
+    c.page.locator('#catalog-tab-library').click()
+    c.page.locator('[data-library-object]').filter(has_text='Rice session test').first.click()
+    c.page.locator('#librarySessions tr.library-session').first.click()
+    c.expect_eq(c.page.locator('[data-rice-mode=compress]').get_attribute('data-rice-ids'), str(result['id']))
+    c.expect_eq(c.page.locator('.session-compression').first.get_attribute('data-compression'), 'uncompressed')
+    c.page.locator('[data-rice-mode=compress]').click()
+    c.expect(c.page.locator('#compressionModal').is_visible(), 'compression dialog opens')
+    c.expect(c.page.locator('#compressionSafeMode').is_checked(), 'manual conversion starts Safe')
+    c.page.locator('#compressionVerification summary').click()
+    c.expect(c.page.locator('#compressionModeHelp').is_visible(), 'Fast/Safe explanation is keyboard/tap accessible')
+    c.page.locator('#compressionSafeMode').focus()
+    c.page.locator('#compressionSafeMode').press('Space')
+    c.expect(not c.page.locator('#compressionSafeMode').is_checked(), 'Space selects Fast')
+    c.page.screenshot(path=str(c.artifacts / 'session-compression-fast-safe.png'), full_page=True)
+    c.page.locator('#compressionStart').click()
+    c.page.wait_for_function("() => document.querySelector('#compressionStatus').textContent.startsWith('Complete')", timeout=30000)
+    c.expect_in('1 converted', c.page.locator('#compressionStatus').inner_text())
+    c.expect_eq(c.page.locator('#compressionWriteProgress').get_attribute('value'), '1')
+    c.page.locator('#compressionClose').click()
+    library = c.page.request.get(c.url('/api/library')).json()
+    group = next(o for o in library['objects'] if o['name'] == 'Rice session test')
+    compressed = group['images'][0]['file']
+    c.expect(compressed.endswith('.fz'), compressed)
+    c.expect_eq(c.page.locator('.session-compression').first.get_attribute('data-compression'), 'compressed')
+    c.page.locator('[data-rice-mode=uncompress]').click()
+    c.expect(not c.page.locator('#compressionVerification').is_visible(), 'restoration always checks its original hash')
+    c.page.locator('#compressionStart').click()
+    c.page.wait_for_function("() => document.querySelector('#compressionStatus').textContent.startsWith('Complete')", timeout=30000)
+    c.page.locator('#compressionClose').click()
+    archive = Path(c.page.request.get(c.url('/api/state')).json()['image_dir']).resolve()
+    c.expect_eq(c.page.locator('.session-compression').first.get_attribute('data-compression'), 'uncompressed')
+    c.expect(archive.is_relative_to((Path(__file__).resolve().parents[2] / 'logs/browser').resolve()), 'private archive required')
+    c.expect_eq(hashlib.sha256((archive / result['stored']).read_bytes()).digest(), hashlib.sha256(raw).digest())
+    disk = archive.parent / 'rice-copy-disk'
+    disk.mkdir()
+    c.page.locator('#btnTopCopy').click()
+    c.page.locator('#compressionPath').fill(str(disk))
+    c.page.locator('#compressionStart').click()
+    c.page.wait_for_function("() => document.querySelector('#compressionStatus').textContent.startsWith('Complete')", timeout=30000)
+    c.page.locator('#compressionClose').click()
+    saved, = disk.iterdir()
+    manifest = json.loads((saved / 'manifest.json').read_text())
+    copied = next(r for r in manifest['files'] if r['record']['id'] == result['id'])
+    c.expect(copied['rice'] and (saved / copied['stored_file']).is_file(), 'copy contains usable compressed FITS')
+    c.expect((saved / 'nightseam.db').is_file(), 'copy includes catalog snapshot')
+
+
+@check("desktop-catalog-compressed-fits-metadata", "catalog")
+def desktop_catalog_compressed_fits_metadata(c):
+    """Real UI uploads/readback use the harness's verified private archive."""
+    import gzip
+    import hashlib
+    from pathlib import Path
+    from fits_fixtures import compressed_gate_image as image
+
+    c.goto()
+    c.page.locator('#catalog-tab-import').click()
+    c.expect_in('.fits.gz', c.page.locator('#fitFiles').get_attribute('accept'))
+    c.expect_in('.fz', c.page.locator('#fitFilesCal').get_attribute('accept'))
+    payloads = {'compressed-gate.fits.gz': gzip.compress(image(False), mtime=0),
+                'compressed-gate.fits.fz': image(True),
+                'compressed-gate.fz.gz': gzip.compress(image(True), mtime=0)}
+    files = [{"name": name, "mimeType": "application/octet-stream", "buffer": data}
+             for name, data in payloads.items()]
+    with c.page.expect_response(lambda response: response.url.endswith('/api/images/ingest')
+                                and response.status == 200) as response:
+        c.page.locator('#fitFiles').set_input_files(files)
+    results = response.value.json()['results']
+    c.expect_eq(len(results), 3)
+    c.expect(all(result.get('ok') and not result.get('skipped') for result in results), str(results))
+    c.page.wait_for_function("() => !document.querySelector('#btnTopIngest').disabled")
+    archive = Path(c.page.request.get(c.url('/api/state')).json()['image_dir']).resolve()
+    # The harness already pins this path before uploads; additionally refuse
+    # any direct read outside its own scratch archive.
+    scratch = (Path(__file__).resolve().parents[2] / 'logs' / 'browser').resolve()
+    c.expect(archive.is_relative_to(scratch) and archive.name == 'archive', 'private archive required')
+    for result in results:
+        c.expect_eq(result['exposure'], 75.5)
+        c.expect_eq(result['date_obs'], '2026-09-15T22:14:05')
+        c.expect_eq(result['session_kind'], 'night')
+        c.expect_eq(result['telescope'], 'Compressed gate camera')
+        stored = (archive / result['stored']).resolve()
+        c.expect(stored.is_relative_to(archive), 'stored bytes must stay inside private archive')
+        c.expect_eq(hashlib.sha256(stored.read_bytes()).digest(),
+                    hashlib.sha256(payloads[result['file']]).digest(), 'original bytes must survive')
+    duplicate = c.page.request.post(c.url('/api/images/ingest'), multipart={
+        'files': {'name': 'renamed.fits.gz', 'mimeType': 'application/octet-stream',
+                  'buffer': payloads['compressed-gate.fits.gz']}}).json()['results'][0]
+    c.expect(duplicate.get('skipped'), 'compressed duplicates must retain the original record')
+    reindex = c.page.request.post(c.url('/api/library/reindex')).json()
+    c.expect_eq(reindex['failed'], 0)
+    c.expect_eq(reindex['added'], 0)
+    library = c.page.request.get(c.url('/api/library')).json()
+    group = next(obj for obj in library['objects'] if obj['name'] == 'Compressed gate capture')
+    c.expect_eq(group['n_images'], 3)
+    c.page.locator('#catalog-tab-library').click()
+    c.page.locator('[data-library-object]').filter(has_text='Compressed gate capture').first.click()
+    c.page.locator('#librarySessions tr.library-session').first.wait_for()
+
+
 @check("desktop-catalog-solar-sessions", "catalog")
 def desktop_catalog_solar_sessions(c):
     """Exercise packaged V8, actual uploads and the observing-location form."""
@@ -552,16 +888,16 @@ def desktop_catalog_import_progress(c):
                     "completed elapsed time must stay frozen")
         c.expect(progress.is_visible(), "completed import counters must remain visible")
 
-    select(10)
+    select(26)
     c.expect_eq(progress.locator(".import-files").inner_text(),
-                "0 / 10 files processed", "pending files are not processed yet")
+                "0 / 26 files processed", "pending files are not processed yet")
     c.expect(not progress.locator(".import-failed").is_visible(),
              "successful imports must not show a failure counter")
     c.page.clock.run_for(2100)
     c.expect(progress.locator(".import-elapsed").inner_text() != "00:00 elapsed",
              "elapsed time must advance while a batch is pending")
     c.expect_eq(progress.locator(".import-files").inner_text(),
-                "0 / 10 files processed", "time alone must not advance file progress")
+                "0 / 26 files processed", "time alone must not advance file progress")
     c.expect(c.page.locator("#btnTopIngest").is_disabled() and
              c.page.locator("#btnTopReindex").is_disabled() and
              c.page.locator("#btnTopExport").is_disabled(),
@@ -573,19 +909,19 @@ def desktop_catalog_import_progress(c):
     c.expect_eq(len(requests), 1, "repeated file selection must not overlap an import")
     c.expect_eq(len(reindexes), 0, "a reindex must not overlap an import")
     with c.page.expect_request("**/api/images/ingest"):
-        answer(8)
+        answer(24)
     _wait_pending_batch(c.page)
     c.expect_eq(progress.locator(".import-files").inner_text(),
-                "8 / 10 files processed", "confirmed response advances file progress")
+                "24 / 26 files processed", "confirmed response advances file progress")
     c.expect_eq(len(pending), 1, "the remaining files wait for the second response")
     answer(2)
-    finished(10, 10)
+    finished(26, 26)
     c.expect(not progress.locator(".import-failed").is_visible(),
              "completed successful import keeps the failure counter hidden")
 
-    select(10)
+    select(26)
     with c.page.expect_request("**/api/images/ingest"):
-        answer(8, failed=True)
+        answer(24, failed=True)
     _wait_pending_batch(c.page)
     c.expect_eq(progress.locator(".import-failed").inner_text(), "1 failed",
                 "a per-file failure has its own counter")
@@ -612,22 +948,22 @@ def desktop_catalog_import_progress(c):
     finally:
         c.page.set_viewport_size(original_viewport)
     answer(2)
-    finished(10, 10)
+    finished(26, 26)
     c.expect_in("Unreadable FITS header", c.page.locator("#ingestResults").inner_text(),
                 "the failed file's reason remains reviewable")
 
-    select(20)
+    select(60)
     with c.page.expect_request("**/api/images/ingest"):
-        answer(8)
+        answer(24)
     _wait_pending_batch(c.page)
     pending.pop(0).fulfill(status=503, content_type="application/json",
                           body='{"detail":"temporary import interruption"}')
-    finished(8, 20)
+    finished(24, 60)
     c.expect(not progress.locator(".import-failed").is_visible(),
              "unconfirmed outcomes must not be reported as confirmed file failures")
-    c.expect_eq(progress.locator(".import-pending").inner_text(), "4 not attempted",
+    c.expect_eq(progress.locator(".import-pending").inner_text(), "12 not attempted",
                 "the remaining queue was never submitted")
-    c.expect_in("8 file outcomes unconfirmed", progress.inner_text(),
+    c.expect_in("24 file outcomes unconfirmed", progress.inner_text(),
                 "an interrupted request must distinguish unknown outcomes")
     c.expect_eq(len(requests), 6, "the interrupted import must stop without another batch")
     c.expect(c.page.locator("#btnTopIngest").is_enabled() and
@@ -636,7 +972,7 @@ def desktop_catalog_import_progress(c):
 
     # A server exception is now a successful HTTP response with explicit
     # partial outcomes. It must halt the remaining browser chunks too.
-    select(20)
+    select(60)
     with c.page.expect_request("**/api/library"):
         pending.pop(0).fulfill(json={"results": [
             {"file": "exposure-00.fits", "ok": True},
@@ -644,10 +980,10 @@ def desktop_catalog_import_progress(c):
              "error": "Import outcome unconfirmed after a database error."},
             *[{"file": f"exposure-{index:02d}.fits", "ok": False,
                "unattempted": True, "error": "Not attempted after the import stopped."}
-              for index in range(2, 8)],
+              for index in range(2, 24)],
         ]})
-    finished(1, 20)
-    c.expect_eq(progress.locator(".import-pending").inner_text(), "18 not attempted",
+    finished(1, 60)
+    c.expect_eq(progress.locator(".import-pending").inner_text(), "58 not attempted",
                 "both unattempted server files and unsent browser chunks remain pending")
     c.expect_in("1 file outcomes unconfirmed", progress.inner_text(),
                 "only the exceptional file has an unknown outcome")
@@ -693,15 +1029,15 @@ def desktop_catalog_import_duplicates(c):
             `${count} / ${count} files processed` &&
           !document.querySelector('#btnIngest').disabled""", arg=count)
 
-    select(10)
+    select(26)
     c.expect(not progress.locator(".import-skipped").is_visible(),
              "the already-imported counter stays hidden before a duplicate is found")
     with c.page.expect_request("**/api/images/ingest"):
         pending.pop(0).fulfill(json={"results": [
             result(0, skipped=True), result(1, skipped=True),
-            *[result(i) for i in range(2, 7)], result(7, failed=True)]})
+            *[result(i) for i in range(2, 23)], result(23, failed=True)]})
     _wait_pending_batch(c.page)
-    c.expect_eq(progress.locator(".import-files").inner_text(), "8 / 10 files processed",
+    c.expect_eq(progress.locator(".import-files").inner_text(), "24 / 26 files processed",
                 "duplicates are processed files, alongside new files and failures")
     c.expect_eq(progress.locator(".import-skipped").inner_text(), "2 already imported",
                 "duplicate responses have their own neutral counter")
@@ -709,12 +1045,12 @@ def desktop_catalog_import_duplicates(c):
              "duplicate counter becomes visible while a later batch is pending")
     c.expect_eq(progress.locator(".import-failed").inner_text(), "1 failed",
                 "only an actual failed file contributes to the failure counter")
-    pending.pop(0).fulfill(json={"results": [result(8, skipped=True), result(9, skipped=True)]})
-    finish(10)
+    pending.pop(0).fulfill(json={"results": [result(24, skipped=True), result(25, skipped=True)]})
+    finish(26)
     c.expect_eq(c.page.locator("#ingestSummary").inner_text(),
-                "5 of 10 files imported · 4 already imported · 1 failed",
+                "21 of 26 files imported · 4 already imported · 1 failed",
                 "the imported count excludes duplicates even when existing exposure metadata is present")
-    c.expect_eq(c.page.locator("#ingestResults .ingest-item.ok").count(), 5,
+    c.expect_eq(c.page.locator("#ingestResults .ingest-item.ok").count(), 21,
                 "only new files receive the successful new-import presentation")
     c.expect_eq(c.page.locator("#ingestResults .ingest-item.skipped").count(), 4,
                 "duplicates receive a neutral presentation rather than success or failure")

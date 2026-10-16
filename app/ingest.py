@@ -16,12 +16,16 @@ import shutil
 import tempfile
 import threading
 import time
+from collections import OrderedDict
+from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
 from . import fits as fitsio
 from . import imglib
+from . import fits_metadata
 from . import paths
+from .file_version import pinned_version
 from .database import Database, normalize_session_date_obs
 
 log = logging.getLogger(__name__)
@@ -33,14 +37,106 @@ _STAGE_LOCK = threading.RLock()
 _ACTIVE_STAGES: set[Path] = set()
 _STAGE_NAME = re.compile(r"^\.nightseam-import-(\d+)-[A-Za-z0-9_]+\.part$")
 _STALE_STAGE_SECONDS = 3600
+_FINGERPRINT_CACHE_LIMIT = 20000
 
 
-async def _archive_io(function, *args, on_cancel=None):
+@contextmanager
+def _waiting_archive_lock(db, cancel):
+    while not db.archive_lock.acquire(timeout=.1):
+        _check_reindex_cancelled(cancel)
+    try:
+        _check_reindex_cancelled(cancel)
+        yield
+    finally:
+        db.archive_lock.release()
+
+
+class DedupBatch:
+    """Request-local negative index, with Windows bytes/lineage pinned stable.
+
+    A batch checks earlier same-size files once rather than once per upload.
+    Open writers, unsupported versions and candidates above the handle bound
+    retain the conservative individual checks. Positive matches always rehash.
+    No database hash alone admits an entry.
+    """
+    def __init__(self):
+        self.stack = ExitStack()
+        self.entries = {}
+        self.db = None
+
+    def close(self):
+        if self.db is None:
+            self.stack.close()
+        else:
+            with self.db.archive_lock.for_batch(self):
+                try:
+                    self.stack.close()
+                finally:
+                    self.db.archive_lock.unreserve(self)
+
+    def negative(self, record, incoming):
+        entry = self.entries.get(record['id'])
+        return entry is not None and entry[0] == record['file'] and entry[1] != incoming
+
+    @classmethod
+    def prepare(cls, db, archive, sizes, cancel=None):
+        index = cls()
+        if os.name != 'nt' or not sizes or not hasattr(db.archive_lock, 'reserve'):
+            return index
+        from .archive_trash import _parent
+        try:
+            with _waiting_archive_lock(db, cancel):
+                root = archive.resolve(strict=True)
+                info = root.stat()
+                identity = info.st_dev, info.st_ino
+                folders = set()
+                with db.lock:
+                    marks = ','.join('?' for _ in sizes)
+                    records = [dict(row) for row in db.conn.execute(
+                        f'SELECT id,file FROM images WHERE file_size IN ({marks}) OR file_size IS NULL ORDER BY id',
+                        tuple(sizes))]
+                for record in records[:4096]:
+                    _check_reindex_cancelled(cancel)
+                    path = paths.safe_join(root, record['file'])
+                    if path is None:
+                        continue
+                    context = ExitStack()
+                    try:
+                        parent = path.parent
+                        if parent not in folders:
+                            index.stack.enter_context(_parent(root, record['file'], identity))
+                            folders.add(parent)
+                        version = context.enter_context(pinned_version(path))
+                        before = version() if version else None
+                        if before is None:
+                            continue
+                        measured = _dedup_fingerprint(db, path, '', cancel)
+                        if measured is not None and version() == before:
+                            index.stack.enter_context(context.pop_all())
+                            index.entries[record['id']] = record['file'], measured[0]
+                    except (OSError, ValueError):
+                        pass
+                    finally:
+                        context.close()
+                if index.entries:
+                    db.archive_lock.reserve(index)
+                    index.db = db
+                else:
+                    index.stack.close()
+            return index
+        except BaseException:
+            index.close()
+            raise
+
+
+async def _archive_io(function, *args, on_cancel=None, cancel_event=None, **kwargs):
     """Finish in-flight filesystem work before cancellation can clean it up."""
-    task = asyncio.create_task(asyncio.to_thread(function, *args))
+    task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
+        if cancel_event is not None:
+            cancel_event.set()
         # Repeated disconnect/shutdown cancellation must not leave a worker
         # using a stage after its cleanup has removed it.
         while not task.done():
@@ -137,7 +233,7 @@ def _fingerprint_file(path: Path, cancel_event=None) -> tuple[str, int, int] | N
 
 
 def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
-                    exclude_id: int | None = None) -> dict | None:
+                    exclude_id: int | None = None, dedup_batch=None) -> dict | None:
     """Find matching local bytes, including originals from older versions.
 
     Caller holds db.archive_lock for lookup/finalization. Database methods take
@@ -146,9 +242,37 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
     the actual archived file before an upload is skipped. Missing originals
     therefore cannot prevent users importing a replacement.
     """
-    for rec in db.image_fingerprint_candidates(digest, size):
+    # A recorded conversion retains the original complete-byte identity as an
+    # alias. Check current stored bytes against that mapping before deduping.
+    with db.lock:
+        aliases = [dict(r) for r in db.conn.execute(
+            'SELECT images.*,c.current_sha256 AS mapped_sha256 FROM images '
+            'JOIN image_compression c ON c.image_id=images.id '
+            'WHERE (c.original_sha256=? AND c.original_size=?) '
+            'OR (c.compressed_sha256=? AND c.compressed_size=?)', (digest, size, digest, size))]
+    for rec in aliases:
+        if rec['id'] == exclude_id:
+            continue
+        path = paths.safe_join(archive, rec['file'])
+        measured = _fingerprint_file(path) if path is not None else None
+        if measured and measured[0] == rec.pop('mapped_sha256'):
+            return rec
+    if dedup_batch is not None:
+        with db.lock:
+            candidates = [dict(row) for row in db.conn.execute(
+                'SELECT id,file FROM images WHERE content_sha256=? OR file_size=? OR file_size IS NULL ORDER BY id',
+                (digest, size))]
+    else:
+        candidates = db.image_fingerprint_candidates(digest, size)
+    for rec in candidates:
         if rec["id"] == exclude_id:
             continue
+        if dedup_batch is not None:
+            if dedup_batch.negative(rec, digest):
+                continue
+            rec = db.image(rec['id'])
+            if rec is None:
+                continue
         original = paths.safe_join(archive, rec["file"])
         if original is None:
             continue
@@ -161,7 +285,7 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
         cached = rec.get("content_sha256")
         # Restores and external tools can preserve size/mtime while replacing
         # bytes. A different cached digest must not reject a same-size original.
-        measured = _fingerprint_file(original)
+        measured = _dedup_fingerprint(db, original, digest)
         if measured is None:
             continue
         actual, actual_size, mtime_ns = measured
@@ -170,6 +294,70 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
         if actual_size == size and actual == digest:
             return rec
     return None
+
+
+def _dedup_fingerprint(db, path, incoming, cancel_event=None):
+    """Avoid rereading unchanged negative candidates; positives are rehashed.
+
+    Only actual byte reads populate this bounded, process-local cache. Stored
+    DB hashes and size/mtime alone never authorize skipping an upload.
+    Callers serialize it with archive_lock.
+    """
+    cache = getattr(db, '_ingest_fingerprints', None)
+    if cache is None:
+        cache = db._ingest_fingerprints = OrderedDict()
+    with pinned_version(path) as version:
+        before = version() if version else None
+        cached = cache.get(path)
+        if before is not None and cached and cached[0] == before and cached[1][0] != incoming:
+            cache.move_to_end(path)
+            return cached[1]
+        measured = _fingerprint_file(path, cancel_event) if cancel_event is not None else _fingerprint_file(path)
+        if before is not None and measured and version() == before:
+            # Freeze admission at the bound rather than evicting on a full
+            # ascending scan, which would make every subsequent scan thrash.
+            if path in cache or len(cache) < _FINGERPRINT_CACHE_LIMIT:
+                cache[path] = before, measured
+                cache.move_to_end(path)
+        else:
+            cache.pop(path, None)
+        return measured
+
+
+def _known_duplicate(db, archive, digest, size, enforce_root, session_target, frame, dedup_batch=None):
+    """Cheap exact-positive preflight avoids encoding already stored uploads.
+
+    Finalization still checks all current same-size candidates and serializes
+    publication. This early return only skips bytes freshly verified on disk.
+    """
+    with _batch_archive_lock(db, dedup_batch):
+        if db.pending_compression() or db.pending_trash():
+            return None
+        if enforce_root and Path(db.image_dir()).resolve() != archive:
+            return None
+        if session_target is not None:
+            try:
+                if calibration_import_target(db, archive, session_target['anchor_id'], frame) != session_target:
+                    return None
+            except ValueError:
+                return None
+        with db.lock:
+            aliases = [dict(row) for row in db.conn.execute(
+                'SELECT images.*,c.current_sha256 AS mapped_sha256 FROM images '
+                'JOIN image_compression c ON c.image_id=images.id '
+                'WHERE (c.original_sha256=? AND c.original_size=?) '
+                'OR (c.compressed_sha256=? AND c.compressed_size=?)', (digest, size, digest, size))]
+        for record in [*aliases, *db.images_with_digest(digest)]:
+            target = paths.safe_join(archive, record['file'])
+            expected = record.pop('mapped_sha256', digest)
+            measured = _fingerprint_file(target) if target is not None else None
+            if measured and measured[0] == expected:
+                return record
+    return None
+
+
+def _batch_archive_lock(db, batch):
+    return db.archive_lock.for_batch(batch) if hasattr(db.archive_lock, 'for_batch') else db.archive_lock
 
 
 def _duplicate_result(name: str, rec: dict) -> dict:
@@ -297,7 +485,7 @@ def _session_dir(db: Database, archive: Path, slug: str, object_id,
     return archive / slug / session_folder_name(metadata)
 
 
-def _reindex_session_metadata(db: Database, rec: dict, header: dict) -> dict:
+def _reindex_session_metadata(db: Database, rec: dict, header: dict, storage_compressed=None) -> dict:
     # A missing header location may use the originally stored observing site;
     # a later default-site setting must not rewrite measured capture metadata.
     if ("SITELAT" not in header and "SITELONG" not in header and
@@ -307,6 +495,7 @@ def _reindex_session_metadata(db: Database, rec: dict, header: dict) -> dict:
     logical_date = captured if rec.get("session_date_obs") is None else rec["session_date_obs"]
     metadata = _header_session(db, header, logical_date)
     metadata["date_obs"] = captured
+    metadata["storage_compressed"] = storage_compressed
     if rec.get("session_date_obs") is not None and rec.get("session_key"):
         metadata.update({key: rec.get(key) for key in imglib.SESSION_FIELDS})
     return metadata
@@ -364,8 +553,7 @@ def _unique_path(path: Path) -> Path:
     never replaced."""
     if not path.exists():
         return path
-    suffix = path.suffix
-    stem = path.stem
+    stem, suffix = fits_metadata.filename_parts(path.name)
     n = 2
     while True:
         candidate = path.with_name(f"{stem}_{n}{suffix}")
@@ -377,8 +565,9 @@ def _unique_path(path: Path) -> Path:
 def _archive_target(archive: Path, name: str, slug: str,
                     session: Path, frame: str) -> Path:
     """Unique destination <archive>/<slug>/<session>/<frames>/<stem>..."""
-    suffix = Path(name).suffix or ".fit"
-    stem = (Path(name).stem or "image")[:80]
+    stem, suffix = fits_metadata.filename_parts(name)
+    suffix = suffix or ".fit"
+    stem = (stem or "image")[:80]
     sub = session / FRAME_TYPES.get(frame, "lights")
     sub.mkdir(parents=True, exist_ok=True)
     for t in FRAME_TYPES.values():      # keep all four frame folders beside it
@@ -392,66 +581,30 @@ async def ingest_one(db: Database, catalog: list[dict], archive: Path,
                      session_override: str | None = None,
                      resolver: imglib.CatalogResolver | None = None,
                      on_import=None, enforce_archive_root: bool = False,
-                     session_target: dict | None = None) -> dict:
-    """Stream one uploaded .fit/.fits into the archive and record it.
+                     session_target: dict | None = None,
+                     compress: bool = False, compression_mode: str = 'safe',
+                     before_publish=None, dedup_batch=None) -> dict:
+    """Stream one supported FITS exposure into the archive and record it.
 
     `f` is a fastapi UploadFile. Only the header block is buffered; the
     remainder is streamed to disk. Returns a per-file result dict.
     """
+    if compression_mode not in ('fast', 'safe'):
+        raise ValueError('Compression mode must be fast or safe.')
     name = Path(f.filename or "image.fit").name
-    if not name.lower().endswith((".fit", ".fits")):
-        return {"file": name, "ok": False, "error": "not a .fit/.fits file"}
+    if not fits_metadata.is_fits_name(name):
+        return {"file": name, "ok": False,
+                "error": "Unsupported exposure filename (use FITS, .fz or FITS.gz)."}
     if getattr(f, "size", None) and f.size > MAX_INGEST_BYTES:
         return {"file": name, "ok": False,
                 "error": f"file too large (max {MAX_INGEST_BYTES // (1 << 20)} MB)"}
 
     header = await f.read(HEADER_READ)
-    try:
-        hdr = fitsio.read_fits_header(header)
-    except Exception as exc:  # noqa: BLE001
-        return {"file": name, "ok": False,
-                "error": f"header parse failed: {exc}"}
-    if not hdr:
+    if not header.startswith((b"SIMPLE", b"\x1f\x8b")):
         return {"file": name, "ok": False,
                 "error": "Unsupported exposure file (SIMPLE header missing)"}
 
-    stem = Path(name).stem
-    hint = str(hdr.get("OBJECT") or "").strip() or stem
-    ra_h = fitsio.parse_ra_hours(hdr.get("OBJCTRA") or hdr.get("RA"))
-    dec_d = fitsio.parse_dec_deg(hdr.get("OBJCTDEC") or hdr.get("DEC"))
-    active_resolver = resolver if resolver is not None else \
-        imglib.CatalogResolver(catalog)
-    row = (active_resolver.row_by_id.get(session_target["anchor"].get("object_id"))
-           if session_target else active_resolver.resolve(hint, ra_h, dec_d))
-
-    if row:
-        object_id = row["id"]
-        object_name = str(row.get("primary_name") or hint)[:120]
-        ra_h, dec_d = row["ra_hours"], row["dec_deg"]
-    else:
-        object_id = None
-        object_name = (str(hdr.get("OBJECT") or "").strip() or stem)[:120]
-    if session_target is not None:
-        anchor = session_target["anchor"]
-        object_id, object_name = anchor.get("object_id"), anchor["object_name"]
-        ra_h, dec_d = anchor.get("ra_hours"), anchor.get("dec_deg")
-        row = active_resolver.row_by_id.get(object_id)
-
-    exposure = None
-    for k in ("EXPTIME", "EXPOSURE", "EXPTIM", "ELAPTIME"):
-        v = hdr.get(k)
-        if isinstance(v, (int, float)) and v >= 0:
-            exposure = float(v)
-            break
-    date_obs = fitsio.capture_date_obs(hdr)
-    filt = str(hdr.get("FILTER") or "").strip() or None
-    tel = str(hdr.get("TELESCOP") or hdr.get("INSTRUME") or "").strip() or None
-    frame = classify_frame(hdr.get("IMAGETYP"))
-    forced = (frame_override or "").strip().lower()
-    if forced in FRAME_TYPES:           # explicit upload target wins
-        frame = forced
-
-    stage = None
+    stage = prepared = None
     digest = hashlib.sha256()
     try:
         archive = await _archive_io(archive.resolve)
@@ -460,30 +613,177 @@ async def ingest_one(db: Database, catalog: list[dict], archive: Path,
         if streamed is None:
             return {"file": name, "ok": False,
                     "error": f"file too large (max {MAX_INGEST_BYTES // (1 << 20)} MB)"}
+        try:
+            storage_info = {}
+            hdr = await _archive_io(fits_metadata.read_metadata, stage, storage_info=storage_info)
+        except fits_metadata.FitsMetadataError as exc:
+            return {"file": name, "ok": False, "error": f"FITS metadata read failed: {exc}"}
+        if not hdr:
+            return {"file": name, "ok": False, "error": "Unsupported exposure file (SIMPLE header missing)"}
+
+        stem, _ = fits_metadata.filename_parts(name)
+        stem = stem or "image"
+        hint = str(hdr.get("OBJECT") or "").strip() or stem
+        ra_h = fitsio.parse_ra_hours(hdr.get("OBJCTRA") or hdr.get("RA"))
+        dec_d = fitsio.parse_dec_deg(hdr.get("OBJCTDEC") or hdr.get("DEC"))
+        active_resolver = resolver if resolver is not None else \
+            imglib.CatalogResolver(catalog)
+        row = (active_resolver.row_by_id.get(session_target["anchor"].get("object_id"))
+               if session_target else await _archive_io(active_resolver.resolve, hint, ra_h, dec_d))
+
+        if row:
+            object_id = row["id"]
+            object_name = str(row.get("primary_name") or hint)[:120]
+            ra_h, dec_d = row["ra_hours"], row["dec_deg"]
+        else:
+            object_id = None
+            object_name = (str(hdr.get("OBJECT") or "").strip() or stem)[:120]
+        if session_target is not None:
+            anchor = session_target["anchor"]
+            object_id, object_name = anchor.get("object_id"), anchor["object_name"]
+            ra_h, dec_d = anchor.get("ra_hours"), anchor.get("dec_deg")
+            row = active_resolver.row_by_id.get(object_id)
+
+        exposure = None
+        for k in ("EXPTIME", "EXPOSURE", "EXPTIM", "ELAPTIME"):
+            v = hdr.get(k)
+            if isinstance(v, (int, float)) and v >= 0:
+                exposure = float(v)
+                break
+        date_obs = fitsio.capture_date_obs(hdr)
+        filt = str(hdr.get("FILTER") or "").strip() or None
+        tel = str(hdr.get("TELESCOP") or hdr.get("INSTRUME") or "").strip() or None
+        frame = classify_frame(hdr.get("IMAGETYP"))
+        forced = (frame_override or "").strip().lower()
+        if forced in FRAME_TYPES:           # explicit upload target wins
+            frame = forced
+
+        cancel = threading.Event()
+        if compress:
+            duplicate = await _archive_io(_known_duplicate, db, archive, digest.hexdigest(),
+                stage.stat().st_size, enforce_archive_root, session_target, frame, dedup_batch)
+            if duplicate is not None:
+                return _duplicate_result(name, duplicate)
+            try:
+                prepared = await _archive_io(_prepare_compression, archive, stage, digest.hexdigest(),
+                    name, compression_mode, cancel, cancel_event=cancel, on_cancel=_discard_prepared)
+            except ValueError as exc:
+                return {'file': name, 'ok': False, 'error': f'Lossless Rice compression failed: {exc} No exposure was published.'}
+        if before_publish is not None:
+            await before_publish()
         return await _archive_io(
             _finalize_import, db, archive, stage, digest, name, object_id,
             object_name, ra_h, dec_d, exposure, date_obs, filt, tel, frame,
-            session_override, row, on_import, enforce_archive_root, session_target, hdr)
+            session_override, row, on_import, enforce_archive_root, session_target, hdr,
+            compress, cancel, compression_mode, prepared, dedup_batch,
+            storage_compressed=storage_info['compressed'], cancel_event=cancel)
     except OSError as exc:
         log.warning("ingest: cannot write %s: %s", archive, exc)
         return {"file": name, "ok": False,
                 "error": f"could not write to the archive: {exc.strerror or exc}"}
     finally:
+        if prepared is not None:
+            await _archive_io(_discard_prepared, prepared)
         if stage is not None:
             await _archive_io(_remove_stage, stage)
+
+
+def _discard_prepared(prepared):
+    for temporary in prepared['temporaries']:
+        _remove_stage(temporary)
+
+
+def _prepare_compression(archive, stage, digest, name, mode, cancel):
+    """Private, cancellable CPU/IO preparation; no archive or SQLite lock."""
+    from . import compression
+    prepared = dict(temporaries=[], stage=stage, digest=digest, size=stage.stat().st_size,
+                    mapping=None, result={})
+    def checkpoint():
+        if cancel.is_set():
+            raise compression.Cancelled
+    try:
+        checkpoint()
+        try:
+            file_kind = 'unsupported' if name.lower().endswith('.gz') else compression.kind(stage, checkpoint)
+        except fits_metadata.FitsMetadataError:
+            file_kind = 'unsupported'
+        if file_kind != 'integer':
+            prepared['result'] = dict(compression='unchanged', compression_reason=(
+                'Already Rice-compressed; stored unchanged.' if file_kind == 'rice' else
+                'Unsupported or already compressed FITS; stored unchanged. Rice requires 8/16/32-bit integer images.'))
+            return prepared
+        packed = _prepare_stage(archive)
+        prepared['temporaries'].append(packed)
+        packed.unlink()
+        restored = None
+        if mode == 'safe':
+            restored = _prepare_stage(archive)
+            prepared['temporaries'].append(restored)
+            restored.unlink()
+        info = archive.stat()
+        measured = compression.encode_verified(stage, packed, restored, archive,
+            (info.st_dev, info.st_ino), (digest, prepared['size']), checkpoint,
+            verify_roundtrip=mode == 'safe')
+        prepared.update(stage=packed, digest=measured[0], size=measured[1],
+            mapping=dict(original_sha256=digest, original_size=prepared['size'], original_name=name,
+                compressed_sha256=measured[0], compressed_size=measured[1], current_sha256=measured[0]),
+            result=dict(compression='rice', compression_mode=mode))
+        return prepared
+    except BaseException:
+        _discard_prepared(prepared)
+        raise
 
 
 def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
                      ra_h, dec_d, exposure, date_obs, filt, tel, frame,
                      session_override, row, on_import=None,
-                     enforce_archive_root=False, session_target=None, header=None):
+                     enforce_archive_root=False, session_target=None, header=None,
+                     compress=False, cancel_event=None, compression_mode='safe', prepared=None, dedup_batch=None,
+                     storage_compressed=None):
+    from . import compression
     target = None
+    extra_stages = []
     committed = promoted = False
+
+    def checkpoint():
+        if cancel_event is not None and cancel_event.is_set():
+            raise compression.Cancelled
+
+    def encode(verify_roundtrip=True):
+        packed = _prepare_stage(archive)
+        extra_stages.append(packed)
+        restored = None
+        if verify_roundtrip:
+            restored = _prepare_stage(archive)
+            extra_stages.append(restored)
+        # fpack refuses existing output files, including empty reservations.
+        packed.unlink()
+        if restored is not None:
+            restored.unlink()
+        identity = (archive.stat().st_dev, archive.stat().st_ino)
+        measured = compression.encode_verified(stage, packed, restored, archive,
+            identity, (digest.hexdigest(), size), checkpoint, verify_roundtrip=verify_roundtrip)
+        return packed, measured, dict(original_sha256=digest.hexdigest(), original_size=size,
+            original_name=name, compressed_sha256=measured[0], compressed_size=measured[1], current_sha256=measured[0])
+
+    def verify_publication(path, expected):
+        with path.open('r+b') as destination:
+            destination.flush()
+            os.fsync(destination.fileno())
+        root_info = archive.stat()
+        measured = compression.fingerprint(archive, path.relative_to(archive).as_posix(),
+            (root_info.st_dev, root_info.st_ino), checkpoint)
+        if measured[:2] != expected[:2]:
+            raise compression.RiceCompressionError('Published exposure failed its SHA-256 check.')
+        return measured
+
     try:
         size = stage.stat().st_size
         # Upload/reindex publication is serialized independently of SQLite.
         # File hashing/copying never holds the database connection lock.
-        with db.archive_lock:
+        with _batch_archive_lock(db, dedup_batch):
+            if db.pending_compression():
+                return {'file': name, 'ok': False, 'error': 'Compression recovery must finish before importing exposures. Restart NightSeam with its original disks available.'}
             if db.pending_trash():
                 return {'file': name, 'ok': False,
                         'error': 'Interrupted trash recovery must finish before importing exposures. Use scripts/restore_legacy_trash.py to inspect retained recovery records.'}
@@ -499,7 +799,8 @@ def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
                 if current != session_target:
                     return {"file": name, "ok": False,
                             "error": "Selected session changed during import; select it again."}
-            duplicate = _find_duplicate(db, archive, digest.hexdigest(), size)
+            checkpoint()
+            duplicate = _find_duplicate(db, archive, digest.hexdigest(), size, dedup_batch=dedup_batch)
             if duplicate is not None:
                 return _duplicate_result(name, duplicate)
             missing = _missing_original(db, archive, digest.hexdigest(), size)
@@ -507,6 +808,7 @@ def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
                 existing, target = missing
                 target.parent.mkdir(parents=True, exist_ok=True)
                 try:
+                    checkpoint()
                     _promote_stage(stage, target)
                 except FileExistsError:
                     measured = _fingerprint_file(target)
@@ -520,61 +822,132 @@ def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
                 committed = True
                 result = _duplicate_result(name, existing)
                 result.update(skipped=False, restored=True, reason="original_restored")
+                if compress:
+                    result.update(compression='unchanged', compression_reason='Existing exposure restored in its recorded format.')
                 return result
+            # Restore either known representation into the existing record's
+            # recorded format, retaining folder, class and session.
+            with db.lock:
+                aliases = [dict(r) for r in db.conn.execute(
+                    'SELECT images.*,c.original_sha256,c.original_size,c.original_name,'
+                    'c.compressed_sha256,c.compressed_size,c.current_sha256 FROM images '
+                    'JOIN image_compression c ON c.image_id=images.id '
+                    'WHERE (c.original_sha256=? AND c.original_size=? AND c.current_sha256=c.compressed_sha256) '
+                    'OR (c.compressed_sha256=? AND c.compressed_size=? AND c.current_sha256=c.original_sha256) '
+                    'ORDER BY images.id', (digest.hexdigest(), size, digest.hexdigest(), size))]
+            for alias in aliases:
+                root_info = archive.stat()
+                candidate = compression._contained(archive, alias['file'], (root_info.st_dev, root_info.st_ino))
+                if candidate.exists():
+                    continue
+                if alias['current_sha256'] == alias['compressed_sha256']:
+                    prepared, measured, mapping = encode()
+                    mapping['original_name'] = alias['original_name']
+                    restore_format = 'rice'
+                else:
+                    prepared = _prepare_stage(archive)
+                    extra_stages.append(prepared)
+                    prepared.unlink()
+                    compression.native(compression.tools()['funpack'], ['-C'], stage, prepared, checkpoint)
+                    measured = compression.fingerprint(archive, prepared.name,
+                        (root_info.st_dev, root_info.st_ino), checkpoint)
+                    if measured[:2] != (alias['original_sha256'], alias['original_size']):
+                        raise compression.RiceCompressionError('The original SHA-256 could not be restored.')
+                    mapping = {key: alias[key] for key in ('original_sha256', 'original_size', 'original_name',
+                        'compressed_sha256', 'compressed_size', 'current_sha256')}
+                    restore_format = 'unchanged'
+                target = candidate
+                target.parent.mkdir(parents=True, exist_ok=True)
+                checkpoint()
+                _promote_stage(prepared, target)
+                promoted = True
+                published = verify_publication(target, measured)
+                checkpoint()
+                db.restore_compressed_image(alias['id'], published[0], published[1], published[2], mapping)
+                committed = True
+                result = _duplicate_result(name, alias)
+                result.update(skipped=False, restored=True, reason='original_restored', compression=restore_format, compression_mode='safe')
+                if restore_format == 'unchanged':
+                    result['compression_reason'] = 'Existing exposure restored in its recorded uncompressed format.'
+                return result
+            publish_stage, stored_digest, stored_size, mapping = stage, digest.hexdigest(), size, None
+            compression_result = {}
+            if compress:
+                checkpoint()
+                if prepared is None:
+                    raise ValueError('Missing private compression preparation.')
+                publish_stage, stored_digest, stored_size = prepared['stage'], prepared['digest'], prepared['size']
+                mapping, compression_result = prepared['mapping'], prepared['result']
             metadata = _header_session(db, header or {}, date_obs, session_target)
             slug = session_target["slug"] if session_target else obj_slug(object_name)
             session = (archive / slug / session_target["session"] if session_target else
                        _session_dir(db, archive, slug, object_id,
                                     object_name, date_obs, session_override, metadata))
-            target = _archive_target(archive, name, slug, session, frame)
+            storage_name = name + '.fz' if mapping else name
+            target = _archive_target(archive, storage_name, slug, session, frame)
             for attempt in range(8):
                 if session_target and paths.safe_join(
                         archive, str(target.relative_to(archive))) is None:
                     return {"file": name, "ok": False,
                             "error": "Selected session has an unsafe calibration target."}
                 try:
-                    _promote_stage(stage, target)
+                    checkpoint()
+                    _promote_stage(publish_stage, target)
                     break
                 except FileExistsError:
                     if attempt == 7:
                         raise
-                    target = _archive_target(archive, name, slug, session, frame)
+                    target = _archive_target(archive, storage_name, slug, session, frame)
             promoted = True
             stored = paths.safe_rel(str(target.relative_to(archive)))
             if stored is None:
                 raise ValueError("invalid archive target")
             stat = target.stat()
             try:
-                img_id = db.add_image({
-                    **metadata,
-                    "file": stored, "orig_name": name, "object_id": object_id,
-                    "object_name": object_name, "ra_hours": ra_h, "dec_deg": dec_d,
-                    "exposure": exposure, "date_obs": date_obs, "filter": filt,
-                    "session_date_obs": session_target["session_date_obs"] if session_target else None,
-                    "telescope": tel, "imagetyp": frame,
-                    "content_sha256": digest.hexdigest(), "file_size": size,
-                    "file_mtime_ns": stat.st_mtime_ns,
-                    "ingested_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
-                })
+                checkpoint()
+                if mapping:
+                    verify_publication(target, (stored_digest, stored_size))
+                    # Restore to the sanitized, collision-resolved archive name.
+                    mapping['original_name'] = target.name[:-3]
+                with db.import_unit():
+                    img_id = db.add_image({
+                        **metadata,
+                        "file": stored, "orig_name": name, "object_id": object_id,
+                        "object_name": object_name, "ra_hours": ra_h, "dec_deg": dec_d,
+                        "exposure": exposure, "date_obs": date_obs, "filter": filt,
+                        "session_date_obs": session_target["session_date_obs"] if session_target else None,
+                        "telescope": tel, "imagetyp": frame,
+                        "content_sha256": stored_digest, "file_size": stored_size,
+                        "compression": mapping,
+                        "storage_compressed": True if mapping else storage_compressed,
+                        "integrity_source": ('verified_rice_ingest' if compression_mode == 'safe' else 'rice_ingest_fast') if mapping else 'import',
+                        "file_mtime_ns": stat.st_mtime_ns,
+                        "ingested_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
+                    })
+                    result = {
+                        **compression_result,
+                        **metadata,
+                        "file": name, "ok": True, "id": img_id,
+                        "object": {"id": object_id, "name": object_name,
+                                   "designation": imglib.designation_of(
+                                       row, {"object_name": object_name})},
+                        "exposure": exposure, "date_obs": date_obs, "filter": filt,
+                        "session_date_obs": session_target["session_date_obs"] if session_target else None,
+                        "telescope": tel, "imagetyp": frame, "stored": stored,
+                    }
+                    if on_import is not None:
+                        on_import(result, archive)
                 committed = True
-                result = {
-                    **metadata,
-                    "file": name, "ok": True, "id": img_id,
-                    "object": {"id": object_id, "name": object_name,
-                               "designation": imglib.designation_of(
-                                   row, {"object_name": object_name})},
-                    "exposure": exposure, "date_obs": date_obs, "filter": filt,
-                    "session_date_obs": session_target["session_date_obs"] if session_target else None,
-                    "telescope": tel, "imagetyp": frame, "stored": stored,
-                }
             except BaseException:
                 target.unlink(missing_ok=True)
                 raise
-            if on_import is not None:
-                on_import(result, archive)
+    except compression.RiceCompressionError as exc:
+        return {'file': name, 'ok': False, 'error': f'Lossless Rice compression failed: {exc} No exposure was published.'}
     finally:
         if target is not None and promoted and not committed:
             target.unlink(missing_ok=True)
+        for temporary in extra_stages:
+            _remove_stage(temporary)
     return result
 
 
@@ -796,6 +1169,8 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
     guessed. Missing rows and every physical archive file remain untouched.
     Hashing, parsing and filesystem validation precede the SQLite transaction.
     """
+    if db.pending_compression():
+        raise ValueError('Compression recovery must finish before reindexing. Restart NightSeam with its original disks available.')
     if db.pending_trash():
         raise ValueError('Interrupted trash recovery must finish before reindex. Use scripts/restore_legacy_trash.py to inspect retained recovery records.')
     result = {"found": 0, "added": 0, "skipped": 0, "failed": 0,
@@ -832,7 +1207,7 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
     from .trash_paths import archive_paths
     for entry in archive_paths(archive):
         _check_reindex_cancelled(cancel_event)
-        if entry.suffix.lower() not in (".fit", ".fits"):
+        if not fits_metadata.is_fits_name(entry.name):
             continue
         rel = paths.safe_rel(entry.relative_to(archive).as_posix())
         target = paths.safe_join(archive, rel)
@@ -853,12 +1228,15 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
     fingerprints = {}
     measured_paths = {}
     header_states = {}
+    storage_formats = {}
 
     def read_header(target):
         _check_reindex_cancelled(cancel_event)
         before = target.stat()
-        with target.open("rb") as source:
-            header = fitsio.read_fits_header(source.read(HEADER_READ))
+        storage_info = {}
+        header = fits_metadata.read_metadata(
+            target, lambda: _check_reindex_cancelled(cancel_event), storage_info=storage_info)
+        storage_formats[target] = storage_info.get('compressed')
         after = target.stat()
         state = (before.st_size, before.st_mtime_ns)
         if state != (after.st_size, after.st_mtime_ns):
@@ -895,11 +1273,11 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
         if recorded:
             try:
                 header = read_header(target)
-            except OSError:
+            except (OSError, fits_metadata.FitsMetadataError):
                 header = None
             if header:
                 for rec in recorded:
-                    session_updates[rec["id"]] = _reindex_session_metadata(db, rec, header)
+                    session_updates[rec["id"]] = _reindex_session_metadata(db, rec, header, storage_formats[target])
             stat = target.stat()
             needs_hash = any(not rec.get("content_sha256") or
                              rec.get("file_size") != stat.st_size or
@@ -916,7 +1294,7 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
             continue
         try:
             header = read_header(target)
-        except OSError:
+        except (OSError, fits_metadata.FitsMetadataError):
             header = None
         if not header:
             result["failed"] += 1
@@ -968,7 +1346,7 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
             rel, _, _, measured = destinations[0]
             relinks.append((stale[0]["id"], rel, *measured))
             session_updates[stale[0]["id"]] = _reindex_session_metadata(
-                db, stale[0], destinations[0][2])
+                db, stale[0], destinations[0][2], storage_formats[destinations[0][1]])
             result["repaired"] += 1
             continue
         if matching_live:
@@ -1011,6 +1389,7 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
             "imagetyp": FRAME_DIRS[parts[-2].lower()],
             "content_sha256": measured[0], "file_size": measured[1],
             "file_mtime_ns": measured[2],
+            "storage_compressed": storage_formats[target],
             "integrity_source": "reindex",
             "ingested_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
         })

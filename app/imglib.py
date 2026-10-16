@@ -8,6 +8,7 @@ without replacing DATE-OBS or measured site coordinates.
 """
 
 from __future__ import annotations
+from functools import lru_cache
 
 import re
 import math
@@ -97,6 +98,9 @@ class CatalogResolver:
         self.row_by_id: dict[str, dict] = {}
         for row in self.rows:
             self.row_by_id.setdefault(row["id"], row)
+        # A capture run repeats the same target/coordinates. Keep results,
+        # including unresolved hints, only for this immutable catalog snapshot.
+        self.resolve = lru_cache(maxsize=4096)(self.resolve)
 
     def resolve(self, name_hint: str | None = None,
                 ra_hours: float | None = None,
@@ -237,11 +241,15 @@ def _session_record(members: list[dict]) -> dict:
         "n_images": len(members),
         "exposure": sum(float(im.get("exposure") or 0.0) for im in members),
         "image_ids": [im["id"] for im in members if im.get("id") is not None],
+        "compression": {"compressed": 0, "uncompressed": 0, "unknown": 0},
         "types": {}, "filters": {},
     }
     if undated:
         s["undated"] = True
     for im in members:
+        stored = im.get("storage_compressed")
+        storage = "compressed" if stored == 1 else "uncompressed" if stored == 0 else "unknown"
+        s["compression"][storage] += 1
         fr = im.get("imagetyp") or "light"
         t = s["types"].setdefault(fr, {"n": 0, "exposure": 0.0})
         t["n"] += 1

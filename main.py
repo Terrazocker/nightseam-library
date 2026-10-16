@@ -345,6 +345,7 @@ def main() -> int:
             wait_for_exit(server, idle_secs)
     finally:
         app.state.archive_health.request_shutdown()
+        app.state.compression.cancel_event.set()
         server.should_exit = True
         thread.join(timeout=15)
         if thread.is_alive():

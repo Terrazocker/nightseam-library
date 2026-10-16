@@ -24,10 +24,11 @@ from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from .archive_health import ArchiveHealthManager
+from .compression import CompressionManager, recover as recover_compression
 from .database import Database
 from .archive_trash import recover_pending, pending_current
 from .imglib import CatalogResolver, name_key
-from .ingest import (ArchiveRenameRecoveryError, ReindexCancelled, _archive_io,
+from .ingest import (ArchiveRenameRecoveryError, ReindexCancelled, DedupBatch, _archive_io,
                      calibration_import_target, ingest_one, obj_slug,
                      reindex_library, rename_archive_folder, undo_archive_rename)
 from .paths import safe_join, safe_rel, static_dir
@@ -159,8 +160,18 @@ class HealthScanIn(BaseModel):
     mode: Literal["quick", "deep"] = "quick"
 
 
+class CompressionIn(BaseModel):
+    mode: Literal['compress', 'uncompress', 'copy']
+    compression_mode: Literal['fast', 'safe'] = 'safe'
+    anchor_id: int | None = Field(default=None, gt=0)
+    image_ids: list[int] = Field(default_factory=list, max_length=100000)
+    destination: str | None = Field(default=None, max_length=4096)
+
+
 class HealthAcknowledgementIn(BaseModel):
-    image_id: int
+    image_id: int | None = None
+    scope: Literal['image', 'session', 'all'] = 'image'
+    session_id: str | None = Field(default=None, max_length=64)
     action: Literal["forget_missing", "accept_contents"]
     confirmed: Literal[True]
 
@@ -169,22 +180,41 @@ class HealthAcknowledgementIn(BaseModel):
 
 def create_app(db: Database) -> FastAPI:
     health = ArchiveHealthManager(db)
+    compression = CompressionManager(db)
+    ingest_workers = asyncio.Semaphore(max(1, min(MAX_FILES_PER_REQUEST, os.cpu_count() or 1)))
+    ingest_admission = asyncio.Lock()
+    resolver_lock = threading.Lock()
+    resolver_cache = None
+
+    def build_ingest_catalog():
+        nonlocal resolver_cache
+        with resolver_lock:
+            revision = db.catalog_revision()
+            if resolver_cache is None or resolver_cache[0] != revision:
+                catalog = db.all_objects(advanced=True)
+                resolver_cache = revision, catalog, CatalogResolver(catalog)
+            return resolver_cache[1:]
     @asynccontextmanager
     async def lifespan(app):
         try:
+            await run_in_threadpool(recover_compression, db)
             await run_in_threadpool(recover_pending, db, health.stopping.is_set)
             yield
         finally:
+            await run_in_threadpool(compression.shutdown)
             await run_in_threadpool(health.shutdown)
     app = FastAPI(title="NightSeam", version=APP_VERSION, docs_url=None,
                   redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.archive_health = health
+    app.state.compression = compression
 
     def serialize_archive(function):
         """Sync routes run in workers; lock before any metadata/file snapshot."""
         @wraps(function)
         def locked(*args, **kwargs):
             with db.archive_lock:
+                if db.pending_compression():
+                    raise HTTPException(409, 'Compression recovery is pending. Restart NightSeam with the original disks available.')
                 return function(*args, **kwargs)
         return locked
 
@@ -225,12 +255,16 @@ def create_app(db: Database) -> FastAPI:
         if (request.method == 'POST' and request.url.path in
                 ('/api/images/ingest', '/api/library/reindex', '/api/library/edit') and pending_current(db)):
             return JSONResponse({'detail': 'An interrupted trash operation needs recovery. Inspect retained recovery records with scripts/restore_legacy_trash.py before changing the archive.'}, status_code=409)
+        if (request.method == 'POST' and (request.url.path in
+                ('/api/images/ingest', '/api/library/reindex', '/api/library/edit') or
+                request.url.path.endswith('/acknowledge')) and db.pending_compression()):
+            return JSONResponse({'detail': 'Wait for compression to finish. If recovery failed, restart NightSeam with the original disks available.'}, status_code=409)
         resp = await call_next(request)
         # F-16: every response the app serves carries nosniff - cheap defense
         # that also covers non-HTML responses (the SVG placeholder) which the
         # CSP attachment below deliberately skips.
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
-        if request.url.path.startswith("/api/library/health"):
+        if request.url.path.startswith(("/api/library/health", '/api/library/compression')):
             resp.headers["Cache-Control"] = "no-store"
         # SP-02: the privileged localhost origin must not accept remote script.
         # Attach the policy to every HTML document the server serves (the SPA
@@ -283,6 +317,9 @@ def create_app(db: Database) -> FastAPI:
                 raise HTTPException(400, "size_unit must be arcmin, arcsec or deg")
             changes["size_unit"] = body.size_unit
         if body.image_dir is not None:
+            with db.lock:
+                if db.conn.execute('SELECT 1 FROM compression_journal LIMIT 1').fetchone():
+                    raise HTTPException(409, 'An interrupted compression operation needs recovery before changing the archive folder. Restart NightSeam with its original archive available.')
             if pending_current(db) and body.image_dir.strip() != db.image_dir():
                 raise HTTPException(409, 'An interrupted trash operation needs recovery before changing the archive folder. Use scripts/restore_legacy_trash.py to inspect retained recovery records.')
             # F-15: reject (never truncate) an oversized archive path - a
@@ -298,6 +335,40 @@ def create_app(db: Database) -> FastAPI:
         return {"ok": True}
 
     # ---------------- image archive ----------------
+
+    @app.post('/api/library/compression', status_code=202)
+    def api_compression_start(body: CompressionIn):
+        if body.mode == 'copy' and not body.destination:
+            raise HTTPException(422, 'Choose a destination folder.')
+        if body.mode != 'copy' and (not body.anchor_id or not body.image_ids or
+                any(type(i) is not int or i <= 0 for i in body.image_ids)):
+            raise HTTPException(422, 'Select a complete recorded session.')
+        try:
+            return compression.start(body.mode, body.anchor_id, body.image_ids, body.destination, body.compression_mode)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @app.get('/api/library/compression')
+    def api_compression_latest():
+        try:
+            return compression.snapshot()
+        except KeyError:
+            return None
+
+    @app.get('/api/library/compression/{job_id}')
+    def api_compression_status(job_id: str):
+        try:
+            return compression.snapshot(job_id)
+        except KeyError:
+            raise HTTPException(404, 'Conversion not found in this application instance.') from None
+
+    @app.post('/api/library/compression/{job_id}/cancel')
+    def api_compression_cancel(job_id: str):
+        try:
+            compression.cancel(job_id)
+            return compression.snapshot(job_id)
+        except KeyError:
+            raise HTTPException(404, 'Conversion not found.') from None
 
     @app.post("/api/library/health", status_code=202)
     def api_health_start(body: HealthScanIn):
@@ -342,7 +413,8 @@ def create_app(db: Database) -> FastAPI:
     @app.post("/api/library/health/{job_id}/acknowledge")
     def api_health_acknowledge(job_id: str, body: HealthAcknowledgementIn):
         try:
-            return health.acknowledge(job_id, body.image_id, body.action)
+            return health.acknowledge(job_id, body.image_id, body.action,
+                scope=body.scope, session_id=body.session_id)
         except KeyError:
             raise HTTPException(404, "Health report not found") from None
         except ValueError as exc:
@@ -361,11 +433,23 @@ def create_app(db: Database) -> FastAPI:
     _SESSION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _-]{0,39}$")
     _RUN_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 
+    def serialize_ingest(function):
+        @wraps(function)
+        async def admitted(*args, **kwargs):
+            # Wait asynchronously before a request starts pinning archive files;
+            # queued imports must not occupy all filesystem executor workers.
+            async with ingest_admission:
+                return await function(*args, **kwargs)
+        return admitted
+
     @app.post("/api/images/ingest")
+    @serialize_ingest
     async def api_ingest_images(files: list[UploadFile] = File(...),
                                 frame: str = Form(""),
                                 session: str = Form(""),
                                 run_id: str = Form(""),
+                                compress: bool = Form(False),
+                                compression_mode: Literal['fast', 'safe'] = Form('safe'),
                                 session_anchor_id: int | None = Form(None)):
         if len(files) > MAX_FILES_PER_REQUEST:
             raise HTTPException(
@@ -387,15 +471,8 @@ def create_app(db: Database) -> FastAPI:
         except OSError as exc:
             raise HTTPException(
                 500, f"Cannot create archive folder {archive}: {exc}")
-        # F-06: the catalog snapshot and resolver build are pure CPU/DB work
-        # (measured ~350 ms combined on the full catalog); run both in the same
-        # threadpool worker so they cannot stall the event loop. The awaited
-        # call stays outside the archive-directory try/except above: a database
-        # or resolver error must not surface as a directory-creation failure.
-        def build_ingest_catalog():
-            catalog = db.all_objects(advanced=True)
-            return catalog, CatalogResolver(catalog)
-
+        # Build once per catalog revision, outside the event loop. Image-only
+        # writes do not rebuild thousands of name/coordinate lookup entries.
         catalog, resolver = await run_in_threadpool(build_ingest_catalog)
         sess = session.strip()
         if not _SESSION_NAME_RE.match(sess):
@@ -419,28 +496,65 @@ def create_app(db: Database) -> FastAPI:
                 "n_files": 1, "total_exposure": float(r.get("exposure") or 0.0),
                 "first_obs": r.get("date_obs"), "image_dir": str(current_archive)})
 
-        results = []
-        for index, upload in enumerate(files):
+        turns = [asyncio.Event() for _ in range(len(files) + 1)]
+        turns[0].set()
+        database_failure_index = None
+        index_cancel = threading.Event()
+        dedup_batch = await _archive_io(DedupBatch.prepare, db, archive,
+            {upload.size for upload in files if upload.size is not None},
+            index_cancel, on_cancel=lambda index: index.close(), cancel_event=index_cancel)
+
+        class Unattempted(Exception):
+            pass
+
+        async def import_upload(index, upload):
+            nonlocal database_failure_index
+            async def before_publish():
+                await turns[index].wait()
+                if database_failure_index is not None:
+                    raise Unattempted
             try:
-                result = await ingest_one(
-                    db, catalog, archive, upload, frame, sess,
-                    resolver=resolver, on_import=record_import,
-                    enforce_archive_root=True, session_target=target)
+                async with ingest_workers:
+                    result = await ingest_one(
+                        db, catalog, archive, upload, frame, sess,
+                        resolver=resolver, on_import=record_import,
+                        enforce_archive_root=True, session_target=target, compress=compress,
+                        compression_mode=compression_mode, before_publish=before_publish, dedup_batch=dedup_batch)
             except ValueError:
                 log.exception("Exposure validation failed for %s", upload.filename)
                 result = {"file": Path(upload.filename or "image.fit").name,
                           "ok": False, "error": "Exposure has an invalid archive filename or metadata."}
             except sqlite3.Error:
                 log.exception("Database failure during exposure import")
-                results.append({"file": Path(upload.filename or "image.fit").name,
+                database_failure_index = index
+                result = {"file": Path(upload.filename or "image.fit").name,
                                 "ok": False, "unconfirmed": True,
-                                "error": "Database error; this file's outcome is unconfirmed. Refresh the library before retrying."})
-                results.extend({"file": Path(item.filename or "image.fit").name,
-                                "ok": False, "unattempted": True,
-                                "error": "Not imported because the database failed earlier in this request."}
-                               for item in files[index + 1:])
-                break
-            results.append(result)
+                                "error": "Database error; this file's outcome is unconfirmed. Refresh the library before retrying."}
+            except Unattempted:
+                result = {"file": Path(upload.filename or "image.fit").name, "ok": False,
+                    "unattempted": True, "error": "Not imported because the database failed earlier in this request."}
+            finally:
+                # Early validation failures still wait for their predecessor:
+                # publication order and database-failure boundaries stay exact.
+                if not asyncio.current_task().cancelling():
+                    await turns[index].wait()
+                turns[index + 1].set()
+            if database_failure_index is not None and index > database_failure_index:
+                result = {"file": Path(upload.filename or "image.fit").name, "ok": False,
+                    "unattempted": True, "error": "Not imported because the database failed earlier in this request."}
+            return result
+
+        tasks = [asyncio.create_task(import_upload(index, upload)) for index, upload in enumerate(files)]
+        try:
+            results = await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            # Workers drain before multipart sources or staging are released.
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        finally:
+            await _archive_io(dedup_batch.close)
         return {"results": results}
 
     @app.get("/api/library/imports")

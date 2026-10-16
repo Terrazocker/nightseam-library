@@ -21,9 +21,21 @@ app/ingest.py parses exposure headers, matches objects, stages/copies files,
 hashes complete bytes for global duplicate identity and reindexes archive trees.
 app/imglib.py derives objects and capture sessions for the interface.
 app/paths.py contains safe path and writable/resource-directory boundaries.
-Dedup comparisons read the current complete bytes of same-size originals even
-if their cached digest differs: external restores can preserve size and mtime.
-This can add I/O for new content. Reindex measures each original at most once
+Dedup comparisons measure same-size originals even if their database digest
+differs: external restores can preserve size and mtime. A bounded process-local
+negative-match memo avoids repeated full reads. app/file_version.py pins Windows
+writers/renames while comparing NTFS/ReFS file ID, size, LastWriteTime and native
+ChangeTime; unsupported filesystems/open writers disable memoization. POSIX uses
+identity and ctime. Only measured bytes populate the cache, and positive duplicate
+matches always rehash. A request-scoped DedupBatch pins up to 4,096 earlier
+same-size files and their directory lineage, validating their negative hashes
+once per batch. app/archive_lock.py reserves the archive for these authorized
+workers until pins close; unrelated mutations wait. Windows pins require actual
+GENERIC_READ access (attribute-only handles do not enforce the sharing policy).
+Unsupported versions/open writers/overflow retain individual checks. Admission
+waits asynchronously and index building cooperates with cancellation. Image,
+integrity, conversion alias and history writes share one Database.import_unit
+transaction per file. Reindex measures each original at most once
 per scan and keeps cached fingerprints for unchanged known-only scans.
 Recovery is file-first: exposure bytes stay in the archive. SQLite keeps a
 compatible rolling `nightseam.db.backup` plus up to five dated pre-migration
@@ -82,6 +94,89 @@ explicit time scales, ambiguous slash dates, date-only values and invalid dates
 remain Undated; DATE (file creation) is never substituted for capture time.
 Original FITS bytes are preserved. There is no locale-dependent date guess.
 
+Import, reindex and Archive Health discovery recognize .fit/.fits/.fts, tiled
+.fz files (including .fits.fz), and their .gz wrappers, case-insensitively.
+app/fits_metadata.py reads primary-image metadata or the first nonempty IMAGE /
+ZIMAGE extension after an explicitly empty primary. Extension metadata overrides
+primary fallbacks; exposure/instrument aliases and coordinate pairs are not mixed
+between HDUs. Primary DATE-OBS/TIMESYS values remain fallbacks. One file remains
+one exposure record; additional image HDUs are not separately cataloged.
+
+The reader parses headers and skips preceding HDUs without loading image pixels
+or invoking tiled pixel codecs. Plain primary headers retain legacy tolerance.
+Traversal is limited to 32 HDUs, 1,474,560 bytes per header, 4 MiB total headers,
+16 axes for traversed layouts, 64 MiB each of gzip input/expanded traversal, and
+five seconds with cooperative checkpoints. Gzip optional header fields also pass
+through bounded reads. Reindex propagates cancellation before publication.
+Metadata-only reading does not validate unread pixel data, later HDUs, embedded
+checksums or unread gzip trailers. Without opt-in Rice, SHA-256 and
+integrity baselines describe complete uploaded/stored bytes; plain and compressed
+representations remain distinct identities.
+
+Manual Rice conversion is implemented in app/compression.py. Session actions
+Compress losslessly and Uncompress use an anchor and exact expected image IDs;
+server-side object/session resolution rejects stale membership. Attached
+calibration IDs, classification, timestamps and logical anchors stay intact.
+
+Native CFITSIO fpack -r and funpack -C are bundled under vendor/fits-tools/windows-x64
+and resolved from resource_dir(), with executable hashes checked against retained
+provenance. Every HDU is inspected. Rice compression supports integer BITPIX
+8/16/32; unsupported images/directives refuse session conversion. Every packed
+file in Safe mode must decompress to the original complete-file SHA-256 before
+publication. Manual compression/copy has its own Fast/Safe switch (Safe by
+default, including omitted API compression_mode); Fast skips this round trip.
+Managed decompression checks the recorded original hash. Imported Rice files
+can be decompressed without a historical original-file hash to compare.
+
+image_compression retains original/compressed hashes and original filenames;
+current images fingerprints and image_integrity baselines transition together.
+Dedup aliases require hashing actual stored bytes against the verified mapping.
+Ingest preserves uploaded representations unless the explicit Rice option is
+selected for a supported integer image. Compression uses the
+independent archive lock and cancellable native workers, with responsive status
+and catalog reads. IO stays outside SQLite critical sections. Originals remain
+in same-filesystem staging until commit; compression_journal recovers interrupted
+preparation/publication on startup. Unresolved recovery blocks archive mutations.
+
+Copy library is manual and takes an explicit destination picker/path. It creates
+a new folder outside the configured archive with usable FITS under images/,
+a coherent nightseam.db snapshot and manifest.json with membership, metadata
+and hashes. Supported integers use Rice; existing Rice and unsupported files
+are copied intact. Scratch is on the destination disk. Source archive files
+and the active catalog stay unchanged. The copied database points to its copied
+images and supports verified decompression. After moving a copy, configure its
+new images folder before use. No scheduled backup is added.
+
+Import has an unchecked, per-window Compress on import with lossless Rice option.
+The client captures it once per action and passes compress=true on every multipart
+chunk, including calibration uploads. The API defaults to false independently.
+The accessible Fast/Safe sliding switch defaults to Fast in the UI and supplies
+compression_mode=fast/safe on every chunk. Omitted API mode defaults to Safe for
+existing clients. Mode selection is disabled when compression is off and locked
+during archive operations. A hover/focus/tap info tooltip explains the difference.
+After original-byte dedup, supported integer uploads are encoded into a second
+private stage using the shared compression.encode_verified helper. Safe mode
+requires funpack -C to restore exact full-file SHA-256/size; Fast skips decoding
+and trusts reversibility, while retaining original and compressed identities.
+Both check Rice output format and source stability; the published file is flushed,
+rehash-verified, then committed with its integrity baseline and image_compression
+mapping in Database.add_image's existing transaction. Only a verified .fz is
+published. Fast provenance is rice_ingest_fast; Safe is verified_rice_ingest.
+Stored-byte integrity checking is distinct from verifying restoration. Manual
+session/library conversion has an independent mode; missing-file recovery retains
+strict verification. Fast manual conversion is labelled rice_conversion_fast.
+Uploaded temporary originals survive through commit; external source
+files are never modified. Every failure/cancellation cleans uncommitted outputs
+and all preparation stages. Cancellation signals native worker checkpoints before
+draining IO, preventing removal of a stage still in use.
+
+Unsupported/already-compressed files remain unchanged with per-file reasons;
+native verification failures are explicit import failures. Existing duplicates
+are not converted. Both known representation hashes can restore an absent managed
+file into its current recorded format, retaining IDs, metadata and anchors; the
+restored bytes, current fingerprint, integrity baseline and mapping update
+atomically. Import results report Rice conversions and reasons for unchanged files.
+
 Uploads report validation failures per file and can continue. Database errors
 stop the remaining request and later UI chunks, preserving earlier confirmed
 results while marking uncertain and unattempted files separately. Import-history
@@ -111,18 +206,34 @@ files are quarantined in logs/repository-split and regenerated on launch.
 
 ## Independent build
 
+Session rows show a fixed-size storage symbol (compressed, uncompressed, mixed,
+or unknown), with accessible counts and matching selected-session facts.
+Nullable images.storage_compressed records the selected exposure image's format
+from the existing metadata read, including gzip magic and tiled ZIMAGE headers;
+filenames are not format evidence. Ingest, reindex, conversion, restoration and
+copied catalogs maintain it with their normal transactions. Accepted external
+changes clear it. Migration classifies historical Rice mappings only when the
+current stored digest matches a known representation. Other historical records
+remain unknown until reindex, so browsing never scans FITS files for symbols.
+
 Archive health is separate from reindex. app/archive_health.py owns one
 cancellable background job/report per instance. POST /api/library/health starts
 a quick/deep job, GET on that path returns the latest job; GET /{id} polls,
 POST /{id}/cancel requests cancellation, and GET /{id}/report downloads terminal
-JSON. POST /{id}/acknowledge requires image_id, action (forget_missing or
-accept_contents), and confirmed:true. Only retained completed-scan findings
+JSON. POST /{id}/acknowledge requires action (forget_missing or accept_contents)
+and confirmed:true. Default scope:image requires image_id. Deletions also support
+scope:session with a server-derived session_id or scope:all. Public deletion_sessions
+summarize all retained missing findings, including those beyond the 200-detail display.
+Object identity plus canonical stored solar session key defines a group, including
+explicit calibration anchors. All selected records/paths are revalidated before one
+SQLite transaction mutates any record; repeated requests are idempotent. Only retained completed-scan findings
 qualify. Scans hold the independent archive lock and release SQLite after a
 short consistent snapshot. Job/status requests remain responsive during IO.
 
 The additive image_integrity table preserves import/historical/reindex baselines
 independently of mutable dedup caches. Explicit acceptance updates baseline/cache
-with user_accepted provenance; deletion removes only the selected record/baseline.
+with user_accepted provenance; deletion removes selected missing records/baselines.
+Both remove obsolete compression aliases. Healthy members of a session remain intact.
 Both atomically retain timestamps and previous/new hashes in archive_health_actions.
 Exact snapshot comparisons, archive identity and fresh disk reads reject stale
 findings. Original files, object definitions and import history stay intact.
@@ -130,6 +241,36 @@ Discovery uses no-follow directory descriptors on POSIX and pinned lineage
 handles/reparse rejection on Windows. Reports retain 10,000 findings (200 shown)
 and count omitted findings. Private acknowledgement snapshots never enter API
 reports. Starts/acknowledgements serialize without holding SQLite during IO.
+
+Upload streams, hashing, header matching and optional Rice preparation run in
+bounded workers (up to CPU count, at most 24) outside archive_lock. Original and
+packed stages stay private until their ordered publication turn. One failed SQL
+write stops all later publication in that request; cancellation drains every
+worker before cleaning staging or releasing multipart sources. Publication,
+duplicate/restoration decisions and commits retain archive_lock. Missing-file
+representation recovery remains strictly verified. Resolver snapshots persist
+across requests until catalog table triggers or SQLite data_version invalidate
+them; each snapshot memoizes up to 4,096 hint/coordinate results. Native utility
+hashes are cached only behind pinned strong file versions of both binaries and
+provenance. Compression alias and import-run lookups have additive indexes.
+
+Session conversion/copy uses bounded ThreadPoolExecutor workers for complete
+per-file preparation and publication. Unique <id>.output/<id>.roundtrip.fit
+stages replace the former shared roundtrip path. The coordinator alone updates
+reports, orders the complete journal plan, commits the catalog and runs recovery.
+Explicit iterator closure drains workers before rollback, even if a progress
+callback raises. Live GENERIC_READ directory handles are reused across workers;
+cached containment checks immediate-parent identity/reparse state and the lexical
+leaf before resolution, including previously unseen same-parent links. Pins close
+before staging cleanup/export rename. Source-version pins can replace repeated
+source hashes while held; unsupported versions keep full reads. Initial baseline,
+pre-publication and post-swap checks remain. Originals stay retained until commit.
+Fast manual provenance is rice_conversion_fast; Uncompress always verifies a
+known original hash. Progress separates processed/total from published/
+publication_total and labels checking_originals, publishing, committing and
+cleaning. The UI then refreshes the library before declaring Complete, rebuilding
+session actions after releasing the operation lock. Resumed jobs require a fresh
+action selection before restarting.
 
 The exposure preview, thumbnails, inline session expansion and Trash application
 features were retired on October 14, 2026. Their JS modules, modal markup, pixel

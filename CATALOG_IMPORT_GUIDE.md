@@ -1,14 +1,94 @@
 # Importing exposures into NightSeam
 
+## Compress automatically during import
+
+In **Import Exposures**, check **Compress on import with lossless Rice** before
+selecting or dropping files. The option starts unchecked and stays selected in
+that application window, including when attaching calibration frames. It applies
+to the whole import action; you cannot change it halfway through upload chunks.
+
+Choose the sliding **Fast / Safe** control below the compression checkbox:
+
+- **Fast** (left, initial choice) trusts the lossless Rice encoder and skips
+  decompressing each file for comparison.
+- **Safe** (right) also decompresses each file with `funpack -C` and checks its
+  complete original SHA-256 and size before finishing the import.
+
+Hover over the mode labels or **i**, focus the control, or tap **i** for the
+explanation. Space toggles the switch; Escape dismisses the explanation. The
+mode is enabled only while compression is selected and stays fixed throughout
+an import, including calibration attachments.
+
+Both modes compress in temporary staging, verify the stored compressed bytes
+and commit the catalog before removing temporary originals. Your source-folder
+files are never deleted or changed. The original hash is retained for checking
+when **Uncompress** restores the file; Fast postpones that restoration check.
+Session compression and library copying have their own Fast/Safe choice.
+Missing-file representation recovery always keeps strict restoration checks.
+
+Unsupported images, including floating point FITS, and already compressed files
+are imported unchanged, with a visible reason in the results. A compression or
+verification failure publishes no exposure for that file. Earlier successful
+files remain imported. Duplicate uploads preserve their existing record and
+storage format. Re-uploading either known representation of a missing managed
+exposure restores that existing record in its recorded format.
+
+## Compress or restore a session
+
+Select a capture session in **Library**, then choose **Compress losslessly**.
+It includes attached calibration exposures and creates standard Rice `.fz` FITS
+files. The dialog has a **Fast / Safe** sliding switch; it starts **Safe** to
+preserve the existing manual-conversion policy. **Safe** restores every encoded
+file and checks its original SHA-256. **Fast** trusts lossless Rice and skips that
+round trip. Both verify stored bytes and retain originals until all replacements
+and the catalog update succeed. Expand **i**, or hover over it, for the explanation.
+
+Choose **Uncompress** to restore ordinary FITS for software that requires them.
+Files compressed by NightSeam must match their recorded original hash. Metadata,
+session membership and calibration attachments remain intact. Importing an
+original again after compression still finds the existing exposure.
+
+Rice conversion supports 8-, 16- and 32-bit integer images. Unsupported files,
+including floating point images, prevent session compression and leave the
+session unchanged. Existing Rice files are kept; other compressed formats are
+not converted. Imported Rice can be uncompressed, but an unknown historical
+original-file hash cannot be verified.
+
+The dialog has separate **Preparing files** and **Writing and replacing files**
+bars. The second counts actual swaps and verification. Checking originals,
+updating the catalog, removing retained originals and refreshing the library are
+shown explicitly; full bars do not bypass those steps. Conversion prepares and
+publishes files concurrently using available CPU cores, up to 24 workers.
+The dialog offers **Cancel**. Closing it lets work continue;
+**Copy library** reopens active work. Before commit, cancellation restores the
+whole session. Interrupted changes recover on the next launch: keep the original
+disks available and preserve any reported recovery files. Compression needs
+temporary space while originals remain retained.
+
+## Make a one-time library copy
+
+Choose **Copy library**, select an existing destination folder, then start.
+A new folder contains individual usable FITS under `images/`, `nightseam.db`
+with catalog metadata, and `manifest.json` with hashes and provenance. Supported
+integer FITS use Rice with the dialog's independent Fast/Safe policy; existing Rice and
+unsupported files are copied unchanged. Destination files are read back and
+hash-checked. Scratch space is on the destination disk.
+
+The active catalog and archive location stay unchanged. No daily jobs are
+enabled. Automatic ingest compression is a separate opt-in checkbox. If you move the copy later, set the
+copied catalog's archive location to its new `images` folder before using it.
+
 ## Import now
 
 1. Open **Import Exposures**.
 2. Check the **Archive folder**. Use **Browse...** in the native window or type
    a path, then **Save** when changing it. This is the destination for copies.
-3. Use **Import exposures...**, the toolbar's **Import**, or drop `.fit` and
-   `.fits` files into the drop area. Originals stay in their original location.
+3. Use **Import exposures...**, the toolbar's **Import**, or drop FITS exposures
+   into the drop area. Supported names are `.fit`, `.fits`, `.fts`, tiled `.fz`
+   (including `.fits.fz`), and their `.gz` wrappers. Originals stay in their
+   original location; imported copies preserve the complete original bytes.
 4. Watch **files processed / total** and **elapsed time**. Counts advance after
-   each batch of up to eight files returns. Elapsed time keeps updating during
+   each batch of up to 24 files returns. Elapsed time keeps updating during
    a batch. A failure counter appears when a returned file result fails.
 5. Review **Import results**, then open **Library** to inspect the objects and
    capture sessions. Final progress remains visible until another import or
@@ -87,8 +167,8 @@ exposure files already arranged in either of these
 supported layouts:
 
 ```text
-<archive>/<object>/<session>/<lights|darks|flats|bias>/<file.fit or file.fits>
-<archive>/<object>/<lights|darks|flats|bias>/<file.fit or file.fits>  (legacy)
+<archive>/<object>/<session>/<lights|darks|flats|bias>/<supported FITS file>
+<archive>/<object>/<lights|darks|flats|bias>/<supported FITS file>  (legacy)
 ```
 
 The frame folder determines the frame type. Session folder names do not have
@@ -136,7 +216,8 @@ existing association; selecting a different session does not move it.
 
 Open **Archive health** in the toolbar. **Quick check** inspects availability,
 paths, readability, sizes and modification times. It also discovers unindexed
-`.fit`/`.fits` files. Unchanged metadata does not verify contents. **Deep
+supported FITS files, including compressed exposures. Unchanged metadata does
+not verify contents. **Deep
 verification** reads complete indexed files and compares SHA-256 against a
 separately preserved integrity baseline. Neither checks image quality, FITS
 structure or embedded FITS checksums. Scans never repair or change anything.
@@ -152,9 +233,16 @@ the scan continue. The latest report stays in memory until the next scan or app
 exit. **Download JSON report** preserves it. The dialog shows 200 findings; the
 report retains 10,000, with further omitted findings counted explicitly.
 
-After a completed scan, **Acknowledge deletion** resolves intentionally deleted
-exposures, such as rejected blurry frames. Confirmation removes only the missing
-catalog record and its baseline; no files are deleted. **Accept current contents**
+After a completed scan, missing exposures are grouped by object and capture
+session. **Acknowledge session** accepts all retained deletions in that session;
+**Accept all deletions** accepts them across the report. Expand **Exposure details**
+for individual **Acknowledge deletion** actions. Confirmation removes missing
+catalog records, baselines and obsolete compression mappings; no files are deleted
+and present session members stay in the catalog. A whole group commits together:
+if a selected file has reappeared or its record changed, nothing is acknowledged.
+Batch actions include retained findings beyond the 200-detail display. If more
+than 10,000 findings were found, acknowledge retained deletions then scan again
+for the omitted ones. **Accept current contents**
 replaces a Deep scan's changed-content baseline after confirmation and rehashing.
 Restored files, further edits, changed records and unavailable/replaced archives
 require a new scan. Quick metadata changes require Deep verification first.
@@ -163,25 +251,23 @@ remain labelled in the current report, and resolved issues do not recur in later
 scans. SQLite retains action timestamps and previous/accepted hashes. Accepting
 contents does not update FITS header metadata or assess an edit's correctness.
 
-## FITS previews
+## Compressed FITS metadata
 
-In **Library**, select an object/session, choose an **Exposure** in the inspector,
-then press **Show preview**. **Expand preview** opens a larger view; Escape
-returns focus to its opener. After the first load, selecting another exposure
-loads its preview automatically. Attached calibration exposures belong to their
-explicitly selected session. Missing/unusable images show an explanation and
-**Retry preview**. Wait for a running archive operation before retrying.
+Import reads primary-image metadata, or the first nonempty image extension when
+the primary is empty. The selected extension overrides primary values, with
+primary metadata retained as fallback. Later images in a multi-image file do not
+create extra exposure records. Reindex uses the same reader.
 
-Astropy reads the first nonempty image HDU, handles FITS scaling/blank values,
-and displays the first plane of a cube. The caption identifies original
-dimensions, HDU and plane. PNG previews are grayscale, automatically stretched,
-and bounded to 512 pixels on the longest side in the UI. Invalid pixels are
-black; constant images are gray. FITS axis 2 increases upwards in the display.
-No debayering, color combination, calibration, plate solving or WCS rotation is
-applied. Originals, metadata and integrity hashes stay unchanged. Image
-extensions and tile-compressed HDUs inside indexed `.fit`/`.fits` are supported;
-import still accepts only `.fit`/`.fits`, not `.fz`/`.fits.gz`. Previewing does not
-verify integrity or evaluate image quality.
+Gzip and tiled-image metadata are read without decoding image pixels. Files are
+copied as supplied; NightSeam does not recompress them. A plain FITS and a gzip
+copy have different complete-file bytes and remain distinct imports. Identical
+compressed files still deduplicate even when renamed.
+
+Malformed headers and files that exceed metadata traversal limits report a
+per-file import failure. The reader limits header sizes, HDU count, gzip input
+and expansion, and scan time. Metadata reads do not validate unread pixels,
+later image extensions or unread gzip trailers. Use Archive Health for complete
+stored-byte verification. Exposure previews remain retired.
 
 ## Export and duplicate handling
 
@@ -215,6 +301,20 @@ If another program changes files already in the archive, run **Reindex folders**
 before importing those changed files. Reindex refreshes their size and
 fingerprint so imports recognize the updated contents. Cached hash matches are
 always verified against the actual archived bytes.
+
+Import prepares files concurrently while publishing them in selection order.
+Rice uploads use batches of up to 24 files, with preparation bounded by available
+CPU cores. Plain uploads also use batches of up to 24. Temporary preparation
+does not hold the archive lock; publication and catalog commits remain serialized.
+The object matcher is reused across chunks until the catalog changes. On local
+NTFS/ReFS, unchanged nonmatching files use a process-local hash cache guarded by
+file identity and native change time, including checks that detect edits with
+restored modification times. Other filesystems fall back to reading current bytes.
+Actual duplicate matches are always rehashed before an upload is skipped. Each
+request pins up to 4,096 earlier same-size candidates against writes/renames and
+checks them once for the batch. Other archive mutations wait until these pins
+close. Open writers and unsupported filesystems keep conservative individual
+checks. Image records and import history commit together once per file.
 
 When installing an updated executable, close NightSeam and replace the executable
 in its existing folder, retaining its `data` folder. Packaged data is stored next

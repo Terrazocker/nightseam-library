@@ -55,6 +55,11 @@ $catalogBake = "BAKED_VERSION = '$catalogVersion'`n"
     --additional-hooks-dir "$PSScriptRoot\scripts\pyinstaller_hooks" `
     --add-data "$PSScriptRoot\static;static" --add-data "$PSScriptRoot\app\data;app\data" `
     --add-data "$PSScriptRoot\NOTICE;." --add-data "$PSScriptRoot\LICENSE;." `
+    --add-binary "$PSScriptRoot\vendor\fits-tools\windows-x64\fpack.exe;vendor\fits-tools\windows-x64" `
+    --add-binary "$PSScriptRoot\vendor\fits-tools\windows-x64\funpack.exe;vendor\fits-tools\windows-x64" `
+    --add-data "$PSScriptRoot\vendor\fits-tools\windows-x64\provenance.json;vendor\fits-tools\windows-x64" `
+    --add-data "$PSScriptRoot\vendor\fits-tools\windows-x64\CFITSIO-LICENSE.txt;vendor\fits-tools\windows-x64" `
+    --add-data "$PSScriptRoot\vendor\fits-tools\windows-x64\ZLIB-LICENSE.txt;vendor\fits-tools\windows-x64" `
     --collect-all uvicorn --collect-all webview --collect-all py_mini_racer --hidden-import python_multipart "$PSScriptRoot\main.py"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $catalogExe)) { throw "Compilation failed" }
 } finally {

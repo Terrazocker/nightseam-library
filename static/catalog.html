@@ -30,10 +30,34 @@
         <button id="btnTopExport" class="catalog-action" type="button" aria-label="Export library">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V3m-5 5 5-5 5 5M5 14v6h14v-6"/></svg><span>Export library</span>
         </button>
+        <button id="btnTopCopy" class="catalog-action" type="button" aria-label="Copy library">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h12v13H8zM4 16V3h12"/></svg><span>Copy library</span>
+        </button>
       </div>
     </div>
   </div>
 </header>
+<div id="compressionModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="compressionTitle">
+  <div class="modal-box archive-health-box">
+    <header><h2 id="compressionTitle">Lossless Rice compression</h2><button id="compressionClose" class="close" type="button" aria-label="Close compression">&times;</button></header>
+    <p id="compressionHelp"></p>
+    <div id="compressionVerification" class="ingest-compression-mode" data-mode="safe" role="group" aria-label="Compression verification">
+      <label class="ingest-mode-switch"><span>Fast</span><input id="compressionSafeMode" type="checkbox" role="switch" aria-label="Safe session compression" aria-describedby="compressionModeHelp" checked><span>Safe</span></label>
+      <details class="compression-mode-help"><summary aria-label="Explain Fast and Safe compression" title="Fast skips restoring each file for comparison. Safe restores each file and checks its original SHA-256. Both verify stored bytes and retain originals until commit.">i</summary><p id="compressionModeHelp"><strong>Fast</strong> trusts lossless Rice and skips restoring every file for comparison. <strong>Safe</strong> restores each file and compares its complete original SHA-256. Both verify stored bytes and keep originals until the catalog switch succeeds.</p></details>
+    </div>
+    <div id="compressionDestination" hidden>
+      <label for="compressionPath">Destination folder</label>
+      <div class="btnrow"><input id="compressionPath" type="text" placeholder="Choose a folder on your backup disk" style="flex:1;min-width:0"><button id="compressionBrowse" type="button">Browse…</button></div>
+      <p class="hint">Creates a new library folder with individual FITS files, a catalog snapshot and a verification manifest. Your current archive stays in place. Unsupported images are copied unchanged.</p>
+    </div>
+    <p id="compressionStatus" role="status" aria-live="polite">Ready.</p>
+    <label id="compressionPrepareLabel" for="compressionProgress">Preparing files · 0 / 0</label>
+    <progress id="compressionProgress" max="1" value="0" style="width:100%" aria-label="Files prepared"></progress>
+    <label id="compressionWriteLabel" for="compressionWriteProgress">Writing and replacing files · 0 / 0</label>
+    <progress id="compressionWriteProgress" max="1" value="0" style="width:100%" aria-label="Files written and replaced"></progress>
+    <div class="btnrow"><button id="compressionStart" type="button">Start</button><button id="compressionCancel" type="button" disabled>Cancel</button></div>
+  </div>
+</div>
 <main>
   <section id="tab-image-catalog" class="tabpane image-catalog-pane active" role="tabpanel" aria-label="Image Catalog">
     <nav id="catalogTabs" role="tablist" aria-label="Image Catalog views">
@@ -85,8 +109,15 @@
           <span id="frameTypeHelp" class="visually-hidden" aria-live="polite">Exposure metadata determines the frame type. Lights is the default when no frame type is recorded. Select a type to override the exposure metadata for the next import.</span>
           <div class="import-divider"></div>
           <h2 class="field-label add-files-label">Add exposures</h2>
+          <div class="chkrow"><label for="compressOnIngest"><input id="compressOnIngest" type="checkbox" aria-describedby="compressOnIngestHelp"> Compress on import with lossless Rice</label></div>
+          <div id="ingestCompressionMode" class="ingest-compression-mode" data-mode="fast" role="group" aria-label="Compression verification">
+            <label class="ingest-mode-switch"><span>Fast</span><input id="ingestSafeMode" type="checkbox" role="switch" aria-label="Safe ingestion" aria-describedby="ingestModeTip" disabled><span>Safe</span></label>
+            <button id="ingestModeInfo" class="ingest-mode-info" type="button" aria-label="Explain Fast and Safe ingestion" aria-expanded="false" aria-controls="ingestModeTip" aria-describedby="ingestModeTip">i</button>
+            <div id="ingestModeTip" class="ingest-mode-tip" role="tooltip" hidden><strong>Fast</strong> trusts the lossless Rice encoder and skips restoring each file for comparison. <strong>Safe</strong> decompresses each file and checks its complete original SHA-256. Both check the stored compressed bytes and leave your source files untouched.</div>
+          </div>
+          <p id="compressOnIngestHelp" class="hint">Source files stay untouched. Unsupported or already compressed files are imported unchanged.</p>
           <div id="dropZone" class="import-drop-zone">
-            <input type="file" id="fitFiles" accept=".fit,.fits" multiple hidden>
+            <input type="file" id="fitFiles" accept=".fit,.fits,.fts,.fz,.fit.gz,.fits.gz,.fts.gz,.fz.gz" multiple hidden>
             <svg class="large-outline-icon" viewBox="0 0 32 40" fill="none" aria-hidden="true"><path d="M6 1.5h13l11.5 11.8v24.2H6a3 3 0 0 1-3-3v-30a3 3 0 0 1 3-3Z"/><path d="M19 2v12h11"/></svg>
             <button id="btnIngest" class="primary" type="button">Import exposures...</button>
             <p class="hint">or drop exposures here</p>
@@ -111,7 +142,7 @@
           </section>
           <section class="recent-import-card" aria-labelledby="recentImportsHeading">
             <h2 id="recentImportsHeading">Recent imports</h2>
-            <input type="file" id="fitFilesCal" accept=".fit,.fits" multiple hidden>
+            <input type="file" id="fitFilesCal" accept=".fit,.fits,.fts,.fz,.fit.gz,.fits.gz,.fts.gz,.fz.gz" multiple hidden>
             <div id="importHistory" class="recent-import-body">
               <div class="empty-state">
                 <svg class="empty-icon clock-icon" viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="17"/><path d="M20 9v11l8 5"/></svg>
@@ -266,6 +297,7 @@
     <progress id="healthProgress" aria-label="Archive health scan progress" value="0" max="1"></progress>
     <p id="healthCounters" class="mono" aria-live="off"></p>
     <p id="healthBaseline" class="hint"></p>
+    <div class="health-actions"><button id="healthAcceptAll" type="button" hidden>Accept all deletions</button></div>
     <ul id="healthFindings" class="health-findings" aria-label="Archive health findings"></ul>
     <p id="healthReportLimit" class="hint"></p>
     <div class="health-actions"><button id="healthDownload" type="button" disabled>Download JSON report</button></div>

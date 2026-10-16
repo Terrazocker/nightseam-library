@@ -239,7 +239,7 @@ def test_upload_exception_preserves_prior_results_and_reports_remaining_files(cl
     assert len(list(tmp_archive(client).rglob("*.fit"))) == len(db.images())
 
 
-def test_upload_history_database_failure_reports_committed_file_as_unconfirmed(client, db):
+def test_upload_history_database_failure_rolls_back_image_and_file(client, db):
     db.conn.execute("CREATE TRIGGER reject_history BEFORE INSERT ON import_batches "
                     "BEGIN SELECT RAISE(ABORT, 'injected history failure'); END")
     db.conn.commit()
@@ -248,8 +248,8 @@ def test_upload_history_database_failure_reports_committed_file_as_unconfirmed(c
         ("files", ("b.fit", m31_fits(1), "application/octet-stream"))])
     results = response.json()["results"]
     assert response.status_code == 200 and results[0]["unconfirmed"] and results[1]["unattempted"]
-    assert len(db.images()) == 1
-    assert (tmp_archive(client) / db.images()[0]["file"]).is_file()
+    assert not db.images()
+    assert not list(tmp_archive(client).rglob('*.fit'))
     assert not db.conn.in_transaction
     assert client.post("/api/library/reindex").status_code == 200
 
@@ -702,7 +702,7 @@ def test_ingest_rejects_bad_files(client):
     ])
     assert r.status_code == 200
     results = r.json()["results"]
-    assert results[0]["error"] == "not a .fit/.fits file"
+    assert results[0]["error"] == "Unsupported exposure filename (use FITS, .fz or FITS.gz)."
     assert results[1]["error"] == "Unsupported exposure file (SIMPLE header missing)"
     assert client.get("/api/library").json()["total_images"] == 0
 

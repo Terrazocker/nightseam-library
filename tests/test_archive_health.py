@@ -62,6 +62,93 @@ def acknowledge(client, report, image_id, action):
         "image_id": image_id, "action": action, "confirmed": True})
 
 
+def test_session_and_all_deletions_preserve_present_members_and_changed_contents(library):
+    db, root = library
+    ids = []
+    for index in range(4):
+        image_id, path = add_record(db, root, f'M31/session/lights/{index}.fit')
+        ids.append(image_id)
+        if index < 3:
+            path.unlink()
+        else:
+            path.write_bytes(b'changed contents')
+    # Explicit calibration membership wins over its unrelated capture time.
+    db.conn.execute("UPDATE images SET session_key='night:A',session_kind='night',session_start='2026-08-22T20:00:00' WHERE id IN (?,?,?)", ids[:3])
+    db.conn.execute("UPDATE images SET date_obs='2030-01-01T12:00:00',imagetyp='dark',session_date_obs='2026-08-22T22:00:00' WHERE id=?", (ids[2],))
+    other, path = add_record(db, root, 'M42/session/lights/other.fit')
+    path.unlink()
+    db.conn.execute("UPDATE images SET object_name='M42',session_key='night:A',session_kind='night' WHERE id=?", (other,))
+    present, _ = add_record(db, root, 'M31/session/lights/healthy.fit')
+    db.conn.execute("UPDATE images SET session_key='night:A',session_kind='night',session_start='2026-08-22T20:00:00' WHERE id IN (?,?)", (present, ids[3]))
+    db.conn.commit()
+    with TestClient(create_app(db)) as client:
+        report = scan(client)
+        assert len(report['deletion_sessions']) == 2
+        session = next(group for group in report['deletion_sessions'] if group['object_name'] == 'M31')
+        assert session['pending_count'] == 3
+        payload = dict(scope='session', session_id=session['id'], action='forget_missing', confirmed=True)
+        result = client.post(f"/api/library/health/{report['id']}/acknowledge", json=payload)
+        assert result.status_code == 200 and result.json()['pending_deletions'] == 1
+        assert {rec['id'] for rec in db.images()} == {ids[3], present, other}
+        assert client.post(f"/api/library/health/{report['id']}/acknowledge", json=payload).status_code == 200
+        result = client.post(f"/api/library/health/{report['id']}/acknowledge", json=dict(
+            scope='all', action='forget_missing', confirmed=True))
+        assert result.status_code == 200 and result.json()['pending_deletions'] == 0
+        assert {rec['id'] for rec in db.images()} == {ids[3], present}
+        assert db.conn.execute('SELECT COUNT(*) FROM archive_health_actions').fetchone()[0] == 4
+        assert client.post(f"/api/library/health/{report['id']}/acknowledge", json=dict(
+            scope='all', action='accept_contents', confirmed=True)).status_code == 409
+
+
+@pytest.mark.parametrize('change', ['restored', 'catalog', 'transaction'])
+def test_batch_deletions_are_atomic_when_any_member_changes(library, change):
+    db, root = library
+    first, path = add_record(db, root); path.unlink()
+    second, path = add_record(db, root, 'M31/session/lights/b.fit'); path.unlink()
+    with TestClient(create_app(db)) as client:
+        report = scan(client)
+        if change == 'restored':
+            path.write_bytes(b'restored')
+        elif change == 'catalog':
+            db.conn.execute('UPDATE images SET orig_name=? WHERE id=?', ('edited.fit', second)); db.conn.commit()
+        else:
+            db.conn.execute(f"CREATE TRIGGER reject_second BEFORE DELETE ON images WHEN OLD.id={second} BEGIN SELECT RAISE(ABORT,'batch failure'); END"); db.conn.commit()
+        before = snapshot(db)
+        if change == 'transaction':
+            with pytest.raises(Exception, match='batch failure'):
+                client.post(f"/api/library/health/{report['id']}/acknowledge", json=dict(scope='all', action='forget_missing', confirmed=True))
+        else:
+            assert client.post(f"/api/library/health/{report['id']}/acknowledge", json=dict(scope='all', action='forget_missing', confirmed=True)).status_code == 409
+        assert snapshot(db) == before
+        assert len(db.images()) == 2
+
+
+def test_accept_all_includes_findings_beyond_display_limit(library):
+    db, root = library
+    for index in range(205):
+        _, path = add_record(db, root, f'M31/session/lights/{index}.fit'); path.unlink()
+    with TestClient(create_app(db)) as client:
+        report = scan(client, 'quick')
+        assert len(report['findings']) == 200 and report['pending_deletions'] == 205
+        result = client.post(f"/api/library/health/{report['id']}/acknowledge", json=dict(scope='all', action='forget_missing', confirmed=True))
+        assert result.status_code == 200 and result.json()['acknowledged_count'] == 205
+        assert not db.images()
+
+
+def test_accept_all_leaves_omitted_findings_for_next_scan(library, monkeypatch):
+    db, root = library
+    monkeypatch.setattr(archive_health, 'MAX_FINDINGS', 2)
+    for index in range(3):
+        _, path = add_record(db, root, f'M31/session/lights/{index}.fit'); path.unlink()
+    with TestClient(create_app(db)) as client:
+        report = scan(client, 'quick')
+        assert report['omitted_findings'] == 1 and report['pending_deletions'] == 2
+        result = client.post(f"/api/library/health/{report['id']}/acknowledge", json=dict(scope='all', action='forget_missing', confirmed=True))
+        assert result.status_code == 200 and result.json()['acknowledged_count'] == 2
+        assert len(db.images()) == 1
+        assert scan(client, 'quick')['pending_deletions'] == 1
+
+
 def test_quick_metadata_is_not_content_verification_and_deep_is_read_only(library):
     db, root = library
     _, target = add_record(db, root)
