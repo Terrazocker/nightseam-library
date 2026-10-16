@@ -25,6 +25,17 @@ python scripts/check_js.py. Tests keep private data and archives under logs/.
 
 ## Windows desktop development
 
+Windows versions are valid only during their writer-excluding handle lifetime.
+Rapid changes can collide in file timestamps, so tool hashes and negative dedup
+candidates are rechecked after handles close. Request-scoped batch pins still
+allow reuse while continuously held. Separate one-file requests can require more
+hashing; current throughput has not been remeasured after this safety correction.
+
+The Windows desktop validation workflow on codex/linux-fits-tools-validation
+runs the pinned source suite, requires four native Windows contracts to pass,
+builds a fresh executable, and checks it with headless Chrome and private data.
+Browser dependencies are installed in a separate .venv-browser environment.
+
 Lossless Rice operations bundle native CFITSIO 4.7.0 fpack/funpack and zlib
 1.3.2 under vendor/fits-tools/windows-x64. Both utilities statically link the
 Microsoft C runtime (their PE imports require only KERNEL32.dll). Source URLs,

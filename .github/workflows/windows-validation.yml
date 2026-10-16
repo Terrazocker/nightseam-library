@@ -3,6 +3,7 @@ name: Windows desktop validation
 on:
   push:
     branches: [codex/linux-fits-tools-validation]
+    paths-ignore: ['**.md']
   workflow_dispatch:
 
 permissions:

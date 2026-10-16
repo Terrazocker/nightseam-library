@@ -6,10 +6,12 @@ import os
 
 @contextmanager
 def pinned_version(path):
-    """Pin Windows writers/renames and expose NTFS/ReFS ChangeTime + identity.
+    """Pin Windows writers/renames and expose a handle-local NTFS/ReFS version.
 
     Unsupported filesystems and open writers disable caching. POSIX callers
     compare fstat before/after hashing; ctime detects restored mtime there.
+    Windows timestamps can collide after rapid writes with restored mtime.
+    Versions may be reused only while the same writer-excluding handle is open.
     """
     if os.name != 'nt':
         try:
@@ -44,6 +46,8 @@ def pinned_version(path):
             yield None
             return
 
+        lifetime = object()
+
         def version():
             basic, identity, standard = Basic(), Identity(), Standard()
             if not all(kernel.GetFileInformationByHandleEx(handle, kind, ctypes.byref(info), ctypes.sizeof(info))
@@ -51,7 +55,7 @@ def pinned_version(path):
                 return None
             if basic.attributes & (0x400 | 0x10) or standard.deleted:
                 return None
-            return identity.volume, bytes(identity.id), standard.size, basic.written, basic.changed
+            return lifetime, identity.volume, bytes(identity.id), standard.size, basic.written, basic.changed
         yield version
     finally:
         kernel.CloseHandle(handle)

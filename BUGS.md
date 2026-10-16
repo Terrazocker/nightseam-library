@@ -1,5 +1,14 @@
 # Current NightSeam Catalog findings
 
+## Windows rapid-write timestamp collision - October 16, 2026 (fixed)
+
+The first hosted Windows run found one failure: rewriting a tool with same-size
+bytes and restoring mtime could reuse a cached integrity result because native
+ChangeTime also matched. Windows versions now include a unique handle lifetime,
+so tool validation and negative dedup lookups rehash after an unpinned gap.
+Request-held writer-excluding batch handles keep their reuse optimisation.
+The tamper assertion remains intact. See RELEASES.md for final validation.
+
 ## Linux cloud native compression limitation - October 16, 2026 (fixed)
 
 The initial Linux x64 cloud run reported 29 compression-related failures because
@@ -18,8 +27,9 @@ Documents archive. Three exact synthetic test files were verified and removed.
 
 ## Plain FITS dedup metadata scaling - October 15, 2026 (mitigated)
 
-Import now memoizes actually read negative candidates behind strong file versions
-and prepares Rice in parallel. For 48 equal-size synthetic FITS, archive hash reads
+POSIX import memoizes actually read negative candidates behind file versions;
+Windows reuse is limited to continuously held request pins. Rice preparation is
+parallel. Historically, for 48 equal-size synthetic FITS, archive hash reads
 fell from 1,128 (4.68 GB) to 47 (195 MB). Positive duplicates still rehash current
 bytes, and same-size edits with restored mtime remain detectable. Candidate path
 and file-version inspection still scales quadratically for many equal-size plain
@@ -37,6 +47,9 @@ Thus metadata work is amortized across a batch rather than eliminated globally;
 this is not a disk/CPU saturation guarantee for every archive/filesystem. Rice
 archives usually have variable sizes. The earlier 48-file direct benchmark did
 not include the representative library size, HTTP multipart path or history cost.
+These measurements predate the October 16 conservative Windows cross-open rehash
+policy; current throughput has not been remeasured. Request-held batch pins still
+avoid repeated hashing within a request.
 
 ## Windows handle sharing - October 15, 2026 (fixed)
 

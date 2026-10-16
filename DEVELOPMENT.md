@@ -23,10 +23,12 @@ app/imglib.py derives objects and capture sessions for the interface.
 app/paths.py contains safe path and writable/resource-directory boundaries.
 Dedup comparisons measure same-size originals even if their database digest
 differs: external restores can preserve size and mtime. A bounded process-local
-negative-match memo avoids repeated full reads. app/file_version.py pins Windows
-writers/renames while comparing NTFS/ReFS file ID, size, LastWriteTime and native
-ChangeTime; unsupported filesystems/open writers disable memoization. POSIX uses
-identity and ctime. Only measured bytes populate the cache, and positive duplicate
+negative-match memo avoids repeated full reads on POSIX behind identity and ctime.
+app/file_version.py pins Windows writers/renames and includes an opaque handle
+lifetime in NTFS/ReFS versions: timestamps can collide after rapid same-size
+writes with restored mtime, so independently opened handles always rehash.
+Unsupported filesystems/open writers disable memoization. Only measured bytes
+populate the cache, and positive duplicate
 matches always rehash. A request-scoped DedupBatch pins up to 4,096 earlier
 same-size files and their directory lineage, validating their negative hashes
 once per batch. app/archive_lock.py reserves the archive for these authorized
@@ -251,8 +253,10 @@ duplicate/restoration decisions and commits retain archive_lock. Missing-file
 representation recovery remains strictly verified. Resolver snapshots persist
 across requests until catalog table triggers or SQLite data_version invalidate
 them; each snapshot memoizes up to 4,096 hint/coordinate results. Native utility
-hashes are cached only behind pinned strong file versions of both binaries and
-provenance. Compression alias and import-run lookups have additive indexes.
+hashes are cached only behind supported file versions. Windows revalidates
+provenance and both binaries at every tools lookup; manual session jobs share one
+verified lookup with their workers. Compression alias and import-run lookups have
+additive indexes.
 
 Session conversion/copy uses bounded ThreadPoolExecutor workers for complete
 per-file preparation and publication. Unique <id>.output/<id>.roundtrip.fit

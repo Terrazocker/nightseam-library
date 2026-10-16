@@ -13,7 +13,7 @@ from test_compression import exposure, library, no_stages
 from test_ingest_compression import upload
 
 
-def test_unchanged_negative_candidates_are_hashed_once_and_edits_invalidate(tmp_path, monkeypatch):
+def test_negative_candidates_use_safe_versions_and_edits_invalidate(tmp_path, monkeypatch):
     db, archive, _ = library(tmp_path, count=0)
     original = ingest._fingerprint_file
     reads = []
@@ -23,7 +23,9 @@ def test_unchanged_negative_candidates_are_hashed_once_and_edits_invalidate(tmp_
     monkeypatch.setattr(ingest, '_fingerprint_file', measured)
     results = [upload(db, archive, exposure(index), name=f'{index}.fit') for index in range(12)]
     assert all(result['ok'] for result in results)
-    assert len(reads) == 11  # one actual read per earlier file, rather than 66
+    # Windows rehashes between unpinned requests; timestamps alone can collide.
+    # The HTTP batch index below still hashes each continuously pinned file once.
+    assert len(reads) == (66 if os.name == 'nt' else 11)
     path = archive / results[0]['stored']
     info = path.stat()
     actual = exposure(40)
@@ -97,7 +99,7 @@ def test_unavailable_file_versions_fall_back_to_current_byte_reads(tmp_path, mon
     assert len(reads) == 6
 
 
-def test_bounded_negative_cache_remains_useful_above_capacity(tmp_path, monkeypatch):
+def test_bounded_negative_cache_and_conservative_reads_above_capacity(tmp_path, monkeypatch):
     db, archive, _ = library(tmp_path, count=0)
     monkeypatch.setattr(ingest, '_FINGERPRINT_CACHE_LIMIT', 3)
     original = ingest._fingerprint_file
@@ -109,7 +111,7 @@ def test_bounded_negative_cache_remains_useful_above_capacity(tmp_path, monkeypa
     for index in range(8):
         assert upload(db, archive, exposure(index))['ok']
     assert len(db._ingest_fingerprints) == 3
-    assert len(reads) == 13  # a thrashing 3-entry LRU would read all 28 candidates
+    assert len(reads) == (28 if os.name == 'nt' else 13)
 
 
 def test_known_compressed_duplicate_does_not_need_encoder(tmp_path, monkeypatch):
