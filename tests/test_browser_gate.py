@@ -98,16 +98,23 @@ def test_desktop_start_failure_removes_its_private_scratch(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize("accept_archive", [False, True])
-def test_browser_start_requires_private_archive_even_without_seed(tmp_path, monkeypatch, accept_archive):
+@pytest.mark.parametrize("native", [False, True])
+def test_browser_start_requires_private_archive_even_without_seed(tmp_path, monkeypatch, accept_archive, native):
     exe = tmp_path / "candidate.exe"
     exe.write_bytes(b"private fake executable")
     scratch = tmp_path / "browser"
     monkeypatch.setattr(harness, "SCRATCH", scratch)
-    server = harness.DesktopServer(exe, seed=False)
+    server = harness.DesktopServer(exe, seed=False, native=native, debug_port=43210)
     calls, trees = [], []
 
     class FakeTree:
         def __init__(self, *args, **kwargs):
+            assert ('--no-browser' in args[0]) is (not native)
+            assert ('--require-native-window' in args[0]) is native
+            assert Path(kwargs['env']['LOCALAPPDATA']).is_relative_to(server.tmp)
+            assert Path(kwargs['env']['WEBVIEW2_USER_DATA_FOLDER']).is_relative_to(server.tmp)
+            if native:
+                assert '--remote-debugging-port=43210' in kwargs['env']['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS']
             self.proc = self
             self.stopped = False
             trees.append(self)

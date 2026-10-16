@@ -270,11 +270,15 @@ def main() -> int:
                     help="open in a regular browser tab instead of an app window")
     ap.add_argument("--no-browser", action="store_true",
                     help="do not open any window (headless)")
+    ap.add_argument("--require-native-window", action="store_true",
+                    help="fail if the native desktop window cannot start")
     ap.add_argument("--console", action="store_true",
                     help="also log to console")
     ap.add_argument("--idle-exit-hours", type=float, default=12.0,
                     help="exit after this many hours without requests (0 = never)")
     args = ap.parse_args()
+    if args.require_native_window and (args.browser or args.no_browser):
+        ap.error('--require-native-window cannot be combined with browser/headless modes')
 
     ensure_stdio()
     log = setup_logging(args.console)
@@ -292,6 +296,9 @@ def main() -> int:
             webbrowser.open(launch_url)
         else:
             if not run_native_window(launch_url):
+                if args.require_native_window:
+                    log.error('The required native desktop window could not start.')
+                    return 1
                 if not launch_app_window(launch_url):
                     webbrowser.open(launch_url)
         return 0
@@ -333,6 +340,9 @@ def main() -> int:
         if ui_mode == "window":
             if run_native_window(url):
                 pass                               # window closed -> shut down
+            elif args.require_native_window:
+                log.error('The required native desktop window could not start.')
+                return 1
             elif launch_app_window(url):
                 wait_for_exit(server, idle_secs)
             else:

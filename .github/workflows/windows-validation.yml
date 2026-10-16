@@ -73,6 +73,10 @@ jobs:
         run: |
           & .venv-browser/Scripts/python.exe scripts/check_browser.py --desktop --channel chrome --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-browser.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Packaged native WinForms and WebView2 smoke
+        run: |
+          & .venv-browser/Scripts/python.exe scripts/check_native_window.py --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-native.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain validation evidence
         if: always()
         uses: actions/upload-artifact@v4
