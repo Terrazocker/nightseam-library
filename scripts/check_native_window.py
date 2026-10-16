@@ -136,6 +136,7 @@ def run(executable):
     server = harness.DesktopServer(executable, seed=False, native=True, debug_port=harness.free_port())
     windows = None
     checks = []
+    observed_targets = []
     def passed(name):
         checks.append(name)
         print(f'[PASS] native {name}', flush=True)
@@ -154,10 +155,16 @@ def run(executable):
         wait_for(debug_ready, 'private WebView2 debugging endpoint')
         with sync_playwright() as playwright:
             browser = playwright.chromium.connect_over_cdp(debug_url, timeout=30000)
-            page = next((page for context in browser.contexts for page in context.pages
-                         if page.url.startswith(server.base)), None)
-            if page is None:
-                raise RuntimeError('Native WebView2 did not contain the private catalog page')
+            discovery = browser.new_browser_cdp_session()
+            def catalog_page():
+                nonlocal observed_targets
+                # WebView2 exposes its browser endpoint before its first page
+                # has navigated. Protocol calls also pump Playwright page events.
+                observed_targets = discovery.send('Target.getTargets')['targetInfos']
+                return next((page for context in browser.contexts for page in context.pages
+                             if page.url.startswith(server.base)), None)
+            page = wait_for(catalog_page, 'native WebView2 catalog navigation')
+            discovery.detach()
             page.reload(wait_until='domcontentloaded')
             page.wait_for_function("document.body.dataset.windowChrome === 'native'")
             assert page.evaluate('window.pywebview.api.host_capabilities()') == {
@@ -228,7 +235,8 @@ def run(executable):
                 shutil.copyfile(log, artifacts / f'native-{log.name}')
         if windows is not None:
             (artifacts / 'native-failure-windows.json').write_text(
-                json.dumps({'passed': checks, 'owned_windows': windows.windows()}, indent=2) + '\n',
+                json.dumps({'passed': checks, 'owned_windows': windows.windows(),
+                            'browser_targets': observed_targets}, indent=2) + '\n',
                 encoding='utf-8')
         raise
     finally:
