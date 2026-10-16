@@ -33,11 +33,13 @@ hashing; current throughput has not been remeasured after this safety correction
 
 The Windows desktop validation workflow on codex/linux-fits-tools-validation
 runs the pinned source suite, requires four native Windows contracts to pass,
-builds a fresh executable, and checks it with headless Chrome and private data.
+builds a fresh executable, and checks it with headless Chrome and a real native
+WinForms/WebView2 window using private data.
 Browser dependencies are installed in a separate .venv-browser environment.
-Run 38946414023 validated commit 78b13b19: 803 source tests passed (two skips),
+Run 38953312051 validated commit 4f087058: 807 source tests passed (two skips),
 all four required Windows contracts executed, and the fresh packaged browser
-gate passed 23/23. Linux covered the POSIX-only Windows skip. Only the frozen
+gate passed 23/23 and native window smoke passed 7/7. Linux passed 804 tests
+(five skips), covering the POSIX-only Windows skip. Only the frozen
 popularity snapshot check remains unverified without its original backup.
 
 Lossless Rice operations bundle native CFITSIO 4.7.0 fpack/funpack and zlib
@@ -65,6 +67,18 @@ against the freshly compiled private executable. The browser's synthetic FITS
 fixtures use only the standard library and are independently decoded with
 Astropy in the source tests. No dependency installation or build-lock change is
 needed to use these separate runners.
+
+The separate browser environment also runs
+`.venv-browser/Scripts/python.exe scripts/check_native_window.py --exe dist/NightSeam.exe`.
+This checks the actual WebView2 bridge, standard native frame styles, move/resize
+with stable interface density, maximize/restore, cancellation of the real folder
+picker, graceful shutdown of the owned process tree/listener, and saved normal
+bounds. It uses private executable/data/archive/temp, LOCALAPPDATA and WebView2
+profile paths. The diagnostic `--require-native-window` app flag refuses browser
+fallback; it cannot be combined with `--browser` or `--no-browser`.
+The embedded-page screenshot and measured bounds/DPI remain in the CI artifacts.
+Physical display scaling changes, multiple monitors and Snap gestures still
+require manual hardware acceptance; programmatic resize does not verify them.
 
 The restricted sandbox may deny Chromium named pipes, Playwright startup or
 cleanup of directories created under earlier ACL tokens. Use an elevated gate

@@ -1,5 +1,38 @@
 # Independent catalog release record
 
+## Packaged native Windows smoke - October 16, 2026
+
+The Windows workflow now tests a real WinForms/WebView2 window in addition to
+the packaged headless Chrome gate. All **7/7 native checks passed**: the real
+host bridge, standard frame styles, move/resize with stable interface density,
+maximize/restore, real folder-picker cancellation without changing the private
+archive, graceful close with every owned descendant/listener stopped, and saved
+normal placement. The runner measured 96 DPI and restored/saved bounds
+40,40,900,648. The embedded-page screenshot and measured results are retained.
+
+The harness isolates executable/data/archive/temp, LOCALAPPDATA and WebView2
+profiles. The new diagnostic --require-native-window option fails before browser
+fallback and rejects --browser/--no-browser combinations. Readiness now waits for
+WebView2's actual catalog target, the bridge's DOM marker using a CSP-safe selector,
+and the private archive input before opening Browse. Initial gate attempts exposed
+early page discovery and blocked string-evaluation assumptions in the new smoke;
+the application Content Security Policy remains unchanged.
+
+The final Windows run passed **807 tests, 2 skipped in 206.82 seconds**, all four
+required Windows contracts, a fresh executable build and **23/23 packaged browser
+checks**. Linux passed **804 tests, 5 skipped in 122.72 seconds**. JavaScript,
+encoding/core and dependency checks passed. Tested Windows commit:
+4f087058bf2b10a4f2860b219747f97631da71d7.
+https://github.com/Terrazocker/nightseam-catalog/actions/runs/38953312051
+Local evidence: logs/native-window-success.log,
+logs/native-artifact-success/tests/browser/artifacts/native-window.json and
+native-webview.png, logs/native-smoke-final-linux.log/xml.
+
+Physical display scaling changes, multiple-monitor transitions and Snap gestures
+still require manual hardware acceptance. The original frozen popularity snapshot
+remains unavailable; its provenance check is the only check unverified across both
+source platforms. No live replacement data was fetched.
+
 ## Windows CI and cross-platform validation - October 16, 2026
 
 GitHub Actions on Windows Server 2022 x64 verified all 46 application dependency
