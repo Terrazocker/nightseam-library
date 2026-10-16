@@ -1,5 +1,14 @@
 # Current NightSeam Catalog findings
 
+## Frozen popularity snapshot unavailable - October 16, 2026 (blocked)
+
+The original ignored data/popularity_snapshot.json and its recorded metadata are
+absent from this workspace and Git history. The optional source-provenance check
+therefore remains skipped on Linux and hosted Windows CI. Restore the genuine
+frozen snapshot and data/popularity_snapshot.meta.json from a backup to complete this
+check. The matcher and runtime retain their no-live-fetch rule; generated shipped
+popularity scores are not a replacement for the original source snapshot.
+
 ## Windows rapid-write timestamp collision - October 16, 2026 (fixed)
 
 The first hosted Windows run found one failure: rewriting a tool with same-size

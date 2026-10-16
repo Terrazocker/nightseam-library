@@ -1,5 +1,34 @@
 # Independent catalog release record
 
+## Windows CI and cross-platform validation - October 16, 2026
+
+GitHub Actions on Windows Server 2022 x64 verified all 46 application dependency
+pins and ran the complete source suite on CPython 3.12.10. The initial run exposed
+a same-size/restored-mtime tool-cache collision. Windows file versions now include
+an opaque handle lifetime, preventing cached tool or negative-dedup reuse across
+unpinned gaps. Continuously held request pins retain batch reuse. Regression
+assertions still require changed utility bytes to fail integrity validation;
+individual Windows requests now explicitly expect conservative fresh reads.
+Current throughput has not been rebenchmarked after this safety correction.
+
+The corrected Windows run passed **803 tests, 2 skipped in 238.59 seconds**.
+The workflow separately required all four Windows-only process-tree, directory
+pinning, HTTP batch and file-sharing contracts to execute successfully. A fresh
+PyInstaller executable (0.1.0-g78b13b19) passed the packaged headless Chrome gate
+**23/23**, including actual Rice ingest/restoration, session symbols, responsive
+layout and map checks. The harness used private executable/data/archive/temp
+stores. Final Linux source validation passed **800 tests, 5 skipped in 122.10
+seconds**; JavaScript, encoding and core guards passed.
+
+Tested source commit: 78b13b19bdb01836646799655b4a2e98cbcde807.
+Successful Windows run with retained JUnit/log/browser artifacts:
+https://github.com/Terrazocker/nightseam-catalog/actions/runs/38946414023
+The Windows POSIX-only skip is covered on Linux. The sole check still unverified
+across both platforms is the original frozen popularity snapshot's provenance:
+the ignored raw snapshot and its metadata are unavailable here. No fresh data
+was fetched and no synthetic replacement was substituted. Local evidence:
+logs/windows-validation-success.log and logs/final-linux-tests.log/xml.
+
 ## Linux x64 native FITS tools - October 16, 2026
 
 Source runs now select verified fpack/funpack bundles for Linux x64 or Windows

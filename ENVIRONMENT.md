@@ -35,6 +35,10 @@ The Windows desktop validation workflow on codex/linux-fits-tools-validation
 runs the pinned source suite, requires four native Windows contracts to pass,
 builds a fresh executable, and checks it with headless Chrome and private data.
 Browser dependencies are installed in a separate .venv-browser environment.
+Run 38946414023 validated commit 78b13b19: 803 source tests passed (two skips),
+all four required Windows contracts executed, and the fresh packaged browser
+gate passed 23/23. Linux covered the POSIX-only Windows skip. Only the frozen
+popularity snapshot check remains unverified without its original backup.
 
 Lossless Rice operations bundle native CFITSIO 4.7.0 fpack/funpack and zlib
 1.3.2 under vendor/fits-tools/windows-x64. Both utilities statically link the
