@@ -198,6 +198,8 @@ def run(executable):
             passed('maximize-restore')
 
             page.locator('#catalog-tab-import').click()
+            wait_for(lambda: Path(page.locator('#arcDir').input_value()).resolve() == archive.resolve(),
+                     'private archive input hydration')
             before = page.locator('#arcDir').input_value()
             assert Path(server.api('api/state')['image_dir']).resolve() == archive.resolve()
             page.locator('#btnArcBrowse').click()
