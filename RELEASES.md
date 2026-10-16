@@ -1,5 +1,44 @@
 # Independent catalog release record
 
+## Linux x64 native FITS tools - October 16, 2026
+
+Source runs now select verified fpack/funpack bundles for Linux x64 or Windows
+x64, and explicitly reject unsupported platforms. The new Linux binaries use
+the same pinned, unmodified NASA CFITSIO 4.7.0 and zlib 1.3.2 sources as Windows.
+CFITSIO/zlib are statically linked; system glibc 2.34 or newer is required.
+Binary/source hashes, compiler/CMake versions, flags, dependency information and
+upstream licenses accompany the bundle. The shared build script supports native
+Linux rebuilds while retaining the Windows build and packaging path.
+
+Native-call observers and failure injection now identify tools independently of
+the Windows filename suffix. Integrity-cache tamper tests cover both bundles;
+new checks cover supported/unsupported platform selection and missing bundles.
+The focused native compression/ingest/performance suite passed **64 tests, 3
+skipped**. The final full suite passed **800 tests, 5 skipped in 121.61 seconds**,
+resolving all 29 failures from the earlier Linux run. Four skips cover Windows
+contracts; one covers an absent optional local popularity snapshot. JavaScript,
+encoding and core checks passed. Tests used private data/archive stores in logs/.
+Evidence: logs/linux-compression-tests.log, logs/linux-full-tests.log,
+logs/linux-full-tests.xml and logs/linux-js-check.log. Windows packaged desktop
+validation was not run in this Linux environment.
+
+## Linux cloud environment validation - October 16, 2026
+
+On Linux x64 with Python 3.12.14 and dependencies from requirements-dev.txt,
+the full source suite completed with **765 passed, 29 failed, 5 skipped in
+125.25 seconds**. All failures are in native compression (10), compressed
+ingest (16), or compression performance (3). The bundled Windows PE fpack.exe
+cannot execute here; native PermissionError failures also cause downstream
+publication assertions. Four skips cover Windows-specific contracts; one covers
+an absent local popularity snapshot.
+
+JavaScript imports, DOM references, syntax, encoding and core checks passed;
+pip check found no broken requirements. Tests used private stores under ignored
+logs/. No application code or native binaries changed. Windows packaging and
+the packaged desktop browser gate were not run on Linux. Full traceback evidence
+is in logs/environment-retest.log, machine-readable results in
+logs/environment-retest.xml, and JS output in logs/environment-retest-js.log.
+
 ## Session compression symbols - October 16, 2026
 
 Every capture-session row now shows a compact, distinct symbol for compressed,

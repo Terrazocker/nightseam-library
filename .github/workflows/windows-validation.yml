@@ -1,0 +1,84 @@
+name: Windows desktop validation
+
+on:
+  push:
+    branches: [codex/linux-fits-tools-validation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare pinned application environment
+        run: |
+          New-Item -ItemType Directory -Path logs -Force | Out-Null
+          python -m venv .venv-build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-build/Scripts/python.exe -m pip install -r requirements-build-lock.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-build/Scripts/python.exe scripts/check_build_dependencies.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Full suite including Windows contracts
+        run: |
+          & .venv-build/Scripts/python.exe -m pytest tests/ -q -rs --tb=short --junitxml=logs/windows-tests.xml 2>&1 | Tee-Object -FilePath logs/windows-tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build fresh Windows executable
+        run: |
+          & ./build.ps1 -AllowDirty 2>&1 | Tee-Object -FilePath logs/windows-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Require all four Windows contracts to execute
+        run: |
+          [xml]$report = Get-Content -Raw logs/windows-tests.xml
+          $required = @(
+            'test_windows_owner_exit_closes_job_and_stops_descendants',
+            'test_pinned_directory_cache_rejects_replaced_leaf_link',
+            'test_http_batch_checks_earlier_files_once_and_detects_next_request_edits',
+            'test_batch_pins_refuse_writes_and_renames_until_closed'
+          )
+          foreach ($name in $required) {
+            $cases = @($report.testsuites.testsuite.testcase | Where-Object { $_.name -eq $name })
+            if ($cases.Count -ne 1 -or $cases[0].SelectSingleNode('skipped|failure|error')) {
+              throw "Windows contract did not pass: $name"
+            }
+          }
+      - name: Prepare separate browser environment
+        run: |
+          python -m venv .venv-browser
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-browser/Scripts/python.exe -m pip install playwright==1.62.0 Pillow==12.3.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-browser/Scripts/python.exe -m playwright install chrome
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Packaged catalog browser gate with private data and archive
+        run: |
+          & .venv-browser/Scripts/python.exe scripts/check_browser.py --desktop --channel chrome --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-browser.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-validation-${{ github.sha }}
+          path: |
+            logs/windows-*.log
+            logs/windows-tests.xml
+            tests/browser/artifacts/
+          if-no-files-found: warn

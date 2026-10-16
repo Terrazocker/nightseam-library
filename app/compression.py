@@ -10,6 +10,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import platform
 import shutil
 import sqlite3
 import subprocess
@@ -40,11 +41,26 @@ class RiceCompressionError(ValueError):
     """A staged conversion failed its lossless encoding/verification gate."""
 
 
+def tool_bundle():
+    """Select only a bundled, verified toolchain for a supported native host."""
+    system, machine = platform.system(), platform.machine().lower()
+    if machine in ('amd64', 'x86_64'):
+        if system == 'Windows':
+            return 'windows-x64', '.exe'
+        if system == 'Linux':
+            return 'linux-x64', ''
+    raise ValueError(f'Bundled FITS utilities are not available for {system} {machine}.')
+
+
 def tools():
     global _TOOLS_CACHE
-    root = resource_dir() / 'vendor/fits-tools/windows-x64'
+    bundle, suffix = tool_bundle()
+    root = resource_dir() / 'vendor/fits-tools' / bundle
     with _TOOLS_LOCK, ExitStack() as stack:
-        paths = [root / name for name in ('provenance.json', 'fpack.exe', 'funpack.exe')]
+        paths = [root / name for name in ('provenance.json', f'fpack{suffix}', f'funpack{suffix}')]
+        if not all(path.is_file() for path in paths):
+            raise ValueError(f'The bundled FITS utilities for {bundle} are missing. '
+                             'Run python scripts/build_fits_tools.py or reinstall NightSeam.')
         readers = [stack.enter_context(pinned_version(path)) for path in paths]
         versions = [read() if read else None for read in readers]
         token = (root, *versions) if all(version is not None for version in versions) else None

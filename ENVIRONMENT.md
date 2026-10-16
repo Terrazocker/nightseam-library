@@ -1,4 +1,29 @@
-# Windows catalog development environment
+# Catalog development environments
+
+## Linux x64 source development
+
+The cloud workspace uses Python 3.12 and requirements-dev.txt; Node is required
+for JavaScript checks. Run python main.py --no-browser --console for headless
+source use. Windows packaging and native-window gates still require Windows.
+
+Native Rice tools are bundled under vendor/fits-tools/linux-x64 with verified
+SHA-256 hashes, source provenance and upstream licenses. This build requires
+glibc 2.34 or newer and was tested on glibc 2.41. CFITSIO and zlib are linked
+statically; only system libc/libm and the ELF loader remain dynamic dependencies.
+Other architectures and operating systems are explicitly unsupported.
+
+Rebuild with python scripts/build_fits_tools.py on Linux x64 using GCC, Make,
+binutils and CMake (system installation or python -m pip install cmake in the
+active environment). The builder verifies the same pinned official CFITSIO
+4.7.0 and zlib 1.3.2 source archives as Windows, compiles native Linux binaries,
+and records compiler, flags, required glibc, binary hashes and licenses.
+Build logs and commands remain under ignored logs/fits-tools-build-linux-x64/.
+Runtime selection preserves hash checks and never searches PATH for utilities.
+
+Source tests: python -m pytest tests/ -q --tb=no. JS/encoding/core checks:
+python scripts/check_js.py. Tests keep private data and archives under logs/.
+
+## Windows desktop development
 
 Lossless Rice operations bundle native CFITSIO 4.7.0 fpack/funpack and zlib
 1.3.2 under vendor/fits-tools/windows-x64. Both utilities statically link the

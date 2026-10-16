@@ -43,10 +43,10 @@ def test_compression_prepares_concurrently_without_archive_lock_and_publishes_in
     barrier = threading.Barrier(2, timeout=10)
     calls, guard = [], threading.Lock()
     def parallel(executable, *args):
-        if executable.name == 'fpack.exe':
+        if executable.stem == 'fpack':
             assert not db.archive_lock._is_owned()
             with guard:
-                calls.append(executable.name)
+                calls.append(executable.stem)
                 number = len(calls)
             if number <= 2:
                 barrier.wait()
@@ -196,20 +196,22 @@ def test_parallel_compression_database_failure_stops_later_publication(tmp_path)
     no_stages(db, archive)
 
 
-def test_native_tool_cache_revalidates_changed_executable_with_restored_mtime(tmp_path, monkeypatch):
+@pytest.mark.parametrize('bundle,suffix', [('windows-x64', '.exe'), ('linux-x64', '')])
+def test_native_tool_cache_revalidates_changed_executable_with_restored_mtime(tmp_path, monkeypatch, bundle, suffix):
     root = tmp_path / 'tools'
-    destination = root / 'vendor/fits-tools/windows-x64'
+    destination = root / 'vendor/fits-tools' / bundle
     destination.mkdir(parents=True)
     import json
     provenance = {'binaries': {}}
-    for name in ('fpack.exe', 'funpack.exe'):
+    for name in (f'fpack{suffix}', f'funpack{suffix}'):
         data = name.encode('ascii')
         (destination / name).write_bytes(data)
         provenance['binaries'][name] = dict(sha256=hashlib.sha256(data).hexdigest())
     (destination / 'provenance.json').write_text(json.dumps(provenance), encoding='utf-8')
     monkeypatch.setattr(compression, 'resource_dir', lambda: root)
-    assert compression.tools()['fpack'] == destination / 'fpack.exe'
-    executable = destination / 'fpack.exe'
+    monkeypatch.setattr(compression, 'tool_bundle', lambda: (bundle, suffix))
+    assert compression.tools()['fpack'] == destination / f'fpack{suffix}'
+    executable = destination / f'fpack{suffix}'
     before = executable.stat()
     executable.write_bytes(b'X' * before.st_size)
     os.utime(executable, ns=(before.st_atime_ns, before.st_mtime_ns))

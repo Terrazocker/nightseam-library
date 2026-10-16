@@ -1,5 +1,15 @@
 # Current NightSeam Catalog findings
 
+## Linux cloud native compression limitation - October 16, 2026 (fixed)
+
+The initial Linux x64 cloud run reported 29 compression-related failures because
+the selected fpack.exe/funpack.exe were Windows PE binaries. Native Linux x64
+tools are now built from the same verified CFITSIO/zlib sources, with platform
+selection, integrity checks, executable hashes and licenses. Native Rice workflows
+are tested on Linux; Windows packaging and the packaged desktop gate still need
+Windows. Linux binaries require glibc 2.34 or newer. See ENVIRONMENT.md for rebuild
+requirements and RELEASES.md for validation results.
+
 The browser-test process-tree and silent pytest-cleanup findings were fixed on
 October 10, 2026. See RELEASES.md for validation and DEVELOPMENT.md for upkeep.
 On October 11 the packaged gate was also corrected to select and verify a private
