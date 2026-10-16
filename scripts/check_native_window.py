@@ -166,7 +166,7 @@ def run(executable):
             page = wait_for(catalog_page, 'native WebView2 catalog navigation')
             discovery.detach()
             page.reload(wait_until='domcontentloaded')
-            page.wait_for_function("document.body.dataset.windowChrome === 'native'")
+            page.locator('body[data-window-chrome="native"]').wait_for(state='attached')
             assert page.evaluate('window.pywebview.api.host_capabilities()') == {
                 'window_chrome': 'native', 'native_folder_picker': True}
             passed('real-webview2-bridge')
