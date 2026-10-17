@@ -43,6 +43,7 @@ jobs:
           & .venv-build/Scripts/python.exe -m pytest tests/ -q -rs --tb=short --junitxml=logs/windows-tests.xml 2>&1 | Tee-Object -FilePath logs/windows-tests.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build fresh Windows executable
+        id: package
         run: |
           & ./build.ps1 -AllowDirty 2>&1 | Tee-Object -FilePath logs/windows-build.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -61,7 +62,14 @@ jobs:
               throw "Windows contract did not pass: $name"
             }
           }
+      - name: Packaged 512-file HTTP import benchmark and restricted-runtime Rice
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: |
+          & .venv-build/Scripts/python.exe scripts/bench_windows_import.py --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-import-benchmark.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prepare separate browser environment
+        id: browser_environment
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         run: |
           python -m venv .venv-browser
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -70,16 +78,14 @@ jobs:
           & .venv-browser/Scripts/python.exe -m playwright install chrome
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Packaged catalog browser gate with private data and archive
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && steps.browser_environment.outcome == 'success' }}
         run: |
           & .venv-browser/Scripts/python.exe scripts/check_browser.py --desktop --channel chrome --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-browser.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Packaged native WinForms and WebView2 smoke
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && steps.browser_environment.outcome == 'success' }}
         run: |
           & .venv-browser/Scripts/python.exe scripts/check_native_window.py --restricted-runtime --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-native.log
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Packaged 512-file HTTP import benchmark and restricted-runtime Rice
-        run: |
-          & .venv-build/Scripts/python.exe scripts/bench_windows_import.py --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-import-benchmark.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain validation evidence
         if: always()

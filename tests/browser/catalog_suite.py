@@ -1130,6 +1130,14 @@ def desktop_catalog_library_export(c):
 
 
 def _settle_catalog_layout(page):
+    # Emulated window metrics and CSS dynamic viewport units can update on
+    # different browser frames. Fake-clock rAFs do not synchronize that change.
+    viewport = page.viewport_size
+    if viewport:
+        page.wait_for_function("""size => innerWidth === size.width &&
+          innerHeight === size.height && document.body &&
+          Math.abs(document.body.getBoundingClientRect().height - size.height) <= 1
+        """, arg=viewport, timeout=10000)
     # The harness's fake clock owns rAF while Chromium owns ResizeObserver.
     # Two clock frames alone do not establish that browser layout has converged.
     page.evaluate("""() => new Promise(resolve => requestAnimationFrame(() =>
