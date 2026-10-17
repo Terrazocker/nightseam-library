@@ -328,6 +328,42 @@ time through stat and change time through fstat, so ctime is compared only withi
 the same metadata source. Descriptor observations before/after reading retain
 change-time detection even when an external writer restores size and mtime.
 
+## Continuous validation and support
+
+`.github/workflows/windows-validation.yml` selects Linux source checks and
+Windows source/build/packaged browser/native checks for pull requests to main
+and pushes to main. Markdown-only diffs skip expensive jobs; unknown diffs run
+everything. The terminal `validation` job requires every selected platform to
+succeed, giving branch protection a stable check name. Branch protection is
+configured separately. Main-branch triggers and the weekly Sunday 02:17 UTC
+schedule take effect when the workflow is merged into main.
+
+Manual dispatch runs all correctness checks. Select `run_benchmarks=true` to
+also run the 512-file packaged import benchmark and isolated source profiler;
+the weekly run includes both. Artifacts retain logs, JUnit, measured JSON and
+packaged screenshots. The browser runner remains separate from application pins.
+
+The toolbar's **Support report** downloads a local JSON attachment. It contains
+application/Python/OS/selected package versions, bundled FITS utility integrity,
+browser/native capability flags and numeric Chromium version. At most 25 warning
+or error categories from the current process are included. Raw messages,
+tracebacks, paths, library contents, settings and environment values are excluded.
+The report does not send anything externally and remains available during archive
+operations. Frozen builds explicitly retain the selected distribution metadata.
+
+`python scripts/profile_import.py` creates a private source server beneath
+`logs/browser/` and uses the benchmark's real HTTP uploads and integrity audits.
+Its default 512 equal-size FITS files and 24-file requests match the packaged
+workload. `--count`, `--batch-size` and `--output` allow smaller investigations.
+The private bootstrap installs selected synchronous function wrappers across
+worker threads, actual hash-byte counters and SQLite transaction counts. Normal
+application instances have no profiling endpoints or wrappers. Fixtures, startup,
+audits and duplicate/edit probes stay outside the measured interval. Exclusive
+phase CPU times can be added; wall times overlap across threads. Unwrapped work
+and instrumentation overhead remain unattributed. This selected-function source
+profile is not a packaged throughput baseline or a complete program call graph.
+Owned processes, listener and scratch must close successfully for the run to pass.
+
 ## Workspace upkeep
 
 Tests allocate a separate directory under ignored `logs/.pytest-tmp/` for each

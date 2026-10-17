@@ -33,10 +33,13 @@ hashing. A post-correction hosted Windows run imported 512 equal-size FITS files
 (2.12 GB) in 87.02 seconds, averaging 23.29 MiB/s on two logical CPUs. The original
 workstation has not been remeasured. See docs/import-performance-20261015.md.
 
-The Windows desktop validation workflow on codex/linux-fits-tools-validation
-runs the pinned source suite, requires four native Windows contracts to pass,
-builds a fresh executable, and checks it with headless Chrome and a real native
-WinForms/WebView2 window using private data.
+The Catalog validation workflow selects Linux and Windows correctness checks on
+pull requests and main pushes, with a stable terminal `validation` check. The
+Windows job runs the pinned source suite, requires four native Windows contracts
+to pass, builds a fresh executable, and checks it with headless Chrome and a real
+native WinForms/WebView2 window using private data. Weekly and optional manual
+runs add larger benchmarks; see DEVELOPMENT.md. These permanent triggers become
+active when the branch's workflow is merged into main.
 Browser dependencies are installed in a separate .venv-browser environment.
 Run 39009833605 validated commit 9775ebae: 814 source tests passed (two skips),
 all four required Windows contracts executed, and the fresh packaged browser

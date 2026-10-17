@@ -33,6 +33,11 @@ Configure and verify a private empty archive before any upload.
    it must keep the same image record, class, session and stored location.
 5. Close the window normally and confirm that the app and its WebView descendants
    exit and the private listener closes. Reopen and confirm the saved placement.
+6. Activate **Support report** with the keyboard in the native window. Save the
+   JSON through WebView2's download UI, inspect versions/tool integrity and confirm
+   it contains no archive paths or exposure names. Cancel a second download and
+   confirm the catalog remains usable. CI covers the packaged browser download;
+   native Save As interaction requires this separate check.
 
 Record the network-disconnected interval, tool/runtime errors, hashes and results.
 If WebView2 is absent, record the strict native startup failure separately; a
