@@ -25,6 +25,11 @@ keeping primary labels, all actions and the stable 14px density. The browser
 regression exercises that font fallback. Final Ubuntu/Windows outcomes and
 artifacts are retained in the Linux draft PR. No public release was published.
 
+The archive-folder action previously called Windows-only os.startfile on Linux.
+It now delegates to xdg-open with literal path arguments and reaps the launcher;
+missing utilities and spawn failures return a clear per-action error. Windows
+retains startfile. UI feedback names the file manager rather than Explorer.
+
 ## Large packaged import experiment and storage failures — October 17, 2026
 
 Added a separate populated-library ABBA controller with deterministic 8–32 MiB

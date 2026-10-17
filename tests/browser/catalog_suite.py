@@ -476,7 +476,7 @@ def _selected_session_actions(c):
     open_button = c.page.locator('#librarySessionActions [data-open-library-folder]')
     open_button.focus()
     open_button.press('Enter')
-    c.page.locator('#toasts .toast').filter(has_text='Archive folder opened in Explorer.').wait_for()
+    c.page.locator('#toasts .toast').filter(has_text='Opening archive folder in the file manager.').wait_for()
     c.expect_eq(folders, ['Legacy capture/lights'], "Open folder must send the actual selected directory")
 
     for index, frame in enumerate(('dark', 'flat', 'bias'), 1):

@@ -26,6 +26,7 @@ from starlette.concurrency import run_in_threadpool
 from .archive_health import ArchiveHealthManager
 from .compression import CompressionManager, recover as recover_compression
 from .database import Database
+from .folder_opener import open_folder
 from .archive_trash import recover_pending, pending_current
 from .imglib import CatalogResolver, name_key
 from .ingest import (ArchiveRenameRecoveryError, ReindexCancelled, DedupBatch, _archive_io,
@@ -596,7 +597,7 @@ def create_app(db: Database) -> FastAPI:
         if not folder.is_dir():
             raise HTTPException(404, "folder not found on disk")
         try:
-            os.startfile(folder)         # Windows file explorer
+            open_folder(folder)
         except OSError as exc:
             raise HTTPException(500, f"cannot open folder: {exc}")
         return {"ok": True}

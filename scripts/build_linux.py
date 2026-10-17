@@ -133,6 +133,7 @@ def build(args):
             'Extract into a user-writable folder, then run:\n  ./NightSeam --browser\n\n'
             'Python and Node are not required. Data and logs stay beside the executable.\n'
             'A system browser and an executable temporary filesystem are required.\n'
+            'Opening archive folders also uses xdg-open from xdg-utils.\n'
             'GTK/Qt native-window mode is not bundled. Do not install into /usr/bin.\n'
             'See build-info.json for the actual bundled ELF glibc requirements.\n'
             'This development artifact is not a public release.\n', encoding='utf-8')

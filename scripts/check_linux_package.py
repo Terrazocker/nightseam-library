@@ -119,6 +119,11 @@ def run(bundle, output):
             with sqlite3.connect(database) as connection:
                 units = connection.execute('SELECT SUM(n_files) FROM import_batches').fetchone()[0]
             bench.require(units == 1 and before[1] == 1 and before[2] == 0, 'Image/history/integrity publication differs')
+            # The deliberately empty PATH has no desktop opener. Refuse cleanly
+            # rather than calling Windows-only os.startfile or opening a GUI.
+            opened = client.post('/api/library/open_folder', json={'rel': '.'})
+            bench.require(opened.status_code == 500 and 'xdg-open' in opened.json().get('detail', ''),
+                          'Missing desktop opener did not return its explanatory error')
             bench.require(not any(p.suffix == '.part' or p.name.startswith('.nightseam-') for p in archive.rglob('*')),
                           'Staging leftovers remain')
         graceful_stop(server)

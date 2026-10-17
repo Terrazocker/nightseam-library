@@ -3,7 +3,8 @@
 The portable Linux x86_64 bundle includes Python, the local JavaScript engine,
 catalog assets and verified native FITS compression tools. It opens the catalog
 in your installed browser. GTK/Qt native windows and their folder pickers are
-not bundled.
+not bundled. The **Open folder** action uses `xdg-open` from `xdg-utils`; if it
+is unavailable, the catalog reports that requirement without launching anything.
 
 Extract the `.tar.gz` into a **user-writable folder**, then run:
 

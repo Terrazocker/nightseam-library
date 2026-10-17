@@ -365,7 +365,7 @@ function openFolder(rel) {
     method: "POST", silent: true,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ rel })
-  }).then(() => toast("Archive folder opened in Explorer.", "info", 3000))
+  }).then(() => toast("Opening archive folder in the file manager.", "info", 3000))
     .catch(err => toast(`Cannot open archive folder: ${err.message}`, "err", 6000));
 }
 
