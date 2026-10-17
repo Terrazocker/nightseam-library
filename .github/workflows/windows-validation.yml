@@ -133,7 +133,13 @@ jobs:
             'test_request_directory_pins_share_common_ancestors_and_exclude_writers',
             'test_request_directory_pins_outlive_external_pin_context',
             'test_combined_budget_refuses_deep_suffix_and_keeps_shallower_admission',
-            'test_real_http_disconnect_queue_and_shutdown_preserve_units'
+            'test_real_http_disconnect_queue_and_shutdown_preserve_units',
+            'test_duplicate_hash_cancellation_reaches_worker_before_stage_cleanup[preflight_alias]',
+            'test_duplicate_hash_cancellation_reaches_worker_before_stage_cleanup[preflight_exact]',
+            'test_duplicate_hash_cancellation_reaches_worker_before_stage_cleanup[final_alias]',
+            'test_duplicate_hash_cancellation_reaches_worker_before_stage_cleanup[final_plain]',
+            'test_ordered_merge_avoids_repeated_whole_population_sorts',
+            'test_late_positive_above_capacity_hydrates_only_verified_record'
           )
           foreach ($name in $required) {
             $cases = @($report.testsuites.testsuite.testcase | Where-Object { $_.name -eq $name })

@@ -1,5 +1,21 @@
 # Current NightSeam Catalog findings
 
+## Populated duplicate-query work and compression cancellation — October 17, 2026 (mitigated/fixed)
+
+Bounded OR pages still sorted the remaining matching rows on every fetch.
+Ordered UNION streams now reuse existing indexes and avoid repeated sorting.
+Narrow candidate rows defer full metadata hydration until verified positives;
+the hydrated path must match the one actually read. On the local 6,000-image
+mixed HTTP workload, SELECTs fell 58,064→493 while candidate visits, 6,012 ingest
+archive hashes, 57,110,400 bytes and transaction counts stayed identical.
+Alias/exact-positive tiers are bounded and lazy, retaining separate expected
+identities even for the same row. Their hashes and compression preflight now
+receive cancellation; repeated cancellation drains workers before stage cleanup.
+The four cancellation modes and mixed populated workload are covered by tests.
+Matching-population traversal and conservative Windows cross-lifetime reads
+remain; this is not a claim that all large-archive IO scaling is solved.
+See docs/populated-import-20261017.md for provenance and measurement limits.
+
 ## Queued mutation recovery checks blocked the event loop — October 17, 2026 (fixed)
 
 The new packaged lifecycle gate reproduced a static UI timeout while an

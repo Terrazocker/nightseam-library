@@ -68,6 +68,18 @@ zero, no descendants and a closed listener before forced job cleanup is allowed.
 Mutation middleware performs recovery-state queries in worker threads: waiting
 for a publication worker's SQLite connection lock must not block the event loop
 or prevent static UI responses. Recovery refusal and publication rules still apply.
+Candidate pages merge ID-ordered indexed SHA/size/unknown-size streams with
+UNION, avoiding a fresh sort of the remaining population on every page.
+Preparation projects ID/path only; lookup adds fingerprint fields and loads the
+full image record only after a positive whole-file check, confirming its path
+still matches. Compression aliases/exact positives are bounded, lazy tiers with
+independent expected hashes. Cancellation reaches their reads and preflight as
+well as ordinary fallback hashing; workers still drain before staging cleanup.
+`scripts/profile_populated_import.py --count 6000` exercises a pre-existing mixed
+plain/Rice library over real HTTP, with malformed/edit/missing/restore audits.
+Profiler phases now include complete candidate/alias fetching, positive preflight
+and native encode/verification wall work; native child CPU remains excluded.
+See `docs/populated-import-20261017.md` for measured work and limits.
 app/archive_lock.py reserves the archive for these authorized
 workers until pins close; unrelated mutations wait. Windows pins require actual
 GENERIC_READ access (attribute-only handles do not enforce the sharing policy).

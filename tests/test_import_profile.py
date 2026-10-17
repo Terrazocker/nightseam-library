@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 from scripts import profile_import as profile
+from scripts import profile_populated_import as populated
 
 
 def test_profile_measures_workers_nested_cpu_and_actual_hash_bytes():
@@ -52,3 +53,21 @@ def test_profile_real_private_http_import_excludes_audits_and_cleans_up(tmp_path
     assert counters['archive_hashes_completed'] > 0
     assert counters['archive_sha256_bytes'] == counters['completed_archive_bytes']
     assert result['profile']['phases']['database_commit']['calls'] == 5
+
+
+def test_populated_profile_audits_mixed_representations_and_error_boundaries(tmp_path):
+    output = tmp_path / 'populated.json'
+    populated.run(SimpleNamespace(count=24, output=output))
+    result = json.loads(output.read_text(encoding='utf-8'))
+    assert result['status'] == 'passed' and result['owned_process_and_scratch_cleanup']
+    assert result['archived_files_verified'] == 36
+    assert result['new_images'] == result['history_units'] == 12
+    assert result['seed']['rice'] == 3 and len(result['seed']['sizes']) >= 3
+    assert result['seed_metadata_preserved'] and result['restored_mtime_edit_detected']
+    assert result['missing_original_restored'] and result['malformed_input_isolated']
+    assert result['exact_rice_restoration'] and result['staging_leftovers'] == 0
+    rice = result['waves']['new-safe-rice']['profile']
+    assert rice['phases']['rice_encode_verify']['calls'] == 3
+    assert rice['phases']['native_tool']['calls'] == 6
+    assert rice['phases']['positive_preflight']['calls'] == 3
+    assert result['restoration_profile']['phases']['native_tool']['calls'] == 1

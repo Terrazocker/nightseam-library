@@ -1,5 +1,29 @@
 # Independent catalog release record
 
+## Populated-library SQL work and duplicate cancellation — October 17, 2026
+
+Ordered indexed UNION pages replace repeated OR-result sorting. Narrow candidate
+projections eliminate per-negative full-record queries; verified positives alone
+hydrate metadata and must retain the checked path. Alias/exact tiers are lazy,
+bounded and retain independent expected hashes. Original/compressed alias,
+exact-positive preflight and non-batched hash paths now cooperate with
+cancellation, retaining worker draining, rollback and original identity.
+
+The 6,000-image mixed plain/Rice source HTTP workload passed byte, identity,
+session/class/location, malformed-input, restored-mtime edit, missing-original,
+native restoration, 12 image/history-unit and cleanup audits. Compared with
+89a7a82 using the same measurement controllers, SELECTs fell 58,064→493 (99.2%)
+and Database.image lookups 57,609→10; visits stayed 57,609 and ingest hashes/bytes
+stayed 6,012/57,110,400. Both retained 14 BEGIN/COMMIT pairs. A separate 50,000-row
+metadata check returned the same ordered rows with 46,439,000→1,236,000 approximate
+SQLite VM instructions. These are instrumented Linux source/metadata observations,
+not a packaged throughput claim. Fourteen focused regressions passed locally.
+All 102 legacy ingest tests passed after two pause helpers were updated to
+accept, assert and forward the newly propagated cancellation event; their
+responsiveness/database-access/worker-drain assertions remain intact.
+Full source and native outcomes are retained on the draft PR and CI artifacts;
+details and evidence paths are in docs/populated-import-20261017.md.
+
 ## Bounded import resources and real HTTP lifecycle — October 17, 2026
 
 The first packaged lifecycle run found a real responsiveness issue: a queued

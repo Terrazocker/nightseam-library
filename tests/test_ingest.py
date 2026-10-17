@@ -766,11 +766,12 @@ def test_duplicate_hash_keeps_event_loop_and_database_reads_available(dedup_stor
     entered, release = threading.Event(), threading.Event()
     original = ingest._fingerprint_file
 
-    def paused(path):
+    def paused(path, cancel=None):
         assert not db.lock._is_owned()
+        assert cancel is not None
         entered.set()
         assert release.wait(3), "event loop did not release the worker"
-        return original(path)
+        return original(path, cancel)
 
     monkeypatch.setattr(ingest, "_fingerprint_file", paused)
 
@@ -835,10 +836,11 @@ def test_cancelled_hash_waits_for_worker_before_removing_stage(dedup_store, monk
     entered, release = threading.Event(), threading.Event()
     original = ingest._fingerprint_file
 
-    def paused(path):
+    def paused(path, cancel=None):
+        assert cancel is not None
         entered.set()
         assert release.wait(3)
-        return original(path)
+        return original(path, cancel)
 
     monkeypatch.setattr(ingest, "_fingerprint_file", paused)
 
