@@ -60,6 +60,8 @@ $catalogBake = "BAKED_VERSION = '$catalogVersion'`n"
     --add-data "$PSScriptRoot\vendor\fits-tools\windows-x64\provenance.json;vendor\fits-tools\windows-x64" `
     --add-data "$PSScriptRoot\vendor\fits-tools\windows-x64\CFITSIO-LICENSE.txt;vendor\fits-tools\windows-x64" `
     --add-data "$PSScriptRoot\vendor\fits-tools\windows-x64\ZLIB-LICENSE.txt;vendor\fits-tools\windows-x64" `
+    --copy-metadata fastapi --copy-metadata uvicorn --copy-metadata pywebview `
+    --copy-metadata mini-racer --copy-metadata astropy --copy-metadata numpy --copy-metadata Pillow `
     --collect-all uvicorn --collect-all webview --collect-all py_mini_racer --hidden-import python_multipart "$PSScriptRoot\main.py"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $catalogExe)) { throw "Compilation failed" }
 } finally {

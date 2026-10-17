@@ -1129,6 +1129,41 @@ def desktop_catalog_library_export(c):
     c.expect(not c.page_errors, f"library export must not throw page errors: {c.page_errors}")
 
 
+@check('desktop-catalog-support-report', 'catalog')
+def desktop_catalog_support_report(c):
+    import json
+
+    c.goto()
+    c.page.wait_for_function("() => !document.querySelector('#btnTopExport').disabled")
+    held = []
+    c.page.route('**/api/library/export?*', lambda route: held.append(route))
+    c.page.locator('#btnTopExport').click()
+    c.page.wait_for_function("() => document.querySelector('#btnTopIngest').disabled")
+    button = c.page.get_by_role('button', name='Download support report', exact=True)
+    c.expect(button.is_enabled(), 'support remains available during archive work')
+    button.focus()
+    with c.page.expect_download() as captured:
+        button.press('Enter')
+    download = captured.value
+    c.expect_eq(download.suggested_filename, 'nightseam-support-report.json')
+    c.expect_eq(download.failure(), None)
+    raw = download.path().read_text(encoding='utf-8')
+    report = json.loads(raw)
+    c.expect_eq(report['application']['frozen'], True)
+    c.expect_eq(report['fits_tools']['integrity'], 'verified')
+    c.expect(all(version != 'unavailable' for version in report['runtime']['packages'].values()),
+             'frozen distribution metadata is present')
+    c.expect_eq(report['client_context']['window_chrome'], 'browser')
+    archive = c.page.request.get(c.url('/api/state')).json()['image_dir']
+    c.expect(archive not in raw and json.dumps(archive)[1:-1] not in raw,
+             'support report excludes the configured archive path')
+    c.expect_eq(len(held), 1)
+    with c.page.expect_download():
+        held.pop().fulfill(content_type='text/csv', body='file,imagetyp\n')
+    c.page.wait_for_function("() => !document.querySelector('#btnTopExport').disabled")
+    c.expect(not c.page_errors, f'support report must not throw: {c.page_errors}')
+
+
 def _settle_catalog_layout(page):
     # Emulated window metrics and CSS dynamic viewport units can update on
     # different browser frames. Fake-clock rAFs do not synchronize that change.

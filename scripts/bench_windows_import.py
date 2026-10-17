@@ -105,10 +105,12 @@ def stored_path(archive, result):
     return path
 
 
-def benchmark(client, archive, database, sources, batch_size):
+def benchmark(client, archive, database, sources, batch_size, *, on_import_started=None, on_import_finished=None):
     require(payload(client.get('/api/library'))['total_images'] == 0, 'Benchmark needs an empty library')
     batches, results = [], []
     run_id = uuid.uuid4().hex
+    if on_import_started:
+        on_import_started()
     started = time.perf_counter()
     for offset in range(0, len(sources), batch_size):
         batch = sources[offset:offset + batch_size]
@@ -123,6 +125,8 @@ def benchmark(client, archive, database, sources, batch_size):
                         'seconds': seconds})
         print(f'batch {len(batches):02d}: {len(batch)} files in {seconds:.3f}s', flush=True)
     elapsed = time.perf_counter() - started
+    if on_import_finished:
+        on_import_finished()
     require(len({item['id'] for item in results}) == len(sources), 'Import reused an ID unexpectedly')
     require(payload(client.get('/api/library'))['total_images'] == len(sources), 'Wrong catalog count')
     for source, result in zip(sources, results):

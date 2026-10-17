@@ -32,6 +32,8 @@ def setup_logging(console: bool):
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                         handlers=handlers)
+    from app.diagnostics import install_error_collector
+    install_error_collector()
     return logging.getLogger("nightseam")
 
 

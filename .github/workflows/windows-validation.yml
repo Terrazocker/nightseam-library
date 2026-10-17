@@ -1,20 +1,83 @@
-name: Windows desktop validation
+name: Catalog validation
 
 on:
   push:
-    branches: [codex/linux-fits-tools-validation]
-    paths-ignore: ['**.md']
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      run_benchmarks:
+        description: Run the larger packaged import benchmark and source profile
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 2 * * 0'
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-validation-${{ github.ref }}
+  group: catalog-validation-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.paths.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: paths
+        name: Select correctness checks
+        env:
+          CI_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python scripts/select_ci_checks.py
+
+  linux:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare source environment
+        run: |
+          mkdir -p logs
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements-dev.txt -c requirements-build-lock.txt
+          .venv/bin/python -m pip check
+      - name: Linux source suite
+        run: |
+          set -o pipefail
+          .venv/bin/python -m pytest tests/ -q -rs --tb=short --junitxml=logs/linux-tests.xml 2>&1 | tee logs/linux-tests.log
+      - name: JavaScript, encoding and core checks
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          .venv/bin/python scripts/check_js.py 2>&1 | tee logs/linux-js.log
+      - name: Retain Linux validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-validation-${{ github.sha }}
+          path: logs/linux-*
+          if-no-files-found: warn
+
   windows:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-2022
     timeout-minutes: 45
     defaults:
@@ -22,6 +85,8 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -63,9 +128,14 @@ jobs:
             }
           }
       - name: Packaged 512-file HTTP import benchmark and restricted-runtime Rice
-        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_benchmarks)) }}
         run: |
           & .venv-build/Scripts/python.exe scripts/bench_windows_import.py --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-import-benchmark.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Profile real HTTP import in an isolated source process
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_benchmarks)) }}
+        run: |
+          & .venv-build/Scripts/python.exe scripts/profile_import.py 2>&1 | Tee-Object -FilePath logs/windows-import-profile.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prepare separate browser environment
         id: browser_environment
@@ -96,6 +166,29 @@ jobs:
             logs/windows-*.log
             logs/windows-tests.xml
             logs/windows-import-benchmark.json
+            logs/windows-import-profile.json
+            logs/import-profile-*.log
             logs/benchmark-nightseam.log*
             tests/browser/artifacts/
           if-no-files-found: warn
+
+  validation:
+    needs: [changes, linux, windows]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the selected correctness checks
+        env:
+          SELECTION_RESULT: ${{ needs.changes.result }}
+          CODE_SELECTED: ${{ needs.changes.outputs.code }}
+          LINUX_RESULT: ${{ needs.linux.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+        run: |
+          python - <<'PY'
+          import os
+          results = [os.environ['LINUX_RESULT'], os.environ['WINDOWS_RESULT']]
+          allowed = {'success'} if os.environ['CODE_SELECTED'] == 'true' else {'success', 'skipped'}
+          if os.environ['SELECTION_RESULT'] != 'success' or any(value not in allowed for value in results):
+              raise SystemExit('A selected correctness check failed or did not execute')
+          print('Selected correctness checks passed')
+          PY

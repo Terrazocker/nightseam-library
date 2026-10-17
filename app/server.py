@@ -33,6 +33,7 @@ from .ingest import (ArchiveRenameRecoveryError, ReindexCancelled, DedupBatch, _
                      reindex_library, rename_archive_folder, undo_archive_rename)
 from .paths import safe_join, safe_rel, static_dir
 from .version import app_version
+from . import diagnostics
 
 APP_VERSION = app_version()
 log = logging.getLogger(__name__)
@@ -179,6 +180,7 @@ class HealthAcknowledgementIn(BaseModel):
 # ------------------------------------------------------------------ factory
 
 def create_app(db: Database) -> FastAPI:
+    diagnostics.install_error_collector()
     health = ArchiveHealthManager(db)
     compression = CompressionManager(db)
     ingest_workers = asyncio.Semaphore(max(1, min(MAX_FILES_PER_REQUEST, os.cpu_count() or 1)))
@@ -296,6 +298,13 @@ def create_app(db: Database) -> FastAPI:
         return await call_next(request)
 
     # ---------------- state / settings ----------------
+
+    @app.get('/api/diagnostics')
+    def api_diagnostics():
+        return Response(json.dumps(diagnostics.report(), ensure_ascii=False, indent=2),
+            media_type='application/json', headers={
+                'Content-Disposition': 'attachment; filename="nightseam-support-report.json"',
+                'Cache-Control': 'no-store'})
 
     @app.get("/api/state")
     def api_state():
