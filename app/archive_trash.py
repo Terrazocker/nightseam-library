@@ -189,11 +189,12 @@ def _windows_directory_api():
 
 
 @contextmanager
-def _parent(root, relative, identity, *, held=None):
+def _parent(root, relative, identity, *, held=None, max_new=None):
     """Pin lineage, optionally borrowing the caller's live Windows directories.
 
     Returned new directory keys stay provisional: the caller publishes them
     only if it retains this context for the same lifetime as its held keys.
+    max_new refuses a Windows suffix before opening beyond its caller's budget.
     POSIX callers still receive their anchored directory descriptor.
     """
     target = _contained(root, relative, identity)
@@ -203,10 +204,14 @@ def _parent(root, relative, identity, *, held=None):
     with ExitStack() as stack:
         if os.name == "nt":
             opened = set() if held is not None else None
+            count = 0
             for folder in [*reversed(target.parent.parents), target.parent]:
                 if held is not None and folder in held:
                     continue
+                if max_new is not None and count >= max_new:
+                    raise OSError('Request directory pin budget exhausted.')
                 stack.enter_context(_windows_directory_pin(folder))
+                count += 1
                 if opened is not None:
                     opened.add(folder)
             _contained(root, relative, identity)

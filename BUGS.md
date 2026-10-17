@@ -10,9 +10,15 @@ file verification. Failed suffixes retain no keys/handles, earlier pins remain
 valid and unrelated thread-local contexts cannot shorten ownership. Native
 resource/safety validation passed: the deeper workload fell from 86,016 to 12,306
 request-held handles (85.7% fewer), with all handles released. Fifty cycles,
-with 45 measured after five warmups, stayed within the retained-heap bound. Unique deep branches can
-still legitimately require many directory handles, so the file cap is not a
-total handle budget. See docs/import-directory-resources-20261017.md.
+with 45 measured after five warmups, stayed within the retained-heap bound.
+Unique deep branches can still legitimately require many directory handles.
+A combined 16,384-handle request budget now limits retained/provisional file and
+directory pins, including two slots for temporary hashing handles. Excess
+candidates retain fresh byte checks; smaller suffixes can still qualify.
+Preparation applies its row cap in SQL and duplicate searches use complete
+256-row pages, limiting Python row materialization without truncating the search.
+Native regression guards cover combined-budget refusal and real HTTP cleanup.
+See docs/import-directory-resources-20261017.md.
 
 ## Archive-health browser readiness — October 17, 2026 (fixed in harness)
 

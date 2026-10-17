@@ -206,6 +206,8 @@ def exercise(root, count, cycles=3, files_per_directory=32, depth=0,
                 live_heap, peak_heap = tracemalloc.get_traced_memory()
                 folders = len(index.folders)
                 directories = len(index.directories)
+                bench.require(pinned + directories + ingest._BATCH_IO_HANDLES <= ingest._BATCH_HANDLE_LIMIT,
+                    'Request pins exceeded the combined handle budget/headroom')
             finally:
                 index.close()
                 ingest._fingerprint_file = original
@@ -219,6 +221,7 @@ def exercise(root, count, cycles=3, files_per_directory=32, depth=0,
                 'Request cleanup retained pins or an archive lease')
             results.append(dict(cycle=cycle + 1, pinned_files=pinned, pinned_parents=folders,
                 unique_directory_pins=directories,
+                retained_pin_handles=pinned + directories,
                 archive_hashes=reads, before=before, held=held, after_observer=after_observer, after=after,
                 held_python_heap_growth_bytes=live_heap - heap_before,
                 after_python_heap_growth_bytes=tracemalloc.get_traced_memory()[0] - heap_before,
@@ -270,6 +273,7 @@ def run(args):
     (scratch / '.owner-pid').write_text(str(os.getpid()), encoding='utf-8')
     report = dict(status='running', os=platform.platform(), cpu=platform.processor(),
         logical_cpus=os.cpu_count(), pin_limit=ingest._BATCH_PIN_LIMIT,
+        handle_limit=ingest._BATCH_HANDLE_LIMIT, io_handle_headroom=ingest._BATCH_IO_HANDLES,
         source_commit=os.environ.get('GITHUB_SHA'),
         windows_writer_exclusion_tested=os.name == 'nt',
         workload='small FITS; admission/handle stress, not realistic exposure throughput', cases=[])

@@ -1,5 +1,36 @@
 # Independent catalog release record
 
+## Bounded import resources and real HTTP lifecycle — October 17, 2026
+
+Import preparation applies its 4,096-row cap in SQL. Duplicate lookup reads
+256-row keyset pages with a fixed upper ID and short database-lock scopes,
+preserving the complete candidate search and actual-byte positive checks.
+The request index caps combined file/directory handles at 16,384, reserving two
+slots for temporary hashing IO. It refuses an excessive suffix before opening
+beyond its allowance, releases provisional handles and retains earlier useful
+pins; overflow uses conservative reads and shallower candidates can still qualify.
+
+New regressions cover late-page/restored-mtime duplicates beyond admission,
+excluded/missing candidates, bounded preparation, cancellation, subsequent
+insertions, peak handle accounting and refusal before the first lease.
+A real-socket source check verifies complete-body disconnect draining, queued
+imports and graceful HTTP shutdown. The packaged gate also queues a harmless
+same-archive settings update, checks static UI responsiveness and closes the
+actual owned native window while a prior file still refuses writes. Both cases
+audit exact committed bytes, image/integrity/history units and staging cleanup;
+native shutdown must exit zero with no descendants/listener before job disposal.
+An isolated 50,000-row in-memory SQLite measurement lowered peak traced Python
+row materialization from 15,237,256 bytes to 1,238,344 for preparation. Complete
+paged traversal still visited all 50,000 rows and peaked at 181,541 bytes.
+This measures metadata allocations, not whole-process memory or HTTP throughput;
+raw local evidence is `logs/bounded-candidate-memory.json`. Final source and
+packaged outcomes are recorded on the draft PR and retained in CI artifacts.
+Local full validation passed **872 tests, eight skipped** in 227.03 seconds;
+the final HTTP test cleanup change passed its focused real-socket rerun.
+JavaScript, encoding/core guards and both workflow lint checks passed.
+Windows CI now requires ten pinning/process/budget/HTTP contracts to execute,
+alongside the fresh executable, browser/native UI and resource checks.
+
 ## Shared directory ancestors — October 17, 2026
 
 The [baseline resource run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39037931678)

@@ -47,6 +47,24 @@ pin, whole-byte hash and stable-version checks succeed. Failed admission closes
 the provisional suffix. File/child handles close before their owning ancestors;
 all keys clear before unrelated archive operations resume. An unrelated operation's
 thread-local pins never substitute for the batch's own directory lifetime.
+Preparation limits its ordered candidate SELECT to 4,096 rows in SQLite rather
+than materializing an entire matching library. Batched duplicate lookup reads
+256-row keyset pages with a fixed upper image ID, releases its cursor/DB lock
+before filesystem work and checks cancellation between candidates/pages. It
+still traverses every matching candidate, including legacy unknown sizes and
+entries beyond cache capacity; candidate pages are not a duplicate-search cap.
+The Windows index also budgets 16,384 combined handles: retained/provisional
+file and unique-directory pins leave two slots for the nested version pin and
+read stream used by hashing. A suffix is refused before opening beyond its
+allowance, and refused admission retains the existing byte-check fallback.
+Neither limit changes identity or publication rules. This bounds the request
+index and its hashing handles, not all process resources or SQLite working memory.
+`scripts/check_import_lifecycle.py --exe dist/NightSeam.exe` checks real packaged
+HTTP disconnect/queue behavior and native close while pins are still held. It
+uses restricted child runtime paths, a short external SQLite writer and only
+owned scratch. Completed-body disconnects drain accepted imports; they do not
+imply cancellation. The gate audits byte/history publication and requires exit
+zero, no descendants and a closed listener before forced job cleanup is allowed.
 app/archive_lock.py reserves the archive for these authorized
 workers until pins close; unrelated mutations wait. Windows pins require actual
 GENERIC_READ access (attribute-only handles do not enforce the sharing policy).

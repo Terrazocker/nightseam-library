@@ -131,7 +131,9 @@ jobs:
             'test_empty_batch_first_admission_leases_archive_and_releases_pins',
             'test_lazy_admission_with_open_writer_retains_no_pins',
             'test_request_directory_pins_share_common_ancestors_and_exclude_writers',
-            'test_request_directory_pins_outlive_external_pin_context'
+            'test_request_directory_pins_outlive_external_pin_context',
+            'test_combined_budget_refuses_deep_suffix_and_keeps_shallower_admission',
+            'test_real_http_disconnect_queue_and_shutdown_preserve_units'
           )
           foreach ($name in $required) {
             $cases = @($report.testsuites.testsuite.testcase | Where-Object { $_.name -eq $name })
@@ -203,6 +205,11 @@ jobs:
         run: |
           & .venv-browser/Scripts/python.exe scripts/check_native_window.py --restricted-runtime --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-native.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Packaged HTTP disconnect, contention and native close during import
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: |
+          & .venv-build/Scripts/python.exe scripts/check_import_lifecycle.py --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-import-lifecycle.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain validation evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -213,12 +220,14 @@ jobs:
             logs/windows-tests.xml
             logs/windows-import-benchmark.json
             logs/windows-import-profile.json
+            logs/windows-import-lifecycle.json
             logs/windows-dedup-stress.json
             logs/windows-import-comparison.json
             logs/windows-import-comparison-runs/
             logs/windows-acceptance-kit.zip
             logs/import-profile-*.log
             logs/benchmark-nightseam.log*
+            logs/lifecycle-nightseam.log*
             tests/browser/artifacts/
           if-no-files-found: warn
 

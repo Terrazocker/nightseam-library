@@ -1,5 +1,6 @@
 """Request-local directory sharing, provisional suffixes and native lifetimes."""
 from contextlib import contextmanager
+import hashlib
 import os
 from types import SimpleNamespace
 
@@ -151,4 +152,99 @@ def test_request_directory_pins_outlive_external_pin_context(tmp_path):
         if index is not None:
             index.close()
         external.close()
+        db.conn.close()
+
+
+def test_combined_budget_refuses_deep_suffix_and_keeps_shallower_admission(tmp_path, monkeypatch, directory_pins):
+    active, opened, _ = directory_pins
+    db = stress.Database(tmp_path / 'catalog.db')
+    archive = tmp_path / 'archive'
+    records = stress.seed(db, archive, 1, 1)
+    index = ingest.DedupBatch.prepare(db, archive, {records[0]['file_size']})
+    # Two free slots: a deep new branch cannot fit, a leaf in the held parent can.
+    initial_leaves = len(index.entries)
+    leaf_active = 0
+    limit = len(index.directories) + initial_leaves + 2 + ingest._BATCH_IO_HANDLES
+    monkeypatch.setattr(ingest, '_BATCH_HANDLE_LIMIT', limit)
+    original_pin = archive_trash._windows_directory_pin
+    @contextmanager
+    def bounded_pin(folder):
+        with original_pin(folder):
+            assert len(active) + initial_leaves + leaf_active + ingest._BATCH_IO_HANDLES <= limit
+            yield
+    monkeypatch.setattr(archive_trash, '_windows_directory_pin', bounded_pin)
+    original_version, original_hash = ingest.pinned_version, ingest._fingerprint_file
+    @contextmanager
+    def bounded_version(path):
+        nonlocal leaf_active
+        with original_version(path) as version:
+            leaf_active += 1
+            try:
+                assert len(active) + initial_leaves + leaf_active <= limit
+                yield version
+            finally:
+                leaf_active -= 1
+    def bounded_hash(path, *args):
+        # _fingerprint_file opens exactly one read stream while both version
+        # contexts remain live; include it when checking the actual IO peak.
+        assert len(active) + initial_leaves + leaf_active + 1 <= limit
+        return original_hash(path, *args)
+    monkeypatch.setattr(ingest, 'pinned_version', bounded_version)
+    monkeypatch.setattr(ingest, '_fingerprint_file', bounded_hash)
+    first_directories = set(index.directories)
+    data = stress.compressed_gate_image(False)
+    deep = archive / 'new/branch/deep/exposure.fits'
+    shallow = (archive / records[0]['file']).with_name('shallow.fits')
+    for path in (deep, shallow):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    try:
+        with db.archive_lock.for_batch(index):
+            deep_row = {'id': 100, 'file': deep.relative_to(archive).as_posix()}
+            result = index.fingerprint(db, deep_row, deep, 'absent')
+            assert result[0] == hashlib.sha256(data).hexdigest()
+            assert 100 not in index.entries and active == index.directories == first_directories
+            assert archive / 'new' in opened  # A partial suffix was opened, then released.
+            previous = deep.stat()
+            changed = bytearray(data)
+            changed[2888] ^= 1
+            deep.write_bytes(changed)
+            os.utime(deep, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+            digest = hashlib.sha256(changed).hexdigest()
+            assert index.fingerprint(db, deep_row, deep, digest)[0] == digest
+            assert 100 not in index.entries
+            shallow_row = {'id': 101, 'file': shallow.relative_to(archive).as_posix()}
+            assert index.fingerprint(db, shallow_row, shallow, 'absent')
+            assert 101 in index.entries
+            limit = len(index.entries) + len(index.directories) + ingest._BATCH_IO_HANDLES
+            monkeypatch.setattr(ingest, '_BATCH_HANDLE_LIMIT', limit)
+            # At the exact cap even a shared parent cannot retain another leaf.
+            repeated = dict(shallow_row, id=102)
+            assert index.fingerprint(db, repeated, shallow, 'absent')
+            assert 102 not in index.entries
+        (archive / 'new').rename(archive / 'released-new')
+        assert index.negative(shallow_row, 'different') and index.leased
+    finally:
+        index.close()
+        db.conn.close()
+    assert not active
+
+
+def test_exhausted_handle_budget_does_not_lease_or_publish_first_candidate(tmp_path, monkeypatch, directory_pins):
+    active, opened, _ = directory_pins
+    db = stress.Database(tmp_path / 'catalog.db')
+    archive = tmp_path / 'archive'
+    records = stress.seed(db, archive, 1, 1)
+    monkeypatch.setattr(ingest, '_BATCH_HANDLE_LIMIT', ingest._BATCH_IO_HANDLES)
+    index = ingest.DedupBatch.prepare(db, archive, {records[0]['file_size']})
+    try:
+        assert not index.entries and not index.directories and not index.leased
+        assert not active and not opened and stress.available(db)
+        path = archive / records[0]['file']
+        with db.archive_lock.for_batch(index):
+            result = index.fingerprint(db, records[0], path, records[0]['content_sha256'])
+        assert result[0] == records[0]['content_sha256']
+        assert not index.entries and not index.leased
+    finally:
+        index.close()
         db.conn.close()

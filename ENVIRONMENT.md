@@ -62,6 +62,17 @@ with cleanup and byte/safety checks passing. Source/build/browser/native gates
 remain separate. See docs/import-directory-resources-20261017.md for raw counts,
 memory samples, limits and baseline/candidate provenance.
 
+Import preparation now limits its rows in SQL; duplicate lookup reads complete
+256-row pages without holding the database lock during hashing. Request-owned
+file/directory pins and temporary hash handles have a combined 16,384-handle
+budget, with conservative overflow reads. The packaged Windows gate additionally
+runs `scripts/check_import_lifecycle.py`: a complete-body disconnect with queued
+archive work, followed by actual native close during an active pinned import.
+It uses an external SQLite writer briefly to establish overlap, audits committed
+bytes/history and requires graceful process/listener cleanup before disposing
+of its private job. A disconnect drains accepted ingest; it does not imply
+cooperative upload cancellation. Physical/offline acceptance remains separate.
+
 The Catalog validation workflow selects Linux and Windows correctness checks on
 pull requests and main pushes, with a stable terminal `validation` check. The
 Windows job runs the pinned source suite, requires native Windows pinning/process contracts

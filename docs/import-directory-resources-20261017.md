@@ -94,8 +94,13 @@ and `archive-resources-3c2fd73ebe2700ef1d7571ac23aa786597c0291b`, and locally un
 Repeat via Archive resource checks manual dispatch or relevant archive-source PRs.
 Individual commands are in `.github/workflows/archive-resource-checks.yml`.
 
-Arbitrarily deep distinct branches still need their own unique directory handles;
-the file cap is not a total native-handle budget. Larger populations, other
+Arbitrarily deep distinct branches still need their own unique directory handles.
+The subsequent resource bounds add a 16,384 combined request-handle limit,
+including two slots for transient hash IO; excess candidates use fresh reads.
+Preparation also limits rows in SQL and duplicate search uses complete 256-row
+keyset pages. The measured comparison above predates these bounds; it documents
+shared-ancestor savings rather than performance of the newer limits.
+Larger populations, other
 filesystems and longer lifetimes remain separate workloads. Clean/offline VM and
 physical DPI/monitor/Snap/native Save As acceptance still require suitable Windows
 hardware or a disposable VM using the prepared manual procedure.
