@@ -1,5 +1,15 @@
 # Current NightSeam Catalog findings
 
+## Native smoke bridge startup — October 17, 2026 (fixed in harness)
+
+PR run 39030212370 passed source/build/browser gates but its first native
+capability request failed with `Resulting promise was garbage collected`.
+The smoke harness no longer forces a reload during pywebview's background
+bridge injection. Capability probes retain their Promise on the window and poll
+plain settlement state, with one request and fatal rejection/timeout. Three
+JavaScript-engine regressions verify pending-call retention and failure paths.
+The application bridge and import implementation are unchanged.
+
 ## Frozen popularity snapshot unavailable - October 16, 2026 (blocked)
 
 The original ignored data/popularity_snapshot.json and its recorded metadata are

@@ -1,5 +1,17 @@
 # Independent catalog release record
 
+## Native smoke bridge startup — October 17, 2026
+
+A later PR run passed source/build/browser gates but failed its first native
+capability assertion with `Resulting promise was garbage collected`. The harness
+forced a reload during pywebview startup, allowing background bridge injections
+to overlap. It now observes the initial navigation and retains one capability
+Promise on the window while polling its settlement. Rejection, missing callbacks
+and timeout remain fatal; there are no RPC retries. Three JavaScript-engine
+regressions pass for retained pending calls, rejection and missing callbacks.
+This changes the smoke harness only; the successful import measurements below
+remain applicable.
+
 ## Lazy request-local dedup admission — October 17, 2026
 
 Newly committed archive files now enter the Windows request-local negative index

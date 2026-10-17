@@ -31,6 +31,40 @@ def wait_for(probe, description, timeout=30):
     raise RuntimeError(f'Timed out waiting for {description}')
 
 
+def host_capabilities(page, timeout=30):
+    """Make one rooted bridge call; poll plain state instead of a weak CDP Promise.
+
+    The window owns the Promise until settlement. Lost callbacks, rejection and
+    timeout remain failures, and no second RPC is issued to hide them.
+    """
+    key = '__nightseamNativeSmokeCapabilities'
+    try:
+        page.evaluate('''key => {
+            if (Object.hasOwn(window, key)) throw new Error('Native probe already exists');
+            const probe = window[key] = {state: 'pending'};
+            probe.promise = window.pywebview.api.host_capabilities();
+            probe.promise.then(value => {
+                probe.value = value;
+                probe.state = 'fulfilled';
+            }, error => {
+                probe.error = String(error?.message || error);
+                probe.state = 'rejected';
+            });
+            return true;
+        }''', key)
+        result = wait_for(lambda: page.evaluate('''key => {
+            const probe = window[key];
+            if (!probe) throw new Error('Native probe disappeared');
+            return probe.state === 'pending' ? null : {
+                state: probe.state, value: probe.value, error: probe.error};
+        }''', key), 'native WebView2 host capabilities', timeout=timeout)
+        if result['state'] != 'fulfilled':
+            raise RuntimeError(f"Native host capabilities rejected: {result.get('error')}")
+        return result['value']
+    finally:
+        page.evaluate('key => { delete window[key]; }', key)
+
+
 class NativeWindows:
     def __init__(self, tree):
         self.tree = tree
@@ -166,9 +200,10 @@ def run(executable, restricted_runtime=False):
                              if page.url.startswith(server.base)), None)
             page = wait_for(catalog_page, 'native WebView2 catalog navigation')
             discovery.detach()
-            page.reload(wait_until='domcontentloaded')
+            # Observe the user's initial navigation. A forced reload here can
+            # overlap pywebview's background bridge injections/callback tables.
             page.locator('body[data-window-chrome="native"]').wait_for(state='attached')
-            assert page.evaluate('window.pywebview.api.host_capabilities()') == {
+            assert host_capabilities(page) == {
                 'window_chrome': 'native', 'native_folder_picker': True}
             passed('real-webview2-bridge')
 
@@ -208,7 +243,7 @@ def run(executable, restricted_runtime=False):
                                            if kind == '#32770'), None), 'owned native folder picker')
             windows.post(dialog, 0x0010)  # WM_CLOSE cancels without selecting anything.
             wait_for(lambda: not windows.user.IsWindow(dialog), 'folder-picker cancellation')
-            assert page.evaluate('window.pywebview.api.host_capabilities()')['native_folder_picker'] is True
+            assert host_capabilities(page)['native_folder_picker'] is True
             assert page.locator('#arcDir').input_value() == before
             assert Path(server.api('api/state')['image_dir']).resolve() == archive.resolve()
             passed('real-folder-picker-cancel')
