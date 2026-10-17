@@ -16,8 +16,14 @@ publication, graceful SIGINT exit, listener/process/extraction/staging cleanup.
 Six archive-validation regressions passed. The first real Chromium gate passed
 23/24 and identified missing pywebview distribution metadata in the support
 report; the builder now copies that metadata while excluding the native module.
-Rebuilt browser and final source/Ubuntu 22.04 package outcomes are retained in
-the Linux draft PR and CI artifacts. No public release was published.
+The rebuilt local browser gate passed 24/24 and the local full suite passed
+900 tests, eight skipped. Ubuntu 22.04 passed the frozen runtime smoke, but its
+initial browser run found the compact toolbar wrapping with wider system fonts.
+That was reproduced locally with DejaVu Sans (84px instead of 45px at 900px).
+At intermediate widths, Copy/Support labels now reflow to accessible named icons,
+keeping primary labels, all actions and the stable 14px density. The browser
+regression exercises that font fallback. Final Ubuntu/Windows outcomes and
+artifacts are retained in the Linux draft PR. No public release was published.
 
 ## Large packaged import experiment and storage failures — October 17, 2026
 

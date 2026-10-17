@@ -662,6 +662,24 @@ def _active_object_workspace(c):
             c.expect(c.page.locator('#topbar').bounding_box()['height'] <= 52,
                      "the catalog toolbar must fit its controls without an oversized brand row")
         c.page.screenshot(path=str(c.artifacts / f'{c.target}-active-object-{width}.png'))
+    if c.target == 'catalog':
+        # DejaVu's wider metrics reproduce the Ubuntu 22.04 toolbar wrap even
+        # when the controller's default system font happens to be narrower.
+        c.page.set_viewport_size({'width': 900, 'height': 800})
+        fallback = c.page.add_style_tag(content='body.catalog-only { --font-ui: "DejaVu Sans", system-ui, sans-serif; }')
+        try:
+            _settle_catalog_layout(c.page)
+            c.expect(c.page.locator('#topbar').bounding_box()['height'] <= 52,
+                     'wider system fonts must retain the compact toolbar')
+            c.expect(c.page.locator('#btnTopIngest span').is_visible(), 'primary Import label remains visible')
+            for label in ('Copy library', 'Download support report'):
+                button = c.page.get_by_role('button', name=label, exact=True)
+                c.expect(button.is_visible() and button.is_enabled(), 'secondary actions remain named and reachable')
+            c.expect_eq(c.page.evaluate('getComputedStyle(document.documentElement).fontSize'), '14px',
+                        'font fallback must not change interface density')
+            c.page.screenshot(path=str(c.artifacts / 'catalog-toolbar-wide-system-font.png'))
+        finally:
+            fallback.evaluate('(node) => node.remove()')
     c.assert_clean()
 
 
