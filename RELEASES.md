@@ -1,5 +1,45 @@
 # Independent catalog release record
 
+## Windows import benchmark and restricted runtime — October 17, 2026
+
+The freshly packaged app imported 512 synthetic 4,150,080-byte FITS files through
+real HTTP in 24-file batches: **2,124,840,960 bytes in 87.017 seconds, 23.287 MiB/s**.
+The Windows Server 2022 runner had two logical CPUs. The first full request took
+11.032 seconds including resolver setup, later full requests ranged from 2.222 to
+4.673 seconds, and the last took 4.062 seconds. Generation/startup/audits/probes
+were excluded; caches were not flushed. Different hardware and the intervening
+cache safety correction prevent a controlled comparison to the old workstation.
+
+Every original source and initial archived copy matched its SHA-256. All 512 IDs
+and integrity records were present; duplicate probes retained class, session,
+capture coordinates and location, and an actual same-size/restored-mtime archive
+edit was detected on the next request. A fresh private instance passed Safe Rice
+ingest and actual native uncompress with byte-exact restoration. Both app instances
+and their scratch were cleaned up. Audit SQLite handles now close explicitly;
+a regression test proves closure without relying on garbage collection.
+
+The benchmark and native smoke used an empty child PATH with Python/Node
+environment overrides removed. Native WinForms/WebView2 passed **7/7** at 96 DPI;
+the browser gate passed **23/23**. The browser readiness helper now waits for
+requested window metrics and the body's dynamic viewport height to converge
+before geometry assertions, fixing a mixed-viewport sampling failure. Independent
+packaged checks execute after a successful build even if another check fails;
+any failed check still fails the overall job.
+
+Final Windows source validation: **814 passed, 2 skipped in 207.12 seconds**;
+all four required Windows contracts executed. Linux: **811 passed, 5 skipped in
+160.87 seconds**. JavaScript, encoding/core and dependency checks passed.
+Tested Windows commit: 9775ebae8206c4563ca4fa893faf88a8c9d6803c.
+https://github.com/Terrazocker/nightseam-catalog/actions/runs/39009833605
+Evidence: logs/windows-import-success.log and
+logs/windows-import-success/logs/windows-import-benchmark.json;
+logs/import-benchmark-linux.log/xml and logs/import-benchmark-js.log.
+
+The hosted machine retains installed OS/.NET/WebView2 components; network denial
+and clean-VM compatibility were not tested. Physical DPI changes, monitor
+transitions and Snap remain manual; docs/windows-manual-acceptance.md records the
+procedure. The original popularity snapshot provenance check remains blocked.
+
 ## Packaged native Windows smoke - October 16, 2026
 
 The Windows workflow now tests a real WinForms/WebView2 window in addition to

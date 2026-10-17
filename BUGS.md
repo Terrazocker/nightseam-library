@@ -57,8 +57,14 @@ this is not a disk/CPU saturation guarantee for every archive/filesystem. Rice
 archives usually have variable sizes. The earlier 48-file direct benchmark did
 not include the representative library size, HTTP multipart path or history cost.
 These measurements predate the October 16 conservative Windows cross-open rehash
-policy; current throughput has not been remeasured. Request-held batch pins still
-avoid repeated hashing within a request.
+policy. The October 17 post-correction hosted Windows run imported 512 files
+(2,124,840,960 bytes) in 87.02 seconds at 23.29 MiB/s on two logical CPUs. Its
+first full batch took 11.03 seconds including resolver setup; subsequent full
+batches ranged from 2.22 to 4.67 seconds and the last took 4.06 seconds. This is
+different hardware with warm caches, not a controlled comparison to the earlier
+workstation. That workstation and larger archives remain unmeasured after the
+correction. Request-held batch pins still avoid repeated hashing within a request.
+See docs/import-performance-20261015.md for the run, audits and retained evidence.
 
 ## Windows handle sharing - October 15, 2026 (fixed)
 

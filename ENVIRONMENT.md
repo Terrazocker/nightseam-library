@@ -29,16 +29,18 @@ Windows versions are valid only during their writer-excluding handle lifetime.
 Rapid changes can collide in file timestamps, so tool hashes and negative dedup
 candidates are rechecked after handles close. Request-scoped batch pins still
 allow reuse while continuously held. Separate one-file requests can require more
-hashing; current throughput has not been remeasured after this safety correction.
+hashing. A post-correction hosted Windows run imported 512 equal-size FITS files
+(2.12 GB) in 87.02 seconds, averaging 23.29 MiB/s on two logical CPUs. The original
+workstation has not been remeasured. See docs/import-performance-20261015.md.
 
 The Windows desktop validation workflow on codex/linux-fits-tools-validation
 runs the pinned source suite, requires four native Windows contracts to pass,
 builds a fresh executable, and checks it with headless Chrome and a real native
 WinForms/WebView2 window using private data.
 Browser dependencies are installed in a separate .venv-browser environment.
-Run 38953312051 validated commit 4f087058: 807 source tests passed (two skips),
+Run 39009833605 validated commit 9775ebae: 814 source tests passed (two skips),
 all four required Windows contracts executed, and the fresh packaged browser
-gate passed 23/23 and native window smoke passed 7/7. Linux passed 804 tests
+gate passed 23/23 and restricted-runtime native smoke passed 7/7. Linux passed 811 tests
 (five skips), covering the POSIX-only Windows skip. Only the frozen
 popularity snapshot check remains unverified without its original backup.
 
@@ -79,6 +81,32 @@ fallback; it cannot be combined with `--browser` or `--no-browser`.
 The embedded-page screenshot and measured bounds/DPI remain in the CI artifacts.
 Physical display scaling changes, multiple monitors and Snap gestures still
 require manual hardware acceptance; programmatic resize does not verify them.
+
+The workflow now also uses --restricted-runtime for the native smoke. Only the
+child app receives an empty PATH and has Python/Node environment overrides removed;
+the controller retains its own interpreter. A separate packaged HTTP benchmark is
+run with `.venv-build/Scripts/python.exe scripts/bench_windows_import.py --exe dist/NightSeam.exe`.
+It generates 512 unique 4,150,080-byte FITS files before timing and uploads them
+sequentially in 24-file requests. It then audits source/archive hashes, catalog
+publication, unchanged duplicate identity/class/session/location and detection of
+a same-size archive edit with restored mtime. A fresh private app instance checks
+Safe Rice ingest and actual native restoration with exact original bytes.
+The JSON report is logs/windows-import-benchmark.json; --count and --batch-size
+allow smaller diagnostic runs. Timing includes real HTTP multipart import and
+publication, excludes fixture generation and audits, and has no cold-cache control.
+Installed OS/.NET/WebView2 components remain on the hosted Windows machine, and
+network denial is not imposed. These checks do not establish clean-VM or offline
+compatibility. The historical workstation timings predate the Windows hash-cache
+safety correction and are not a controlled baseline for this hosted runner.
+The successful October 17 report verified all 512 original source/archive pairs,
+three duplicate probes, the restored-mtime edit, native Rice restoration and
+owned-process/scratch cleanup. The 22 requests took 87.017 seconds in total;
+the first full batch took 11.032 seconds including resolver setup and the last
+full batch took 4.062 seconds. Post-first full batches ranged from 2.222 to 4.673
+seconds. Retained evidence is in the run's Windows validation artifact and local
+logs/windows-import-success/logs/windows-import-benchmark.json.
+The separate hardware procedure is documented in
+[Windows manual acceptance](docs/windows-manual-acceptance.md).
 
 The restricted sandbox may deny Chromium named pipes, Playwright startup or
 cleanup of directories created under earlier ACL tokens. Use an elevated gate
