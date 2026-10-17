@@ -107,6 +107,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & .venv-build/Scripts/python.exe scripts/check_build_dependencies.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check Windows stress resource accounting
+        run: |
+          & .venv-build/Scripts/python.exe -m pytest tests/test_dedup_stress.py -q --tb=short 2>&1 | Tee-Object -FilePath logs/windows-resource-accounting.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Full suite including Windows contracts
         run: |
           & .venv-build/Scripts/python.exe -m pytest tests/ -q -rs --tb=short --junitxml=logs/windows-tests.xml 2>&1 | Tee-Object -FilePath logs/windows-tests.log

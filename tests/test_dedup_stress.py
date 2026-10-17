@@ -1,3 +1,4 @@
+import gc
 import io
 
 from astropy.io import fits
@@ -30,3 +31,17 @@ def test_stress_exercises_real_handles_boundary_fallback_and_cancellation(tmp_pa
 def test_stress_refuses_existing_directory(tmp_path):
     with pytest.raises(RuntimeError, match='new directory'):
         stress.exercise(tmp_path, 1)
+
+
+def test_worker_probe_releases_its_own_observer_handles(tmp_path):
+    db = stress.Database(tmp_path / 'observer.db')
+    try:
+        assert stress.worker_available(db)
+        gc.collect()
+        before = stress.resources()['handles']
+        for _ in range(5):
+            assert stress.worker_available(db)
+        gc.collect()
+        assert stress.resources()['handles'] <= before + 2
+    finally:
+        db.conn.close()

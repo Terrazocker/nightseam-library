@@ -63,6 +63,13 @@ def available(db):
     return acquired
 
 
+def worker_available(db):
+    # Shutdown joins threads, but an executor still owns Python locks. Those
+    # locks own Windows semaphore handles until this scope releases the pool.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(available, db).result(timeout=5)
+
+
 def seed(db, archive, count, files_per_directory):
     archive.mkdir()
     records = []
@@ -133,6 +140,10 @@ def exercise(root, count, cycles=3, files_per_directory=32):
         # Initialise native APIs and the discardable cache before the baseline.
         ingest._dedup_fingerprint(db, archive / records[0]['file'], '')
         resources()
+        # The observer itself uses threads and asyncio for lease/cancel probes.
+        # Initialise their process/thread runtime state before measuring pins.
+        bench.require(worker_available(db), 'Warm archive is locked')
+        asyncio.run(asyncio.to_thread(lambda: None))
         gc.collect()
         case_baseline = resources()
         tracemalloc.start()
@@ -165,9 +176,9 @@ def exercise(root, count, cycles=3, files_per_directory=32):
                         pass
                     else:
                         raise RuntimeError('The pinned archive still permits a writer')
-                with ThreadPoolExecutor(max_workers=1) as pool:
-                    bench.require(not pool.submit(available, db).result(timeout=5),
-                        'Pinned batch did not exclude an unrelated archive operation')
+                bench.require(not worker_available(db),
+                    'Pinned batch did not exclude an unrelated archive operation')
+                after_observer = resources()
                 with db.archive_lock.for_batch(index):
                     for _ in range(2):
                         bench.require(ingest._find_duplicate(db, archive, 'absent', size,
@@ -187,11 +198,13 @@ def exercise(root, count, cycles=3, files_per_directory=32):
                 ingest._fingerprint_file = original
             gc.collect()
             after = resources()
-            bench.require(after['handles'] <= before['handles'] + 2, 'A request leaked native handles')
+            bench.require(after['handles'] <= before['handles'] + 2,
+                f'A request leaked native handles: before={before}, held={held}, '
+                f'after_observer={after_observer}, after={after}')
             bench.require(available(db) and not index.entries and not index.folders,
                 'Request cleanup retained pins or an archive lease')
             results.append(dict(cycle=cycle + 1, pinned_files=pinned, pinned_parents=folders,
-                archive_hashes=reads, before=before, held=held, after=after,
+                archive_hashes=reads, before=before, held=held, after_observer=after_observer, after=after,
                 held_python_heap_growth_bytes=live_heap - heap_before,
                 after_python_heap_growth_bytes=tracemalloc.get_traced_memory()[0] - heap_before,
                 traced_peak_bytes=peak_heap, elapsed_seconds=time.perf_counter() - started))
@@ -203,7 +216,7 @@ def exercise(root, count, cycles=3, files_per_directory=32):
             'Cancelled preparation leaked native handles')
         final_resources = resources()
         bench.require(final_resources['handles'] <= case_baseline['handles'] + 2,
-            'Repeated requests accumulated native handles')
+            f'Repeated requests accumulated native handles: before={case_baseline}, after={final_resources}')
         for record in records:
             bench.require(bench.digest(archive / record['file']) == record['content_sha256'], 'Stress changed source bytes')
         bench.require(db.conn.execute('SELECT COUNT(*) FROM images').fetchone()[0] == count,

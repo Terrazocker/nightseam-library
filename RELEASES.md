@@ -13,7 +13,11 @@ uncontrolled-cache caveats without speed thresholds. Manual CI retains all logs
 and reports. A local acceptance kit packages the executable, synthetic fixtures,
 manifest/verifier and unrun checklist for genuine clean/offline/display checks.
 
-The 15 focused regressions pass locally. Workflow lint and JavaScript/encoding/core
+The initial 15 focused regressions and full Linux suite (856 passed, 6 skipped)
+passed locally. The first Windows run passed 857 other tests but exposed retained
+executor semaphore handles in the stress observer. The worker probe now releases
+its executor scope before sampling, with a separate observer-handle regression;
+aggregate/per-request cleanup limits remain intact. Workflow lint and JavaScript/encoding/core
 checks pass. Windows boundary and controlled timing results require the opt-in
 runner; preparing the kit does not execute physical or clean-VM acceptance.
 
