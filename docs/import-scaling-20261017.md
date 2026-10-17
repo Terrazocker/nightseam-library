@@ -71,9 +71,12 @@ regression guards that observer behavior. RSS did not return to its original
 value and was not attributed to a particular allocator. Native handles did not
 grow; three cycles do not establish the absence of long-term memory leaks.
 
-This bounds the measured 32-files-per-directory layout. A distinct directory
-for every file, deeper lineage, larger populations and unsupported filesystems
-need separate measurements; a file-pin cap is not a total handle cap.
+This bounds the measured 32-files-per-directory layout. Subsequent
+[directory-resource checks](import-directory-resources-20261017.md) measured
+one file per parent, eight extra shared ancestors and fifty request cycles,
+then reduced duplicate ancestor handles with request-owned sharing. Arbitrary
+distinct deep branches, larger populations and unsupported filesystems remain
+separate workloads; a file-pin cap is not a total handle cap.
 
 ## Same-machine packaged comparison
 

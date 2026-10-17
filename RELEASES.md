@@ -15,8 +15,21 @@ an unrelated operation's thread-local pin lifetime. Acquisition/close ordering,
 Windows sharing flags, lexical/root checks, fresh positives/fallbacks, file cap
 and transaction behavior stay intact. Default recovery/compression callers retain
 their existing directory contexts. Fifty-two focused pin/compression checks pass
-locally, with three platform skips; native fan-out results require the next run.
+locally, with three platform skips; the full local suite passed **865 tests,
+8 skipped**. Native sharing results are now recorded below.
 The Windows gate now requires the two new real directory-lifetime contracts.
+
+The [shared-ancestor resource run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39038863156)
+passed all 35 focused native regressions, six full-cap cycles and fifty smaller
+deep-layout cycles. Request-held handles fell **53,248 → 12,298** for fan-out and
+**86,016 → 12,306 (85.7% fewer)** with eight extra shared ancestors. Unique directory
+pins were 8,202/8,210; every candidate sample returned exactly to its 201-handle
+baseline, including cancellation. Archive hash counts stayed 4,099/257 per cycle.
+The warmed 45-sample retained-heap growth was 82,776 bytes including report records,
+below two MiB. Held heap ranges also fell; RSS and timings are observations on
+different AMD runners, not controlled comparisons. The mechanism keeps all byte,
+writer, root/alias, fallback and rollback contracts. See
+[the directory resource report](docs/import-directory-resources-20261017.md).
 
 ## Directory fan-out and longer resource checks — October 17, 2026
 

@@ -1,6 +1,6 @@
 # Current NightSeam Catalog findings
 
-## Repeated directory ancestor pins — October 17, 2026 (shared ancestry implemented)
+## Repeated directory ancestor pins — October 17, 2026 (mitigated)
 
 The baseline index shared exact parents but reopened their complete ancestry.
 One-file-per-parent stress measured 53,248 additional handles, rising to 86,016
@@ -8,8 +8,11 @@ with eight extra ancestors, despite the 4,096-file cap. The new request-owned
 directory cache stages each unseen suffix and publishes it only after successful
 file verification. Failed suffixes retain no keys/handles, earlier pins remain
 valid and unrelated thread-local contexts cannot shorten ownership. Native
-resource/safety validation follows; unique deep branches can still legitimately
-require many directory handles, so the file cap is not a total handle budget.
+resource/safety validation passed: the deeper workload fell from 86,016 to 12,306
+request-held handles (85.7% fewer), with all handles released. Fifty cycles,
+with 45 measured after five warmups, stayed within the retained-heap bound. Unique deep branches can
+still legitimately require many directory handles, so the file cap is not a
+total handle budget. See docs/import-directory-resources-20261017.md.
 
 ## Archive-health browser readiness — October 17, 2026 (fixed in harness)
 

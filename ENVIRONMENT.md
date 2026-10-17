@@ -54,6 +54,14 @@ returning to baseline or lower. Metrics and limits are in
 docs/import-scaling-20261017.md; the prepared acceptance kit is retained with
 that run's Windows artifact.
 
+The separate Archive resource checks workflow exercises one file per directory,
+eight additional shared ancestors and fifty request cycles (45 measured after
+five warmups). Request-owned
+ancestor sharing reduced deep-layout held handles from 86,016 to 12,306 (85.7%),
+with cleanup and byte/safety checks passing. Source/build/browser/native gates
+remain separate. See docs/import-directory-resources-20261017.md for raw counts,
+memory samples, limits and baseline/candidate provenance.
+
 The Catalog validation workflow selects Linux and Windows correctness checks on
 pull requests and main pushes, with a stable terminal `validation` check. The
 Windows job runs the pinned source suite, requires native Windows pinning/process contracts
