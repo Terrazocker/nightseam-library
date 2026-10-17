@@ -1,5 +1,24 @@
 # Independent catalog release record
 
+## Linux x86_64 browser bundle — October 17, 2026
+
+Added a separate Linux build with an exact 39-package dependency closure, an
+isolated source/version bake, bundled native FITS tools, per-ELF GLIBC inspection,
+portable tarball/checksum and preserved existing outputs. Only public runtime
+assets are packaged; writable profiles remain beside the extracted executable.
+Linux uses a system browser; GTK/Qt native backends are not bundled. Build and
+runtime instructions are in LINUX.md.
+
+The first local executable built on glibc 2.41 with a highest numeric bundled
+GLIBC requirement of 2.35. Restricted-PATH frozen checks passed version/assets,
+real safe-Rice ingest and exact restoration, duplicate metadata, image/history
+publication, graceful SIGINT exit, listener/process/extraction/staging cleanup.
+Six archive-validation regressions passed. The first real Chromium gate passed
+23/24 and identified missing pywebview distribution metadata in the support
+report; the builder now copies that metadata while excluding the native module.
+Rebuilt browser and final source/Ubuntu 22.04 package outcomes are retained in
+the Linux draft PR and CI artifacts. No public release was published.
+
 ## Large packaged import experiment and storage failures — October 17, 2026
 
 Added a separate populated-library ABBA controller with deterministic 8–32 MiB
