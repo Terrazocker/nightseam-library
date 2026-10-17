@@ -1,6 +1,7 @@
 # NightSeam Catalog
 
-Version **0.1.0**. An independent Windows application for importing exposures,
+Version **0.1.0**. An independent catalog application with a native Windows
+window and a Linux browser build, for importing exposures,
 organizing capture sessions, attaching calibration frames and browsing an archive
 sky map. This project was extracted from the current `codex/direction-b-ui`
 working tree of NightSeam on October 1, 2026.
@@ -17,6 +18,10 @@ The default source and packaged launches open the catalog. The executable is
 `dist/NightSeam.exe`. The retired planning shell was removed on October 10,
 2026; the catalog owns the whole application. The application requires no
 website checkout, server or network access.
+
+For the portable Linux x86_64 browser bundle, build commands and compatibility
+details, see [LINUX.md](LINUX.md). The bundle includes Python and its JavaScript
+engine; a system browser is required.
 
 ## Library and import
 

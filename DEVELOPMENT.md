@@ -503,3 +503,14 @@ stores before launch, measures real 8–32 MiB HTTP uploads and native WebView2
 roundtrips, and uses the owned Windows job for CPU/peak committed memory (not
 RSS). See docs/large-populated-benchmark.md for byte audits, cancellation scope,
 workflow selection and cache/timing limitations.
+
+## Linux bundle
+
+Linux x86_64 has a separate browser-mode build in scripts/build_linux.py and
+requirements-build-linux-lock.txt. The builder bakes an owned source copy,
+inspects the bootloader/bundled ELF GLIBC symbols and never overwrites earlier
+outputs or includes profile stores. scripts/check_linux_package.py extracts and
+checks the actual tarball with private runtime paths and an empty developer PATH.
+An Ubuntu 22.04 frozen/browser job is required by normal Catalog validation;
+Windows native-window checks remain separate. See LINUX.md for commands, runtime
+paths, glibc compatibility and the system-browser requirement.
