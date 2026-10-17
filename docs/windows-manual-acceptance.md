@@ -7,8 +7,10 @@ browser viewports do not establish physical DPI, monitor-transition or Snap beha
 
 ## Clean Windows and disconnected operation
 
-Use a disposable Windows VM/test account with no Python, Node or development
-environment installed. Record the Windows build and installed .NET/WebView2
+Use a disposable VM with a clean Windows base installation and no Python, Node
+or development environment installed. A new account on a developer machine does
+not remove machine-wide dependencies; it provides profile isolation only.
+Record the Windows build and installed .NET/WebView2
 runtime versions. Obtain a freshly built NightSeam.exe and record its SHA-256;
 this is a local acceptance test, not a public release.
 
@@ -16,12 +18,14 @@ Copy the executable and synthetic FITS fixtures with their known original hashes
 into a private test directory. Keep an independent copy of the input fixtures.
 Fixtures can be generated on the development machine with
 scripts.bench_windows_import.exposure(0); Python is not needed on the test VM.
-Run NightSeam.exe with --require-native-window and a free --port. Native startup
+After installing any declared prerequisites, disconnect external networking before
+the first app launch on its fresh profile; retain loopback. Run NightSeam.exe
+with --require-native-window and a free --port. Native startup
 must succeed; the strict flag prevents a browser fallback from counting as success.
 Configure and verify a private empty archive before any upload.
 
 1. Open Library, Import and Sky Map; confirm no missing-runtime errors.
-2. Disconnect the VM/machine's external network while retaining loopback.
+2. Confirm the private archive is selected with external networking still disconnected.
 3. Import synthetic FITS with compression enabled and Safe selected. Confirm
    completion, then uncompress the complete session through the UI.
 4. Hash the restored archived FITS and compare with the fixture's original hash.
