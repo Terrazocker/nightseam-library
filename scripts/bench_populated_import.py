@@ -164,7 +164,7 @@ def measure(function, client, page, resources):
             client.get('/catalog.html').raise_for_status()
             probes.append(time.perf_counter() - tick)
             tick = time.perf_counter()
-            bench.require(page.evaluate('Boolean(document.querySelector("#view"))'), 'Native catalog DOM disappeared')
+            bench.require(page.evaluate('Boolean(document.querySelector("#catalogTabs"))'), 'Native catalog DOM disappeared')
             javascript.append(time.perf_counter() - tick)
             time.sleep(.05)
         result, elapsed = future.result()
@@ -311,7 +311,7 @@ def sample(exe, args, position, variant, output):
             discovery.detach()
             page.locator('body[data-window-chrome="native"]').wait_for(state='attached')
             bench.require(host_capabilities(page)['window_chrome'] == 'native', 'Native host bridge unavailable')
-            page.locator('#view').wait_for(state='attached')
+            page.locator('#catalogTabs').wait_for(state='attached')
             with httpx.Client(base_url=server.base, timeout=300, trust_env=False) as client:
                 report['workload'] = {}
                 exercise(server, client, page, JobResources(server.tree), args.count, args.batch_size, report['workload'])
