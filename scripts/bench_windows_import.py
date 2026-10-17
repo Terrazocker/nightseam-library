@@ -8,7 +8,7 @@ or speedup against the earlier, different machine is implied.
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from functools import lru_cache
 import hashlib
 import io
@@ -90,7 +90,7 @@ def upload(client, sources, **fields):
 
 
 def snapshot(database):
-    with sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True) as connection:
+    with closing(sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True)) as connection:
         rows = connection.execute('SELECT id,file,object_id,object_name,imagetyp,'
             'date_obs,session_key,storage_compressed,content_sha256,site_lat,site_lon,'
             'session_date_obs,session_kind,session_start,session_end FROM images ORDER BY id').fetchall()

@@ -2,6 +2,7 @@
 from datetime import datetime
 import hashlib
 import io
+import sqlite3
 
 from astropy.io import fits
 from fastapi.testclient import TestClient
@@ -23,6 +24,20 @@ def test_large_benchmark_fixtures_are_valid_equal_size_and_distinct():
             assert datetime.fromisoformat(hdus[0].header['DATE-OBS']).year == 2026
         hashes.add(hashlib.sha256(raw).hexdigest())
     assert len(hashes) == 3
+
+
+def test_benchmark_snapshot_closes_read_handle_without_waiting_for_gc(tmp_path, monkeypatch):
+    library(tmp_path, count=0)
+    connect, closed = sqlite3.connect, []
+    class TrackedConnection(sqlite3.Connection):
+        def close(self):
+            closed.append(self)
+            super().close()
+    def tracked(*args, **kwargs):
+        return connect(*args, factory=TrackedConnection, **kwargs)
+    monkeypatch.setattr(bench.sqlite3, 'connect', tracked)
+    bench.snapshot(tmp_path / 'catalog.db')
+    assert len(closed) == 1
 
 
 def test_benchmark_audits_and_restricted_runtime_rice_workload(tmp_path, monkeypatch):
