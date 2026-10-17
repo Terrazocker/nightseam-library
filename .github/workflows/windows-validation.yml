@@ -75,7 +75,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Packaged native WinForms and WebView2 smoke
         run: |
-          & .venv-browser/Scripts/python.exe scripts/check_native_window.py --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-native.log
+          & .venv-browser/Scripts/python.exe scripts/check_native_window.py --restricted-runtime --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-native.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Packaged 512-file HTTP import benchmark and restricted-runtime Rice
+        run: |
+          & .venv-build/Scripts/python.exe scripts/bench_windows_import.py --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-import-benchmark.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain validation evidence
         if: always()
@@ -85,5 +89,7 @@ jobs:
           path: |
             logs/windows-*.log
             logs/windows-tests.xml
+            logs/windows-import-benchmark.json
+            logs/benchmark-nightseam.log*
             tests/browser/artifacts/
           if-no-files-found: warn

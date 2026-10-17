@@ -129,11 +129,12 @@ class NativeWindows:
             self.user.SetThreadDpiAwarenessContext(self.previous_dpi)
 
 
-def run(executable):
+def run(executable, restricted_runtime=False):
     from playwright.sync_api import sync_playwright
     artifacts = harness.ARTIFACTS
     artifacts.mkdir(parents=True, exist_ok=True)
-    server = harness.DesktopServer(executable, seed=False, native=True, debug_port=harness.free_port())
+    server = harness.DesktopServer(executable, seed=False, native=True,
+        debug_port=harness.free_port(), restricted_runtime=restricted_runtime)
     windows = None
     checks = []
     observed_targets = []
@@ -228,6 +229,7 @@ def run(executable):
         passed('private-placement-persistence')
         (artifacts / 'native-window.json').write_text(json.dumps({
             'checks': checks, 'window_dpi': dpi, 'normal_bounds': target,
+            'restricted_runtime': restricted_runtime,
             'physical_dpi_changes_tested': False, 'snap_gestures_tested': False}, indent=2) + '\n', encoding='utf-8')
         print(f'check_native_window: {len(checks)}/7 passed')
         return 0
@@ -250,12 +252,14 @@ def run(executable):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--exe', type=Path, default=harness.DEFAULT_EXE)
+    parser.add_argument('--restricted-runtime', action='store_true',
+                        help='Remove developer PATH and Python/Node environment settings from the app')
     args = parser.parse_args()
     if os.name != 'nt':
         print('check_native_window: Windows is required; no native checks executed')
         return 2
     try:
-        return run(args.exe)
+        return run(args.exe, args.restricted_runtime)
     except Exception:
         import traceback
         traceback.print_exc()

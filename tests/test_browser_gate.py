@@ -99,12 +99,16 @@ def test_desktop_start_failure_removes_its_private_scratch(tmp_path, monkeypatch
 
 @pytest.mark.parametrize("accept_archive", [False, True])
 @pytest.mark.parametrize("native", [False, True])
-def test_browser_start_requires_private_archive_even_without_seed(tmp_path, monkeypatch, accept_archive, native):
+@pytest.mark.parametrize("restricted_runtime", [False, True])
+def test_browser_start_requires_private_archive_even_without_seed(tmp_path, monkeypatch, accept_archive, native, restricted_runtime):
     exe = tmp_path / "candidate.exe"
     exe.write_bytes(b"private fake executable")
     scratch = tmp_path / "browser"
     monkeypatch.setattr(harness, "SCRATCH", scratch)
-    server = harness.DesktopServer(exe, seed=False, native=native, debug_port=43210)
+    monkeypatch.setenv('PYTHONPATH', str(tmp_path / 'developer-packages'))
+    monkeypatch.setenv('NODE_PATH', str(tmp_path / 'developer-node'))
+    server = harness.DesktopServer(exe, seed=False, native=native, debug_port=43210,
+                                   restricted_runtime=restricted_runtime)
     calls, trees = [], []
 
     class FakeTree:
@@ -113,6 +117,12 @@ def test_browser_start_requires_private_archive_even_without_seed(tmp_path, monk
             assert ('--require-native-window' in args[0]) is native
             assert Path(kwargs['env']['LOCALAPPDATA']).is_relative_to(server.tmp)
             assert Path(kwargs['env']['WEBVIEW2_USER_DATA_FOLDER']).is_relative_to(server.tmp)
+            if restricted_runtime:
+                assert kwargs['env']['PATH'] == str(server.tmp / 'empty-path')
+                assert not list(Path(kwargs['env']['PATH']).iterdir())
+                assert 'PYTHONPATH' not in kwargs['env'] and 'NODE_PATH' not in kwargs['env']
+            else:
+                assert kwargs['env']['PYTHONPATH'] == str(tmp_path / 'developer-packages')
             if native:
                 assert '--remote-debugging-port=43210' in kwargs['env']['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS']
             self.proc = self
