@@ -112,14 +112,16 @@ jobs:
         run: |
           & ./build.ps1 -AllowDirty 2>&1 | Tee-Object -FilePath logs/windows-build.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Require all four Windows contracts to execute
+      - name: Require Windows pinning and process contracts to execute
         run: |
           [xml]$report = Get-Content -Raw logs/windows-tests.xml
           $required = @(
             'test_windows_owner_exit_closes_job_and_stops_descendants',
             'test_pinned_directory_cache_rejects_replaced_leaf_link',
             'test_http_batch_checks_earlier_files_once_and_detects_next_request_edits',
-            'test_batch_pins_refuse_writes_and_renames_until_closed'
+            'test_batch_pins_refuse_writes_and_renames_until_closed',
+            'test_empty_batch_first_admission_leases_archive_and_releases_pins',
+            'test_lazy_admission_with_open_writer_retains_no_pins'
           )
           foreach ($name in $required) {
             $cases = @($report.testsuites.testsuite.testcase | Where-Object { $_.name -eq $name })
