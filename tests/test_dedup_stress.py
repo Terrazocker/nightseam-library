@@ -1,5 +1,7 @@
 import gc
 import io
+import os
+import tracemalloc
 
 from astropy.io import fits
 import pytest
@@ -45,3 +47,19 @@ def test_worker_probe_releases_its_own_observer_handles(tmp_path):
         assert stress.resources()['handles'] <= before + 2
     finally:
         db.conn.close()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows ctypes resource sampler')
+def test_repeated_windows_resource_samples_do_not_accumulate_python_types():
+    stress.resources()
+    gc.collect()
+    tracemalloc.start()
+    try:
+        before = tracemalloc.get_traced_memory()[0]
+        for _ in range(200):
+            sample = stress.resources()
+            assert sample['handles'] > 0 and sample['rss_bytes'] > 0
+        gc.collect()
+        assert tracemalloc.get_traced_memory()[0] - before < 128 * 1024
+    finally:
+        tracemalloc.stop()

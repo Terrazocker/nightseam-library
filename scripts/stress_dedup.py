@@ -10,6 +10,7 @@ import argparse
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import ctypes
+from functools import lru_cache
 import gc
 import hashlib
 import json
@@ -32,23 +33,32 @@ from app import ingest
 from app.database import Database
 
 
+@lru_cache(maxsize=1)
+def _windows_resources_api():
+    # POINTER caches its argument type; redefining Memory on every observation
+    # would itself retain Python heap in a long-running resource sampler.
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.GetProcessHandleCount.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    class Memory(ctypes.Structure):
+        _fields_ = [('cb', wintypes.DWORD), ('faults', wintypes.DWORD)] + [
+            (name, ctypes.c_size_t) for name in ('peak_rss', 'rss', 'peak_pool',
+                'pool', 'peak_nonpaged', 'nonpaged', 'pagefile', 'peak_pagefile')]
+    api = ctypes.WinDLL('psapi', use_last_error=True)
+    api.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Memory), wintypes.DWORD]
+    return kernel, api, Memory
+
+
 def resources():
     if os.name == 'nt':
         from ctypes import wintypes
-        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-        kernel.GetCurrentProcess.restype = wintypes.HANDLE
-        kernel.GetProcessHandleCount.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel, api, Memory = _windows_resources_api()
         handle, count = kernel.GetCurrentProcess(), wintypes.DWORD()
         if not kernel.GetProcessHandleCount(handle, ctypes.byref(count)):
             raise ctypes.WinError(ctypes.get_last_error())
-        class Memory(ctypes.Structure):
-            _fields_ = [('cb', wintypes.DWORD), ('faults', wintypes.DWORD)] + [
-                (name, ctypes.c_size_t) for name in ('peak_rss', 'rss', 'peak_pool',
-                    'pool', 'peak_nonpaged', 'nonpaged', 'pagefile', 'peak_pagefile')]
         memory = Memory()
         memory.cb = ctypes.sizeof(memory)
-        api = ctypes.WinDLL('psapi', use_last_error=True)
-        api.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Memory), wintypes.DWORD]
         if not api.GetProcessMemoryInfo(handle, ctypes.byref(memory), memory.cb):
             raise ctypes.WinError(ctypes.get_last_error())
         return {'handles': count.value, 'rss_bytes': memory.rss}

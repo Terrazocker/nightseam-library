@@ -382,6 +382,9 @@ hash manifest, verification script and unrun result template. Follow
 `docs/windows-manual-acceptance.md` on a disposable clean/disconnected VM and
 physical displays; preparing the kit does not establish acceptance results.
 
+Measured boundary resources, same-runner comparison samples and artifact hashes
+are recorded in `docs/import-scaling-20261017.md`.
+
 The toolbar's **Support report** downloads a local JSON attachment. It contains
 application/Python/OS/selected package versions, bundled FITS utility integrity,
 browser/native capability flags and numeric Chromium version. At most 25 warning

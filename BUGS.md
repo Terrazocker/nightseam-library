@@ -1,5 +1,14 @@
 # Current NightSeam Catalog findings
 
+## Archive-health browser readiness — October 17, 2026 (fixed in harness)
+
+PR run 39033952706 passed source/build/native gates but its health-deletion check
+counted zero session buttons immediately after opening the asynchronous report.
+The captured screenshot already contained both expected groups. The test now
+waits for the second session button before retaining the exact count-of-two
+assertion and the existing deletion/confirmation checks. Missing buttons time out
+and extra groups still fail. Application behavior and requests are unchanged.
+
 ## Native smoke bridge startup — October 17, 2026 (fixed in harness)
 
 PR run 39030212370 passed source/build/browser gates but its first native

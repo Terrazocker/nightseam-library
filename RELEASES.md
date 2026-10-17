@@ -18,8 +18,34 @@ passed locally. The first Windows run passed 857 other tests but exposed retaine
 executor semaphore handles in the stress observer. The worker probe now releases
 its executor scope before sampling, with a separate observer-handle regression;
 aggregate/per-request cleanup limits remain intact. Workflow lint and JavaScript/encoding/core
-checks pass. Windows boundary and controlled timing results require the opt-in
-runner; preparing the kit does not execute physical or clean-VM acceptance.
+checks pass. Preparing the kit does not execute physical or clean-VM acceptance.
+
+The corrected revision 9e38f14 passed Linux **857 tests, 6 skipped** and Windows
+**861 tests, 2 skipped**, including the five Windows resource-accounting checks.
+A parallel PR browser run passed 23/24 and native 7/7, exposing an immediate
+button count before the archive-health report's asynchronous rendering finished.
+The check now waits for the second session button before retaining the exact
+count/deletion assertions; no click or request is retried.
+
+The complete [measurement run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39033962051)
+passed all nine Windows boundary cycles and three cancellation checks. Handles
+returned to the initial baseline or lower; steady cycles retained 0.024–0.030 MiB
+of Python heap after cleanup. Held heap growth was 15.836–18.599 MiB, with
+82.559–97.863 MiB RSS while pins were held. Small retained-heap drift includes
+observer type-cache overhead; the sampler now caches its ctypes definitions,
+with a separate 200-sample Windows heap regression. All 12,288 archived files
+retained their hashes.
+The same-runner packaged ABBA comparison measured baseline imports of
+98.020/89.795 seconds and candidate imports of 55.548/58.812 seconds: median
+93.908 → 57.180 seconds, **39.1% lower elapsed time** for this small sample.
+All four full byte/duplicate/edit/Rice/cleanup audits passed. Both builds shared
+the pinned environment and two-CPU Intel runner; scheduling/caches remained
+uncontrolled, so the result is not a general timing guarantee. The source
+profile reconfirmed 6,034 hashes/25,041,582,720 archive bytes and 512 transactions.
+Browser **24/24** and native **7/7** passed. The generated acceptance kit's hashes
+were verified, with physical/clean-VM checks explicitly unrun. See
+[the scaling report](docs/import-scaling-20261017.md) for metrics, commands,
+limits, executable hashes and retained evidence.
 
 ## Native smoke bridge startup — October 17, 2026
 

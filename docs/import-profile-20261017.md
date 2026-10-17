@@ -50,6 +50,16 @@ Executable SHA-256: 6c2a7133908c0f2c157f20f38b293ea5857f45a68d5854fdb37c53042619
 Artifact: `windows-validation-2b9549666c5fdba0fb8624957d251154ea67d416`.
 Local JSON/logs: `logs/lazy-dedup-measurements/logs/`.
 
+## Same-machine follow-up
+
+A later same-runner packaged ABBA comparison measured baseline 98.020/89.795
+seconds and candidate 55.548/58.812 seconds: median 93.908 → 57.180 seconds
+(39.1% lower elapsed time in this small warm-cache sample). Its source profile
+reconfirmed the same 6,034 archive hashes and 25,041,582,720 bytes. See
+[the boundary/comparison report](import-scaling-20261017.md) for all samples,
+machine/build hashes, resource limits and passing audits. The historical
+different-machine results above remain recorded without a timing inference.
+
 ## Original profile before lazy admission
 
 Archive rehashing dominated this measured plain-FITS import. The isolated source

@@ -46,6 +46,14 @@ ABBA packaged comparisons on the same runner. See DEVELOPMENT.md for commands,
 resource-measurement limits and the private acceptance ZIP. Physical displays
 and a genuinely clean/disconnected Windows VM still need separate acceptance.
 
+The same-runner Windows ABBA comparison passed: baseline 98.020/89.795 seconds,
+candidate 55.548/58.812 seconds, median 93.908 → 57.180 seconds (39.1% lower).
+These are two warm-cache observations per build, not a general timing guarantee.
+All nine 4,095/4,096/4,097-file pin cycles and cancellations passed, with handles
+returning to baseline or lower. Metrics and limits are in
+docs/import-scaling-20261017.md; the prepared acceptance kit is retained with
+that run's Windows artifact.
+
 The Catalog validation workflow selects Linux and Windows correctness checks on
 pull requests and main pushes, with a stable terminal `validation` check. The
 Windows job runs the pinned source suite, requires native Windows pinning/process contracts
