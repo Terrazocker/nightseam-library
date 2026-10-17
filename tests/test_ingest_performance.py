@@ -13,7 +13,7 @@ from test_compression import exposure, library, no_stages
 from test_ingest_compression import upload
 
 
-def test_unchanged_negative_candidates_are_hashed_once_and_edits_invalidate(tmp_path, monkeypatch):
+def test_negative_candidates_use_safe_versions_and_edits_invalidate(tmp_path, monkeypatch):
     db, archive, _ = library(tmp_path, count=0)
     original = ingest._fingerprint_file
     reads = []
@@ -23,7 +23,9 @@ def test_unchanged_negative_candidates_are_hashed_once_and_edits_invalidate(tmp_
     monkeypatch.setattr(ingest, '_fingerprint_file', measured)
     results = [upload(db, archive, exposure(index), name=f'{index}.fit') for index in range(12)]
     assert all(result['ok'] for result in results)
-    assert len(reads) == 11  # one actual read per earlier file, rather than 66
+    # Windows rehashes between unpinned requests; timestamps alone can collide.
+    # The HTTP batch index below still hashes each continuously pinned file once.
+    assert len(reads) == (66 if os.name == 'nt' else 11)
     path = archive / results[0]['stored']
     info = path.stat()
     actual = exposure(40)
@@ -43,10 +45,10 @@ def test_compression_prepares_concurrently_without_archive_lock_and_publishes_in
     barrier = threading.Barrier(2, timeout=10)
     calls, guard = [], threading.Lock()
     def parallel(executable, *args):
-        if executable.name == 'fpack.exe':
+        if executable.stem == 'fpack':
             assert not db.archive_lock._is_owned()
             with guard:
-                calls.append(executable.name)
+                calls.append(executable.stem)
                 number = len(calls)
             if number <= 2:
                 barrier.wait()
@@ -97,7 +99,7 @@ def test_unavailable_file_versions_fall_back_to_current_byte_reads(tmp_path, mon
     assert len(reads) == 6
 
 
-def test_bounded_negative_cache_remains_useful_above_capacity(tmp_path, monkeypatch):
+def test_bounded_negative_cache_and_conservative_reads_above_capacity(tmp_path, monkeypatch):
     db, archive, _ = library(tmp_path, count=0)
     monkeypatch.setattr(ingest, '_FINGERPRINT_CACHE_LIMIT', 3)
     original = ingest._fingerprint_file
@@ -109,7 +111,7 @@ def test_bounded_negative_cache_remains_useful_above_capacity(tmp_path, monkeypa
     for index in range(8):
         assert upload(db, archive, exposure(index))['ok']
     assert len(db._ingest_fingerprints) == 3
-    assert len(reads) == 13  # a thrashing 3-entry LRU would read all 28 candidates
+    assert len(reads) == (28 if os.name == 'nt' else 13)
 
 
 def test_known_compressed_duplicate_does_not_need_encoder(tmp_path, monkeypatch):
@@ -196,20 +198,22 @@ def test_parallel_compression_database_failure_stops_later_publication(tmp_path)
     no_stages(db, archive)
 
 
-def test_native_tool_cache_revalidates_changed_executable_with_restored_mtime(tmp_path, monkeypatch):
+@pytest.mark.parametrize('bundle,suffix', [('windows-x64', '.exe'), ('linux-x64', '')])
+def test_native_tool_cache_revalidates_changed_executable_with_restored_mtime(tmp_path, monkeypatch, bundle, suffix):
     root = tmp_path / 'tools'
-    destination = root / 'vendor/fits-tools/windows-x64'
+    destination = root / 'vendor/fits-tools' / bundle
     destination.mkdir(parents=True)
     import json
     provenance = {'binaries': {}}
-    for name in ('fpack.exe', 'funpack.exe'):
+    for name in (f'fpack{suffix}', f'funpack{suffix}'):
         data = name.encode('ascii')
         (destination / name).write_bytes(data)
         provenance['binaries'][name] = dict(sha256=hashlib.sha256(data).hexdigest())
     (destination / 'provenance.json').write_text(json.dumps(provenance), encoding='utf-8')
     monkeypatch.setattr(compression, 'resource_dir', lambda: root)
-    assert compression.tools()['fpack'] == destination / 'fpack.exe'
-    executable = destination / 'fpack.exe'
+    monkeypatch.setattr(compression, 'tool_bundle', lambda: (bundle, suffix))
+    assert compression.tools()['fpack'] == destination / f'fpack{suffix}'
+    executable = destination / f'fpack{suffix}'
     before = executable.stat()
     executable.write_bytes(b'X' * before.st_size)
     os.utime(executable, ns=(before.st_atime_ns, before.st_mtime_ns))

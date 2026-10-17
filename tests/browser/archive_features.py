@@ -149,6 +149,7 @@ def health_session_deletions(c):
     c.page.route('**/api/library/health**', handler)
     c.goto('/catalog.html'); c.wait_hidden('#busy'); c.page.locator('#btnTopHealth').click()
     buttons = c.page.get_by_role('button', name='Acknowledge session', exact=True)
+    buttons.nth(1).wait_for(state='visible')  # Opening precedes the async report render.
     c.expect_eq(buttons.count(), 2, 'deletions group by object and session')
     c.expect_eq(c.page.locator('#healthAcceptAll').inner_text(), 'Accept all deletions (3)')
     c.page.screenshot(path=str(c.artifacts / 'health-session-deletions-pending.png'), full_page=True)

@@ -25,7 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 # Never shipped text / generated / scratch (see .gitignore for the last few).
-SKIP_TOP = {".git", ".venv-build", ".venv", ".pytest-tmp", ".pytest_cache",
+SKIP_TOP = {".git", ".venv-build", ".venv-browser", ".venv", ".pytest-tmp", ".pytest_cache",
             "__pycache__", "build", "data", "dist", "logs", "node_modules",
             "theme-preview", "whale", "dev",
             # TO-11 (0.6.24 review): the review workspace is NOT shipped text

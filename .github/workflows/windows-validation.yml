@@ -1,0 +1,253 @@
+name: Catalog validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_benchmarks:
+        description: Run the larger packaged import benchmark and source profile
+        type: boolean
+        default: false
+      run_scaling_checks:
+        description: Check the 4096-pin boundary and compare packaged builds on this runner
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 2 * * 0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-validation-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.paths.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: paths
+        name: Select correctness checks
+        env:
+          CI_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python scripts/select_ci_checks.py
+
+  linux:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare source environment
+        run: |
+          mkdir -p logs
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements-dev.txt -c requirements-build-lock.txt
+          .venv/bin/python -m pip check
+      - name: Linux source suite
+        run: |
+          set -o pipefail
+          .venv/bin/python -m pytest tests/ -q -rs --tb=short --junitxml=logs/linux-tests.xml 2>&1 | tee logs/linux-tests.log
+      - name: JavaScript, encoding and core checks
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          .venv/bin/python scripts/check_js.py 2>&1 | tee logs/linux-js.log
+      - name: Retain Linux validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-validation-${{ github.sha }}
+          path: logs/linux-*
+          if-no-files-found: warn
+
+  windows:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare pinned application environment
+        run: |
+          New-Item -ItemType Directory -Path logs -Force | Out-Null
+          python -m venv .venv-build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-build/Scripts/python.exe -m pip install -r requirements-build-lock.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-build/Scripts/python.exe scripts/check_build_dependencies.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check Windows stress resource accounting
+        run: |
+          & .venv-build/Scripts/python.exe -m pytest tests/test_dedup_stress.py -q --tb=short 2>&1 | Tee-Object -FilePath logs/windows-resource-accounting.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Full suite including Windows contracts
+        run: |
+          & .venv-build/Scripts/python.exe -m pytest tests/ -q -rs --tb=short --junitxml=logs/windows-tests.xml 2>&1 | Tee-Object -FilePath logs/windows-tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build fresh Windows executable
+        id: package
+        run: |
+          & ./build.ps1 -AllowDirty 2>&1 | Tee-Object -FilePath logs/windows-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Require Windows pinning and process contracts to execute
+        run: |
+          [xml]$report = Get-Content -Raw logs/windows-tests.xml
+          $required = @(
+            'test_windows_owner_exit_closes_job_and_stops_descendants',
+            'test_pinned_directory_cache_rejects_replaced_leaf_link',
+            'test_http_batch_checks_earlier_files_once_and_detects_next_request_edits',
+            'test_batch_pins_refuse_writes_and_renames_until_closed',
+            'test_empty_batch_first_admission_leases_archive_and_releases_pins',
+            'test_lazy_admission_with_open_writer_retains_no_pins',
+            'test_request_directory_pins_share_common_ancestors_and_exclude_writers',
+            'test_request_directory_pins_outlive_external_pin_context',
+            'test_combined_budget_refuses_deep_suffix_and_keeps_shallower_admission',
+            'test_real_http_disconnect_queue_and_shutdown_preserve_units'
+          )
+          foreach ($name in $required) {
+            $cases = @($report.testsuites.testsuite.testcase | Where-Object { $_.name -eq $name })
+            if ($cases.Count -ne 1 -or $cases[0].SelectSingleNode('skipped|failure|error')) {
+              throw "Windows contract did not pass: $name"
+            }
+          }
+      - name: Packaged 512-file HTTP import benchmark and restricted-runtime Rice
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_benchmarks)) }}
+        run: |
+          & .venv-build/Scripts/python.exe scripts/bench_windows_import.py --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-import-benchmark.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Profile real HTTP import in an isolated source process
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_benchmarks)) }}
+        run: |
+          & .venv-build/Scripts/python.exe scripts/profile_import.py 2>&1 | Tee-Object -FilePath logs/windows-import-profile.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Stress the actual request pin boundary and cancellation cleanup
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_scaling_checks }}
+        run: |
+          & .venv-build/Scripts/python.exe scripts/stress_dedup.py 2>&1 | Tee-Object -FilePath logs/windows-dedup-stress.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check out the immediate pre-lazy-admission baseline
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_scaling_checks }}
+        uses: actions/checkout@v4
+        with:
+          ref: 9c4f3128d2a3859c4c58c80fc3252d58bdbddbf9
+          path: logs/scaling-baseline
+          persist-credentials: false
+      - name: Build the baseline with the same pinned Python environment
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_scaling_checks }}
+        run: |
+          $sharedPython = (Resolve-Path .venv-build).Path
+          $baselineEnvironment = Join-Path (Get-Location).Path 'logs/scaling-baseline/.venv-build'
+          New-Item -ItemType Junction -Path $baselineEnvironment -Target $sharedPython | Out-Null
+          try {
+            & ./logs/scaling-baseline/build.ps1 -AllowDirty 2>&1 | Tee-Object -FilePath (Join-Path $env:GITHUB_WORKSPACE 'logs/windows-baseline-build.log')
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            [System.IO.Directory]::Delete($baselineEnvironment)
+          }
+      - name: Compare packaged baseline and candidate sequentially in ABBA order
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_scaling_checks }}
+        run: |
+          & .venv-build/Scripts/python.exe scripts/compare_import.py --baseline-exe logs/scaling-baseline/dist/NightSeam.exe --candidate-exe dist/NightSeam.exe --baseline-commit 9c4f3128d2a3859c4c58c80fc3252d58bdbddbf9 --candidate-commit $env:GITHUB_SHA 2>&1 | Tee-Object -FilePath logs/windows-import-comparison.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prepare a private kit for clean-VM and physical-desktop acceptance
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_scaling_checks }}
+        run: |
+          & .venv-build/Scripts/python.exe scripts/make_acceptance_kit.py 2>&1 | Tee-Object -FilePath logs/windows-acceptance-kit.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prepare separate browser environment
+        id: browser_environment
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: |
+          python -m venv .venv-browser
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-browser/Scripts/python.exe -m pip install playwright==1.62.0 Pillow==12.3.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-browser/Scripts/python.exe -m playwright install chrome
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Packaged catalog browser gate with private data and archive
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && steps.browser_environment.outcome == 'success' }}
+        run: |
+          & .venv-browser/Scripts/python.exe scripts/check_browser.py --desktop --channel chrome --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-browser.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Packaged native WinForms and WebView2 smoke
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && steps.browser_environment.outcome == 'success' }}
+        run: |
+          & .venv-browser/Scripts/python.exe scripts/check_native_window.py --restricted-runtime --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-native.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Packaged HTTP disconnect, contention and native close during import
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: |
+          & .venv-build/Scripts/python.exe scripts/check_import_lifecycle.py --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-import-lifecycle.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-validation-${{ github.sha }}
+          path: |
+            logs/windows-*.log
+            logs/windows-tests.xml
+            logs/windows-import-benchmark.json
+            logs/windows-import-profile.json
+            logs/windows-import-lifecycle.json
+            logs/windows-dedup-stress.json
+            logs/windows-import-comparison.json
+            logs/windows-import-comparison-runs/
+            logs/windows-acceptance-kit.zip
+            logs/import-profile-*.log
+            logs/benchmark-nightseam.log*
+            logs/lifecycle-nightseam.log*
+            tests/browser/artifacts/
+          if-no-files-found: warn
+
+  validation:
+    needs: [changes, linux, windows]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the selected correctness checks
+        env:
+          SELECTION_RESULT: ${{ needs.changes.result }}
+          CODE_SELECTED: ${{ needs.changes.outputs.code }}
+          LINUX_RESULT: ${{ needs.linux.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+        run: |
+          python - <<'PY'
+          import os
+          results = [os.environ['LINUX_RESULT'], os.environ['WINDOWS_RESULT']]
+          allowed = {'success'} if os.environ['CODE_SELECTED'] == 'true' else {'success', 'skipped'}
+          if os.environ['SELECTION_RESULT'] != 'success' or any(value not in allowed for value in results):
+              raise SystemExit('A selected correctness check failed or did not execute')
+          print('Selected correctness checks passed')
+          PY

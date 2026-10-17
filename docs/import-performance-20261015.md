@@ -1,5 +1,78 @@
 # Import performance investigation — October 15, 2026
 
+## Hosted Windows results — October 17, 2026
+
+The post-correction packaged app completed the synthetic plain-FITS workload:
+
+| Measurement | Observed |
+| --- | --- |
+| Exposures | 512 unique files, 4,150,080 bytes each |
+| Total input | 2,124,840,960 bytes |
+| Sequential HTTP requests | 21 × 24 files, then 8 files |
+| Total controller wall time | 87.017 seconds |
+| Effective input throughput | 23.287 MiB/s |
+| First full request, including resolver setup | 11.032 seconds |
+| Subsequent full-request range | 2.222–4.673 seconds |
+| Last full request | 4.062 seconds |
+| Runner | Windows Server 2022, two logical CPUs |
+| CPU identifier | AMD64 Family 25 Model 17 Stepping 1, AuthenticAMD |
+
+All 512 original source files and their initial archived copies matched their
+expected SHA-256 hashes, with 512 distinct image IDs and integrity records. Three
+duplicate probes preserved identity, frame class, session/capture coordinates and
+stored location. A same-size private archive edit with restored mtime was matched
+to the existing ID on the next request and refreshed its byte fingerprint. No
+journal or staging leftovers remained. A separate small Safe Rice ingest/native
+uncompress smoke restored exact original bytes. Both private app instances and
+their scratch were removed successfully.
+
+The app child had an empty PATH and Python/Node environment overrides removed.
+The native WinForms/WebView2 smoke passed 7/7 under the same restriction; the
+packaged browser gate passed 23/23. Source suites passed 814 tests/two skips on
+Windows and 811/five skips on Linux. Installed OS/.NET/WebView2 components remained;
+these checks do not establish clean-VM, disconnected-network or physical display
+acceptance. See [manual acceptance](windows-manual-acceptance.md).
+
+The generated inputs warm the OS cache before timing. No cache flushing or
+archive hash-read instrumentation was performed. The noise template and first-eight
+pixel tags reproduce the earlier workload shape rather than real user captures.
+The older workstation results below predate the safety correction and use different
+hardware: no controlled speedup/regression ratio is inferred. Larger archives and
+the original workstation remain unmeasured after that correction.
+
+Tested commit: 9775ebae8206c4563ca4fa893faf88a8c9d6803c.
+Executable SHA-256: 95d1440b0941c9dedc4b0ce0417cb89b6c1f0c9fe5563928917fd5f37bea87b1.
+Run: https://github.com/Terrazocker/nightseam-catalog/actions/runs/39009833605
+Retained artifact: windows-validation-9775ebae8206c4563ca4fa893faf88a8c9d6803c.
+Local report: logs/windows-import-success/logs/windows-import-benchmark.json.
+Full log: logs/windows-import-success.log.
+
+## Repeating the Windows workload after the cache correction
+
+The October 16 safety correction intentionally rehashes across unpinned Windows
+handle lifetimes. The historical timings below predate that correction and use
+different hardware; they cannot establish current throughput or a controlled
+speedup on hosted Windows.
+
+`scripts/bench_windows_import.py --exe dist/NightSeam.exe` now repeats the real
+512-file HTTP workload with an isolated packaged executable and archive. It
+generates deterministic 1080×1920 uint16 noise with distinct first-eight pixel
+bytes, totaling 2,124,840,960 bytes, and sends 21 requests of 24 files plus one of
+eight. The first request includes resolver setup. Generation, byte audits,
+duplicate/edit probes and the separate Safe Rice runtime smoke are outside timing.
+Caches are not flushed. The controller measures batch and total wall time; it
+does not instrument archive hash-read counts inside the packaged process.
+
+The retained JSON includes the executable digest, source commit, runner OS/CPU,
+logical CPU count, initial free disk space, per-batch timings and audit results.
+Each original source and archived file is hashed before duplicate/tamper probes.
+Three originals are reuploaded with a conflicting dark-frame override to ensure
+identity, class, session, capture coordinates and stored paths survive. Then a
+private archived image is changed without changing size/mtime, and the next
+request must match its actual changed bytes to the existing ID. Sources remain
+untouched. The owned application and scratch are removed after measurements;
+logs/windows-import-benchmark.json is retained by Windows CI.
+
 ## Follow-up: representative HTTP workload
 
 The initial 48-file direct benchmark below missed the severity of metadata

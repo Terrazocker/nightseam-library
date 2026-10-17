@@ -108,6 +108,37 @@ function bindTopActions() {
   });
   $("#btnTopReindex").addEventListener("click", () => $("#btnArcReindex").click());
   $("#btnTopExport").addEventListener("click", () => exportLibrary());
+  $("#btnSupportReport").addEventListener("click", downloadSupportReport);
+}
+
+async function downloadSupportReport() {
+  const button = $("#btnSupportReport");
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/diagnostics", { cache: "no-store" });
+    if (!response.ok) throw new Error("Could not prepare the support report.");
+    const report = await response.json();
+    report.client_context = {
+      window_chrome: document.body.dataset.windowChrome === "native" ? "native" : "browser",
+      native_folder_picker: S.hostCapabilities?.native_folder_picker === true,
+    };
+    const engine = navigator.userAgent.match(/(?:Chrome|Edg)\/([0-9.]{1,40})/);
+    if (engine) report.client_context.chromium_version = engine[1];
+    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2) + "\n"],
+      { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "nightseam-support-report.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    toast("Support report download started.", "info", 4000);
+  } catch {
+    toast("Support report could not be downloaded. Please try again.");
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function initCatalog() {

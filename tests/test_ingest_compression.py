@@ -101,7 +101,7 @@ def test_compression_failure_publishes_neither_representation(tmp_path, monkeypa
         if failure == 'tool':
             raise ValueError('synthetic native failure')
         native(executable, flags, source, destination, checkpoint)
-        if failure == 'hash' and executable.name == 'funpack.exe':
+        if failure == 'hash' and executable.stem == 'funpack':
             destination.write_bytes(destination.read_bytes()[:-1] + b'X')
     monkeypatch.setattr(compression, 'native', failing_native)
     promote = ingest._promote_stage
@@ -207,8 +207,8 @@ def test_multipart_option_default_and_opt_in_are_independent_per_file(tmp_path):
 
 
 @pytest.mark.parametrize('mode,expected_tools,baseline_source', [
-    ('fast', ['fpack.exe'], 'rice_ingest_fast'),
-    ('safe', ['fpack.exe', 'funpack.exe'], 'verified_rice_ingest')])
+    ('fast', ['fpack'], 'rice_ingest_fast'),
+    ('safe', ['fpack', 'funpack'], 'verified_rice_ingest')])
 def test_fast_skips_decoder_safe_verifies_and_both_restore(tmp_path, monkeypatch, mode, expected_tools, baseline_source):
     db, archive, _ = library(tmp_path, count=0)
     original = exposure()
@@ -216,7 +216,7 @@ def test_fast_skips_decoder_safe_verifies_and_both_restore(tmp_path, monkeypatch
     calls = []
 
     def record_native(executable, *args):
-        calls.append(executable.name)
+        calls.append(executable.stem)
         return native(executable, *args)
     monkeypatch.setattr(compression, 'native', record_native)
     result = upload(db, archive, original, compress=True, compression_mode=mode)
@@ -238,7 +238,7 @@ def test_missing_recovery_still_requires_safe_verification_when_fast_requested(t
 
     def corrupt_decoder(executable, flags, source, destination, checkpoint):
         native(executable, flags, source, destination, checkpoint)
-        if executable.name == 'funpack.exe':
+        if executable.stem == 'funpack':
             decoded.append(True)
             destination.write_bytes(destination.read_bytes()[:-1] + b'X')
     monkeypatch.setattr(compression, 'native', corrupt_decoder)

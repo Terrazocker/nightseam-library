@@ -1,14 +1,18 @@
-"""Build pinned official Windows x64 fpack/funpack with a static C runtime.
+"""Build pinned official fpack/funpack for Windows x64 or Linux x64.
 
-Requires Visual Studio C++ Build Tools (vswhere) and its bundled CMake.
+Windows requires Visual Studio C++ Build Tools and its bundled CMake.
+Linux requires GCC, Make and CMake (system or the active Python environment).
 Source downloads are hash checked; build evidence remains in ignored logs/.
 """
 import hashlib
 import json
 import os
 from pathlib import Path
+import platform
+import re
 import shutil
 import subprocess
+import sys
 import urllib.request
 import zipfile
 
@@ -23,7 +27,97 @@ PACKAGES = (
 )
 
 
+def sources(work):
+    """Download and unpack the same pinned upstream sources on both hosts."""
+    work.mkdir(parents=True, exist_ok=True)
+    for name, url, digest in PACKAGES:
+        archive = work / (name + '.zip')
+        if not archive.exists():
+            with urllib.request.urlopen(url, timeout=60) as response:
+                archive.write_bytes(response.read())
+        if hashlib.sha256(archive.read_bytes()).hexdigest() != digest:
+            raise RuntimeError(f'{name} source checksum failed')
+        with zipfile.ZipFile(archive) as packed:
+            for item in packed.infolist():
+                path = (work / 'sources' / item.filename).resolve()
+                if not path.is_relative_to((work / 'sources').resolve()) or item.external_attr >> 16 & 0o170000 == 0o120000:
+                    raise ValueError('Unsafe source archive entry')
+            packed.extractall(work / 'sources')
+
+
+def build_linux():
+    work = ROOT / 'logs/fits-tools-build-linux-x64'
+    out = ROOT / 'vendor/fits-tools/linux-x64'
+    cmake = shutil.which('cmake') or str(Path(sys.executable).parent / 'cmake')
+    cc = shutil.which('gcc')
+    if not cc or not shutil.which('make') or not shutil.which('readelf') or not Path(cmake).is_file():
+        raise RuntimeError('Linux builds require GCC, Make, binutils and CMake.')
+    sources(work)
+    commands = []
+
+    def run(args):
+        args = list(map(str, args))
+        commands.append(args)
+        with (work / 'build.log').open('a', encoding='utf-8') as log:
+            subprocess.run(args, stdout=log, stderr=subprocess.STDOUT, check=True)
+
+    prefix = work / 'prefix'
+    common = ['-G', 'Unix Makefiles', '-DCMAKE_BUILD_TYPE=Release',
+              f'-DCMAKE_C_COMPILER={cc}']
+    run([cmake, '-S', work / 'sources/zlib-1.3.2', '-B', work / 'zlib-build', *common,
+         f'-DCMAKE_INSTALL_PREFIX={prefix}', '-DZLIB_BUILD_TESTING=OFF',
+         '-DZLIB_BUILD_SHARED=OFF', '-DZLIB_BUILD_STATIC=ON'])
+    run([cmake, '--build', work / 'zlib-build', '--target', 'install', '--parallel', '2'])
+    libraries = list(prefix.rglob('libz.a')) + list(prefix.rglob('libzs.a'))
+    if len(libraries) != 1:
+        raise RuntimeError(f'Expected one static zlib library, found {len(libraries)}')
+    flags = ['-DBUILD_SHARED_LIBS=OFF', '-DUSE_CURL=OFF', '-DUSE_PTHREADS=OFF',
+             '-DUSE_BZIP2=OFF', '-DTESTS=OFF', '-DUTILS=ON',
+             f'-DZLIB_INCLUDE_DIR={prefix / "include"}', f'-DZLIB_LIBRARY={libraries[0]}']
+    run([cmake, '-S', work / 'sources/cfitsio-4.7.0', '-B', work / 'cfitsio-build',
+         *common, *flags])
+    run([cmake, '--build', work / 'cfitsio-build', '--target', 'fpack', 'funpack', '--parallel', '2'])
+    binaries = {}
+    # Stage and validate every artifact before replacing the installed bundle.
+    stage = work / 'bundle'
+    stage.mkdir(exist_ok=True)
+    for name in ('fpack', 'funpack'):
+        target = stage / name
+        shutil.copyfile(work / 'cfitsio-build' / name, target)
+        target.chmod(0o755)
+        dependencies = subprocess.check_output(['ldd', str(target)], text=True)
+        if 'not found' in dependencies or any(lib in dependencies for lib in ('libcfitsio', 'libz.so', 'libcurl', 'libbz2')):
+            raise RuntimeError(f'{name} must bundle CFITSIO and zlib statically')
+        versions = re.findall(r'GLIBC_(\d+\.\d+)', subprocess.check_output(
+            ['readelf', '--version-info', str(target)], text=True))
+        binaries[name] = {'sha256': hashlib.sha256(target.read_bytes()).hexdigest(),
+            'version': subprocess.check_output([str(target), '-V'], text=True).strip(),
+            'required_glibc': max(versions, key=lambda value: tuple(map(int, value.split('.')))),
+            'dynamic_dependencies': [re.sub(r'\s+\(0x[0-9a-f]+\)', '', line.strip())
+                                     for line in dependencies.strip().splitlines()]}
+    shutil.copyfile(work / 'sources/cfitsio-4.7.0/licenses/License.txt', stage / 'CFITSIO-LICENSE.txt')
+    shutil.copyfile(work / 'sources/zlib-1.3.2/LICENSE', stage / 'ZLIB-LICENSE.txt')
+    provenance = {'cfitsio': '4.7.0', 'zlib': '1.3.2', 'platform': 'linux-x64',
+        'runtime': 'static CFITSIO and zlib; dynamic system libc/libm',
+        'compiler': subprocess.check_output([cc, '--version'], text=True).splitlines()[0],
+        'cmake': subprocess.check_output([cmake, '--version'], text=True).splitlines()[0],
+        'libc': list(platform.libc_ver()), 'cmake_flags': common + flags,
+        'sources': [{'url': u, 'sha256': h} for _, u, h in PACKAGES], 'binaries': binaries}
+    (stage / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n', encoding='utf-8')
+    out.mkdir(parents=True, exist_ok=True)
+    for artifact in stage.iterdir():
+        shutil.copy2(artifact, out / artifact.name)
+    (work / 'commands.json').write_text(json.dumps(commands, indent=2) + '\n', encoding='utf-8')
+    print(json.dumps(binaries))
+
+
 def main():
+    if platform.machine().lower() not in ('amd64', 'x86_64'):
+        raise RuntimeError('FITS tool builds support x64 hosts only.')
+    if sys.platform == 'linux':
+        return build_linux()
+    if sys.platform != 'win32':
+        raise RuntimeError('FITS tool builds support Windows and Linux only.')
     WORK.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
     finder = Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) / 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -43,19 +137,7 @@ def main():
         with (WORK / 'build.log').open('a', encoding='utf-8') as log:
             subprocess.run(args, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
 
-    for name, url, digest in PACKAGES:
-        archive = WORK / (name + '.zip')
-        if not archive.exists():
-            with urllib.request.urlopen(url, timeout=60) as response:
-                archive.write_bytes(response.read())
-        if hashlib.sha256(archive.read_bytes()).hexdigest() != digest:
-            raise RuntimeError(f'{name} source checksum failed')
-        with zipfile.ZipFile(archive) as packed:
-            for item in packed.infolist():
-                path = (WORK / 'sources' / item.filename).resolve()
-                if not path.is_relative_to((WORK / 'sources').resolve()) or item.external_attr >> 16 & 0o170000 == 0o120000:
-                    raise ValueError('Unsafe source archive entry')
-            packed.extractall(WORK / 'sources')
+    sources(WORK)
     common = ['-G', 'NMake Makefiles', '-DCMAKE_BUILD_TYPE=Release',
               '-DCMAKE_POLICY_DEFAULT_CMP0091=NEW', '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded']
     prefix = WORK / 'prefix'

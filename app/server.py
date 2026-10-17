@@ -33,6 +33,7 @@ from .ingest import (ArchiveRenameRecoveryError, ReindexCancelled, DedupBatch, _
                      reindex_library, rename_archive_folder, undo_archive_rename)
 from .paths import safe_join, safe_rel, static_dir
 from .version import app_version
+from . import diagnostics
 
 APP_VERSION = app_version()
 log = logging.getLogger(__name__)
@@ -179,6 +180,7 @@ class HealthAcknowledgementIn(BaseModel):
 # ------------------------------------------------------------------ factory
 
 def create_app(db: Database) -> FastAPI:
+    diagnostics.install_error_collector()
     health = ArchiveHealthManager(db)
     compression = CompressionManager(db)
     ingest_workers = asyncio.Semaphore(max(1, min(MAX_FILES_PER_REQUEST, os.cpu_count() or 1)))
@@ -252,12 +254,17 @@ def create_app(db: Database) -> FastAPI:
                     {"detail": f"upload too large (max "
                                f"{limit // (1024 * 1024)} MB per request)"},
                     status_code=413)
+        # A publication worker may hold the connection lock while waiting on
+        # SQLite. Queued requests must wait off the event loop so static UI and
+        # unrelated async requests can still respond during that contention.
         if (request.method == 'POST' and request.url.path in
-                ('/api/images/ingest', '/api/library/reindex', '/api/library/edit') and pending_current(db)):
+                ('/api/images/ingest', '/api/library/reindex', '/api/library/edit') and
+                await run_in_threadpool(pending_current, db)):
             return JSONResponse({'detail': 'An interrupted trash operation needs recovery. Inspect retained recovery records with scripts/restore_legacy_trash.py before changing the archive.'}, status_code=409)
         if (request.method == 'POST' and (request.url.path in
                 ('/api/images/ingest', '/api/library/reindex', '/api/library/edit') or
-                request.url.path.endswith('/acknowledge')) and db.pending_compression()):
+                request.url.path.endswith('/acknowledge')) and
+                await run_in_threadpool(db.pending_compression)):
             return JSONResponse({'detail': 'Wait for compression to finish. If recovery failed, restart NightSeam with the original disks available.'}, status_code=409)
         resp = await call_next(request)
         # F-16: every response the app serves carries nosniff - cheap defense
@@ -296,6 +303,13 @@ def create_app(db: Database) -> FastAPI:
         return await call_next(request)
 
     # ---------------- state / settings ----------------
+
+    @app.get('/api/diagnostics')
+    def api_diagnostics():
+        return Response(json.dumps(diagnostics.report(), ensure_ascii=False, indent=2),
+            media_type='application/json', headers={
+                'Content-Disposition': 'attachment; filename="nightseam-support-report.json"',
+                'Cache-Control': 'no-store'})
 
     @app.get("/api/state")
     def api_state():

@@ -518,7 +518,7 @@ body.catalog-only #topbar {
 }
 body.catalog-only .catalog-header-inner {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(max-content, 1fr) minmax(0, max-content);
   align-items: center;
   width: 100%;
   min-height: 44px;
@@ -537,7 +537,7 @@ body.catalog-only .brand {
 body.catalog-only .catalog-brand-word { color: var(--text); }
 body.catalog-only .busy-slot {
   position: static;
-  width: 100%;
+  width: auto;
   max-width: 360px;
   height: auto;
   min-height: 0;
@@ -568,9 +568,10 @@ body.catalog-only .topbar-right {
   position: static;
   width: auto;
   margin: 0;
+  min-width: 0;
 }
 body.catalog-only #archiveInfo { display: none !important; }
-body.catalog-only .image-catalog-tools { gap: 8px; }
+body.catalog-only .image-catalog-tools { gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 body.catalog-only .catalog-action {
   display: inline-flex;
   align-items: center;

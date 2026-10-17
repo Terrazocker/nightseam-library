@@ -126,10 +126,14 @@ class DesktopServer:
     """The packed exe, isolated in a temp dir (never the user's data)."""
 
     def __init__(self, exe: Path = DEFAULT_EXE, seed: bool = True,
-                 planner: bool = False):
+                 planner: bool = False, native: bool = False,
+                 debug_port: int | None = None, restricted_runtime: bool = False):
         self.exe = Path(exe)
         self.seed = seed
         self.planner = planner
+        self.native = native
+        self.debug_port = debug_port
+        self.restricted_runtime = restricted_runtime
         self.tmp: Path | None = None
         self.proc: subprocess.Popen | None = None
         self.tree: ProcessTree | None = None
@@ -154,7 +158,7 @@ class DesktopServer:
         exe = self.tmp / "NightSeam.exe"
         shutil.copy2(self.exe, exe)
         self.port = free_port()
-        args = [str(exe), "--no-browser", "--port", str(self.port),
+        args = [str(exe), *(["--require-native-window"] if self.native else ["--no-browser"]), "--port", str(self.port),
                 "--idle-exit-hours", "0"]
         if self.planner:
             args.append("--planner")
@@ -164,6 +168,21 @@ class DesktopServer:
         environment = dict(os.environ)
         for name in ("TEMP", "TMP", "TMPDIR"):
             environment[name] = str(self.tmp)
+        # Native window placement and WebView2 profiles must also stay private.
+        environment['LOCALAPPDATA'] = str(self.tmp / 'local-app-data')
+        environment['WEBVIEW2_USER_DATA_FOLDER'] = str(self.tmp / 'webview2')
+        if self.restricted_runtime:
+            # Only the child app loses developer paths; the controller keeps
+            # its own Python/Playwright. Installed OS runtimes remain present.
+            empty_path = self.tmp / 'empty-path'
+            empty_path.mkdir()
+            environment['PATH'] = str(empty_path)
+            for name in ('PYTHONHOME', 'PYTHONPATH', 'PYTHONUSERBASE',
+                         'VIRTUAL_ENV', 'CONDA_PREFIX', 'NODE_PATH'):
+                environment.pop(name, None)
+        if self.native and self.debug_port is not None:
+            environment['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = (
+                f'--remote-debugging-port={self.debug_port} --remote-debugging-address=127.0.0.1')
         self.tree = ProcessTree(
             args,
             cwd=str(self.tmp), stdout=subprocess.DEVNULL,

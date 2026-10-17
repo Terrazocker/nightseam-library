@@ -1,2 +1,4 @@
 # Preserve source-data bytes and literal trailing spaces in search fields.
 app/data/*.csv -text whitespace=-blank-at-eol
+# Keep upstream license bytes, including their original CRLF line endings.
+vendor/fits-tools/*/*LICENSE.txt -text whitespace=cr-at-eol

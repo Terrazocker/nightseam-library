@@ -38,6 +38,13 @@ _ACTIVE_STAGES: set[Path] = set()
 _STAGE_NAME = re.compile(r"^\.nightseam-import-(\d+)-[A-Za-z0-9_]+\.part$")
 _STALE_STAGE_SECONDS = 3600
 _FINGERPRINT_CACHE_LIMIT = 20000
+_BATCH_PIN_LIMIT = 4096
+_BATCH_HANDLE_LIMIT = 16384
+# Admission/fallback hashing can open one version pin and one read stream in
+# addition to the retained/provisional request pins. Keep that headroom free.
+_BATCH_IO_HANDLES = 2
+_CANDIDATE_PAGE_SIZE = 256
+_WINDOWS_BATCH_PINS = os.name == 'nt'
 
 
 @contextmanager
@@ -54,7 +61,8 @@ def _waiting_archive_lock(db, cancel):
 class DedupBatch:
     """Request-local negative index, with Windows bytes/lineage pinned stable.
 
-    A batch checks earlier same-size files once rather than once per upload.
+    A batch checks earlier same-size files once rather than once per upload,
+    admitting newly published files lazily when they become candidates.
     Open writers, unsupported versions and candidates above the handle bound
     retain the conservative individual checks. Positive matches always rehash.
     No database hash alone admits an entry.
@@ -63,6 +71,11 @@ class DedupBatch:
         self.stack = ExitStack()
         self.entries = {}
         self.db = None
+        self.root = None
+        self.identity = None
+        self.folders = set()
+        self.directories = set()
+        self.leased = False
 
     def close(self):
         if self.db is None:
@@ -72,57 +85,89 @@ class DedupBatch:
                 try:
                     self.stack.close()
                 finally:
-                    self.db.archive_lock.unreserve(self)
+                    if self.leased:
+                        self.db.archive_lock.unreserve(self)
+                    self.leased = False
+                    self.db = self.root = self.identity = None
+                    self.entries.clear()
+                    self.folders.clear()
+                    self.directories.clear()
 
     def negative(self, record, incoming):
         entry = self.entries.get(record['id'])
         return entry is not None and entry[0] == record['file'] and entry[1] != incoming
 
+    def fingerprint(self, db, record, path, incoming, cancel=None, *, admit_only=False):
+        """Measure a candidate and retain stable negative proof within this request.
+
+        Caller owns the batch's archive lock. Only Windows writer-excluding pins
+        qualify. The first lookup of a newly committed file hashes actual archive
+        bytes, never the upload or database digest; positives continue to rehash.
+        Failed admission retains no new directory/file handles.
+        """
+        if (self.root is not None and self.db is db and
+                record['id'] not in self.entries and len(self.entries) < _BATCH_PIN_LIMIT and
+                len(self.entries) + len(self.directories) + _BATCH_IO_HANDLES < _BATCH_HANDLE_LIMIT):
+            from .archive_trash import _contained, _parent
+            try:
+                with ExitStack() as context:
+                    _check_reindex_cancelled(cancel)
+                    # safe_join resolves internal aliases. Validate the lexical
+                    # row path even when its resolved parent is already pinned.
+                    if _contained(self.root, record['file'], self.identity) != path:
+                        raise ValueError('Candidate is outside its pinned archive.')
+                    parent = path.parent
+                    opened = None
+                    if parent not in self.folders:
+                        # Reserve one slot for the leaf before opening any new
+                        # lineage. Failed suffixes never exceed the pin budget.
+                        options = {'held': self.directories, 'max_new': _BATCH_HANDLE_LIMIT - _BATCH_IO_HANDLES -
+                                   len(self.entries) - len(self.directories) - 1} if os.name == 'nt' else {}
+                        opened = context.enter_context(_parent(self.root, record['file'], self.identity, **options))
+                    version = context.enter_context(pinned_version(path))
+                    before = version() if version else None
+                    if before is not None:
+                        measured = _dedup_fingerprint(db, path, incoming, cancel)
+                        _check_reindex_cancelled(cancel)
+                        if measured is not None and version() == before:
+                            if not self.leased:
+                                db.archive_lock.reserve(self)
+                                self.leased = True
+                            self.stack.enter_context(context.pop_all())
+                            if os.name == 'nt' and opened is not None:
+                                self.directories.update(opened)
+                            self.folders.add(parent)
+                            self.entries[record['id']] = record['file'], measured[0]
+                        return measured
+            except (OSError, ValueError):
+                pass
+        if admit_only:
+            return None
+        _check_reindex_cancelled(cancel)
+        return _dedup_fingerprint(db, path, incoming, cancel)
+
     @classmethod
     def prepare(cls, db, archive, sizes, cancel=None):
         index = cls()
-        if os.name != 'nt' or not sizes or not hasattr(db.archive_lock, 'reserve'):
+        if not _WINDOWS_BATCH_PINS or not sizes or not hasattr(db.archive_lock, 'reserve'):
             return index
-        from .archive_trash import _parent
         try:
             with _waiting_archive_lock(db, cancel):
                 root = archive.resolve(strict=True)
                 info = root.stat()
-                identity = info.st_dev, info.st_ino
-                folders = set()
+                index.db, index.root = db, root
+                index.identity = info.st_dev, info.st_ino
                 with db.lock:
                     marks = ','.join('?' for _ in sizes)
                     records = [dict(row) for row in db.conn.execute(
-                        f'SELECT id,file FROM images WHERE file_size IN ({marks}) OR file_size IS NULL ORDER BY id',
-                        tuple(sizes))]
-                for record in records[:4096]:
+                        f'SELECT id,file FROM images WHERE file_size IN ({marks}) OR file_size IS NULL ORDER BY id LIMIT ?',
+                        (*sizes, _BATCH_PIN_LIMIT))]
+                for record in records:
                     _check_reindex_cancelled(cancel)
                     path = paths.safe_join(root, record['file'])
                     if path is None:
                         continue
-                    context = ExitStack()
-                    try:
-                        parent = path.parent
-                        if parent not in folders:
-                            index.stack.enter_context(_parent(root, record['file'], identity))
-                            folders.add(parent)
-                        version = context.enter_context(pinned_version(path))
-                        before = version() if version else None
-                        if before is None:
-                            continue
-                        measured = _dedup_fingerprint(db, path, '', cancel)
-                        if measured is not None and version() == before:
-                            index.stack.enter_context(context.pop_all())
-                            index.entries[record['id']] = record['file'], measured[0]
-                    except (OSError, ValueError):
-                        pass
-                    finally:
-                        context.close()
-                if index.entries:
-                    db.archive_lock.reserve(index)
-                    index.db = db
-                else:
-                    index.stack.close()
+                    index.fingerprint(db, record, path, '', cancel, admit_only=True)
             return index
         except BaseException:
             index.close()
@@ -232,8 +277,41 @@ def _fingerprint_file(path: Path, cancel_event=None) -> tuple[str, int, int] | N
         return None
 
 
+def _batch_candidates(db, digest, size, cancel=None):
+    """Read bounded pages without retaining a cursor/DB lock during file IO.
+
+    The archive lock serializes publication; an upper ID also prevents later
+    insertions from extending this search. Every matching candidate up to that
+    boundary remains eligible, even after admission reaches its pin budget.
+    """
+    with db.lock:
+        upper = db.conn.execute('SELECT MAX(id) FROM images').fetchone()[0]
+    if upper is None:
+        return
+    last = None
+    while True:
+        _check_reindex_cancelled(cancel)
+        after = '' if last is None else ' AND id>?'
+        args = (digest, size, upper) + (() if last is None else (last,)) + (_CANDIDATE_PAGE_SIZE,)
+        with db.lock:
+            cursor = db.conn.execute(
+                'SELECT id,file FROM images WHERE '
+                '(content_sha256=? OR file_size=? OR file_size IS NULL) AND id<=?'
+                + after + ' ORDER BY id LIMIT ?', args)
+            try:
+                records = [dict(row) for row in cursor]
+            finally:
+                cursor.close()
+        if not records:
+            return
+        yield from records
+        if len(records) < _CANDIDATE_PAGE_SIZE:
+            return
+        last = records[-1]['id']
+
+
 def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
-                    exclude_id: int | None = None, dedup_batch=None) -> dict | None:
+                    exclude_id: int | None = None, dedup_batch=None, cancel_event=None) -> dict | None:
     """Find matching local bytes, including originals from older versions.
 
     Caller holds db.archive_lock for lookup/finalization. Database methods take
@@ -258,13 +336,11 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
         if measured and measured[0] == rec.pop('mapped_sha256'):
             return rec
     if dedup_batch is not None:
-        with db.lock:
-            candidates = [dict(row) for row in db.conn.execute(
-                'SELECT id,file FROM images WHERE content_sha256=? OR file_size=? OR file_size IS NULL ORDER BY id',
-                (digest, size))]
+        candidates = _batch_candidates(db, digest, size, cancel_event)
     else:
         candidates = db.image_fingerprint_candidates(digest, size)
     for rec in candidates:
+        _check_reindex_cancelled(cancel_event)
         if rec["id"] == exclude_id:
             continue
         if dedup_batch is not None:
@@ -285,7 +361,8 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
         cached = rec.get("content_sha256")
         # Restores and external tools can preserve size/mtime while replacing
         # bytes. A different cached digest must not reject a same-size original.
-        measured = _dedup_fingerprint(db, original, digest)
+        measured = (dedup_batch.fingerprint(db, rec, original, digest, cancel_event)
+                    if dedup_batch is not None else _dedup_fingerprint(db, original, digest))
         if measured is None:
             continue
         actual, actual_size, mtime_ns = measured
@@ -800,7 +877,8 @@ def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
                     return {"file": name, "ok": False,
                             "error": "Selected session changed during import; select it again."}
             checkpoint()
-            duplicate = _find_duplicate(db, archive, digest.hexdigest(), size, dedup_batch=dedup_batch)
+            duplicate = _find_duplicate(db, archive, digest.hexdigest(), size,
+                                        dedup_batch=dedup_batch, cancel_event=cancel_event)
             if duplicate is not None:
                 return _duplicate_result(name, duplicate)
             missing = _missing_original(db, archive, digest.hexdigest(), size)

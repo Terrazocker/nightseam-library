@@ -703,9 +703,12 @@ without express or implied warranty.
 
 FITS compression utilities — CFITSIO 4.7.0 / zlib 1.3.2
 -----------------------------------------------------
-Unmodified official fpack/funpack are bundled with a static Microsoft C runtime.
-Sources and binary hashes: vendor/fits-tools/windows-x64/provenance.json.
-Rebuild: python scripts/build_fits_tools.py (Visual Studio C++ Build Tools).
+Unmodified official fpack/funpack are bundled for Windows x64 with a static
+Microsoft C runtime, and Linux x64 with static CFITSIO/zlib and dynamic libc/libm.
+Sources, binary hashes and licenses: vendor/fits-tools/windows-x64/ and
+vendor/fits-tools/linux-x64/ (provenance.json and accompanying license files).
+Rebuild: python scripts/build_fits_tools.py (Visual Studio C++ Build Tools on
+Windows; GCC, Make, binutils and CMake on Linux).
 
 Copyright (Unpublished--all rights reserved under the copyright laws of
 the United States), U.S. Government as represented by the Administrator

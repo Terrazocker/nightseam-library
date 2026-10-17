@@ -1,0 +1,70 @@
+name: Archive resource checks
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - app/archive_trash.py
+      - app/ingest.py
+      - app/file_version.py
+      - scripts/stress_dedup.py
+      - tests/test_dedup_stress.py
+      - tests/test_ingest_batch_admission.py
+      - tests/test_ingest_directory_pins.py
+      - tests/test_ingest_candidate_pages.py
+      - tests/test_import_http_lifecycle.py
+      - .github/workflows/archive-resource-checks.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: archive-resources-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resource_checks:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Prepare pinned source environment
+        run: |
+          New-Item -ItemType Directory -Path logs -Force | Out-Null
+          python -m venv .venv-build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-build/Scripts/python.exe -m pip install -r requirements-build-lock.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify resource observer and focused safety regressions
+        run: |
+          & .venv-build/Scripts/python.exe -m pytest tests/test_dedup_stress.py tests/test_ingest_batch_admission.py tests/test_ingest_directory_pins.py tests/test_ingest_candidate_pages.py tests/test_import_http_lifecycle.py -q --tb=short 2>&1 | Tee-Object -FilePath logs/resources-regressions.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: One exposure per directory at the real file-pin cap
+        run: |
+          & .venv-build/Scripts/python.exe scripts/stress_dedup.py --counts 4097 --files-per-directory 1 --output logs/resources-fanout.json 2>&1 | Tee-Object -FilePath logs/resources-fanout.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Deep shared ancestry with one exposure per directory
+        run: |
+          & .venv-build/Scripts/python.exe scripts/stress_dedup.py --counts 4097 --files-per-directory 1 --depth 8 --output logs/resources-deep.json 2>&1 | Tee-Object -FilePath logs/resources-deep.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Fifty requests with a warmed memory baseline
+        run: |
+          & .venv-build/Scripts/python.exe scripts/stress_dedup.py --counts 256 --cycles 50 --files-per-directory 1 --depth 8 --output logs/resources-stability.json 2>&1 | Tee-Object -FilePath logs/resources-stability.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain resource evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-resources-${{ github.sha }}
+          path: logs/resources-*
+          if-no-files-found: error

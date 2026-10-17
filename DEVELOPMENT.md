@@ -23,13 +23,52 @@ app/imglib.py derives objects and capture sessions for the interface.
 app/paths.py contains safe path and writable/resource-directory boundaries.
 Dedup comparisons measure same-size originals even if their database digest
 differs: external restores can preserve size and mtime. A bounded process-local
-negative-match memo avoids repeated full reads. app/file_version.py pins Windows
-writers/renames while comparing NTFS/ReFS file ID, size, LastWriteTime and native
-ChangeTime; unsupported filesystems/open writers disable memoization. POSIX uses
-identity and ctime. Only measured bytes populate the cache, and positive duplicate
+negative-match memo avoids repeated full reads on POSIX behind identity and ctime.
+app/file_version.py pins Windows writers/renames and includes an opaque handle
+lifetime in NTFS/ReFS versions: timestamps can collide after rapid same-size
+writes with restored mtime, so independently opened handles always rehash.
+Unsupported filesystems/open writers disable memoization. Only measured bytes
+populate the cache, and positive duplicate
 matches always rehash. A request-scoped DedupBatch pins up to 4,096 earlier
 same-size files and their directory lineage, validating their negative hashes
-once per batch. app/archive_lock.py reserves the archive for these authorized
+once per batch. Newly published files enter that index lazily when a later upload
+first encounters them as candidates: their current archive bytes are hashed under
+live file/directory pins, with lexical path and root identity validation. No upload
+or database digest alone admits a candidate. The index retains its root identity
+even when initially empty and acquires its lease on the first successful admission.
+Positive matches still rehash; failed admission and the 4,096-file bound retain
+individual checks. Cancellation reaches both admission and fallback reads, and
+temporary handles close on refusal. Publication and transaction boundaries remain
+unchanged; only previously committed candidates are pinned.
+Windows directory ancestry is shared within the request: each canonical directory
+has one live handle. A new candidate borrows successful ancestors and stages only
+its unseen suffix. New directory keys join the request cache only after the leaf
+pin, whole-byte hash and stable-version checks succeed. Failed admission closes
+the provisional suffix. File/child handles close before their owning ancestors;
+all keys clear before unrelated archive operations resume. An unrelated operation's
+thread-local pins never substitute for the batch's own directory lifetime.
+Preparation limits its ordered candidate SELECT to 4,096 rows in SQLite rather
+than materializing an entire matching library. Batched duplicate lookup reads
+256-row keyset pages with a fixed upper image ID, releases its cursor/DB lock
+before filesystem work and checks cancellation between candidates/pages. It
+still traverses every matching candidate, including legacy unknown sizes and
+entries beyond cache capacity; candidate pages are not a duplicate-search cap.
+The Windows index also budgets 16,384 combined handles: retained/provisional
+file and unique-directory pins leave two slots for the nested version pin and
+read stream used by hashing. A suffix is refused before opening beyond its
+allowance, and refused admission retains the existing byte-check fallback.
+Neither limit changes identity or publication rules. This bounds the request
+index and its hashing handles, not all process resources or SQLite working memory.
+`scripts/check_import_lifecycle.py --exe dist/NightSeam.exe` checks real packaged
+HTTP disconnect/queue behavior and native close while pins are still held. It
+uses restricted child runtime paths, a short external SQLite writer and only
+owned scratch. Completed-body disconnects drain accepted imports; they do not
+imply cancellation. The gate audits byte/history publication and requires exit
+zero, no descendants and a closed listener before forced job cleanup is allowed.
+Mutation middleware performs recovery-state queries in worker threads: waiting
+for a publication worker's SQLite connection lock must not block the event loop
+or prevent static UI responses. Recovery refusal and publication rules still apply.
+app/archive_lock.py reserves the archive for these authorized
 workers until pins close; unrelated mutations wait. Windows pins require actual
 GENERIC_READ access (attribute-only handles do not enforce the sharing policy).
 Unsupported versions/open writers/overflow retain individual checks. Admission
@@ -251,8 +290,10 @@ duplicate/restoration decisions and commits retain archive_lock. Missing-file
 representation recovery remains strictly verified. Resolver snapshots persist
 across requests until catalog table triggers or SQLite data_version invalidate
 them; each snapshot memoizes up to 4,096 hint/coordinate results. Native utility
-hashes are cached only behind pinned strong file versions of both binaries and
-provenance. Compression alias and import-run lookups have additive indexes.
+hashes are cached only behind supported file versions. Windows revalidates
+provenance and both binaries at every tools lookup; manual session jobs share one
+verified lookup with their workers. Compression alias and import-run lookups have
+additive indexes.
 
 Session conversion/copy uses bounded ThreadPoolExecutor workers for complete
 per-file preparation and publication. Unique <id>.output/<id>.roundtrip.fit
@@ -323,6 +364,84 @@ using device, inode, size and modification time. Python 3.12 can report creation
 time through stat and change time through fstat, so ctime is compared only within
 the same metadata source. Descriptor observations before/after reading retain
 change-time detection even when an external writer restores size and mtime.
+
+## Continuous validation and support
+
+`.github/workflows/windows-validation.yml` selects Linux source checks and
+Windows source/build/packaged browser/native checks for pull requests to main
+and pushes to main. Markdown-only diffs skip expensive jobs; unknown diffs run
+everything. The terminal `validation` job requires every selected platform to
+succeed, giving branch protection a stable check name. Branch protection is
+configured separately. Main-branch triggers and the weekly Sunday 02:17 UTC
+schedule take effect when the workflow is merged into main.
+
+Manual dispatch runs all correctness checks. Select `run_benchmarks=true` to
+also run the 512-file packaged import benchmark and isolated source profiler;
+the weekly run includes both. Artifacts retain logs, JUnit, measured JSON and
+packaged screenshots. The browser runner remains separate from application pins.
+
+Manual `run_scaling_checks=true` adds actual Windows request-pin stress at
+4,095/4,096/4,097 files, a packaged baseline/candidate comparison on that same
+runner, and a prepared manual-acceptance ZIP. These checks are opt-in because
+they build an additional historical executable and run four full imports.
+
+`python scripts/stress_dedup.py` seeds private small valid FITS directly into a
+private database, then exercises production preparation/lookup/close paths for
+three cycles at each boundary. It checks actual handles, bounded admission,
+fresh above-cap/positive hashes, exclusion of writers/unrelated archive work,
+cancelled-worker draining, aggregate handle drift and unchanged archived bytes.
+JSON includes live RSS/Python heap samples; RSS samples are not peak RSS and
+allocator retention is not automatically a leak. This is admission/handle stress,
+not full HTTP publication or realistic exposure-throughput measurement. Use
+`--files-per-directory 1` for a distinct parent per file; the default groups 32.
+
+`python scripts/compare_import.py --baseline-exe BEFORE.exe --candidate-exe AFTER.exe
+--baseline-commit BEFORE_SHA --candidate-commit AFTER_SHA` runs sequential AB/BA
+pairs using the current packaged HTTP benchmark and its byte/dedup/edit/Rice
+audits. Each run owns fresh stores and must confirm cleanup. CI builds pinned
+baseline `9c4f3128d2a3859c4c58c80fc3252d58bdbddbf9` (immediately before lazy
+admission) with the candidate's same pinned Python environment. Reports retain
+binary hashes, every sample and median/range, with no timing pass threshold.
+The machine is shared across samples; OS scheduling and warm caches remain
+uncontrolled. Artifact names retain all intermediate reports and controller logs.
+
+The acceptance ZIP carries the candidate executable, three synthetic fixtures,
+hash manifest, verification script and unrun result template. Follow
+`docs/windows-manual-acceptance.md` on a disposable clean/disconnected VM and
+physical displays; preparing the kit does not establish acceptance results.
+
+Measured boundary resources, same-runner comparison samples and artifact hashes
+are recorded in `docs/import-scaling-20261017.md`.
+
+The separate Archive resource checks workflow runs on manual dispatch and PRs
+affecting archive pins or their observer/tests. It exercises 4,097 files with one
+file per directory, repeats with `--depth 8`, then checks 50 request cycles on
+256 files with the same fan-out/depth. `--warmup-cycles 5` excludes the first five
+heap samples from the steady comparison. `--steady-heap-limit-bytes` defaults to
+two MiB; the report explicitly includes retained sample records and does not
+claim to rule out native leaks from RSS. Resource and byte/lease/cancellation
+failures remain fatal. Each population has fresh owned scratch.
+
+The toolbar's **Support report** downloads a local JSON attachment. It contains
+application/Python/OS/selected package versions, bundled FITS utility integrity,
+browser/native capability flags and numeric Chromium version. At most 25 warning
+or error categories from the current process are included. Raw messages,
+tracebacks, paths, library contents, settings and environment values are excluded.
+The report does not send anything externally and remains available during archive
+operations. Frozen builds explicitly retain the selected distribution metadata.
+
+`python scripts/profile_import.py` creates a private source server beneath
+`logs/browser/` and uses the benchmark's real HTTP uploads and integrity audits.
+Its default 512 equal-size FITS files and 24-file requests match the packaged
+workload. `--count`, `--batch-size` and `--output` allow smaller investigations.
+The private bootstrap installs selected synchronous function wrappers across
+worker threads, actual hash-byte counters and SQLite transaction counts. Normal
+application instances have no profiling endpoints or wrappers. Fixtures, startup,
+audits and duplicate/edit probes stay outside the measured interval. Exclusive
+phase CPU times can be added; wall times overlap across threads. Unwrapped work
+and instrumentation overhead remain unattributed. This selected-function source
+profile is not a packaged throughput baseline or a complete program call graph.
+Owned processes, listener and scratch must close successfully for the run to pass.
 
 ## Workspace upkeep
 

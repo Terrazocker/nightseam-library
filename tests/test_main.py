@@ -18,6 +18,23 @@ import pytest
 import main
 
 
+@pytest.mark.parametrize('existing', [False, True])
+def test_required_native_failure_never_launches_browser_fallback(monkeypatch, existing):
+    import logging
+    import sys
+
+    monkeypatch.setattr(main, 'existing_instance_url', lambda: 'http://127.0.0.1:1' if existing else None)
+    monkeypatch.setattr(main, 'setup_logging', lambda _: logging.getLogger('native-required-test'))
+    monkeypatch.setattr(main, 'run_native_window', lambda _: False)
+    def forbidden(*args, **kwargs):
+        pytest.fail('A required-native launch must never open a browser fallback')
+    monkeypatch.setattr(main, 'launch_app_window', forbidden)
+    monkeypatch.setattr(main.webbrowser, 'open', forbidden)
+    monkeypatch.setattr(sys, 'argv', ['main.py', '--require-native-window', '--port', str(_free_port())])
+    assert main.main() == 1
+    assert not main._instance_file().exists()
+
+
 def _listening_socket() -> tuple[socket.socket, int]:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind(("127.0.0.1", 0))

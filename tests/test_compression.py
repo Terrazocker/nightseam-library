@@ -62,16 +62,16 @@ def test_session_modes_parallel_workers_and_real_publication_progress(tmp_path, 
     calls, guard = [], threading.Lock()
     def observed(executable, *args):
         with guard:
-            calls.append(executable.name)
-            packs = calls.count('fpack.exe')
-        if executable.name == 'fpack.exe' and packs <= 2:
+            calls.append(executable.stem)
+            packs = calls.count('fpack')
+        if executable.stem == 'fpack' and packs <= 2:
             barrier.wait()
         return native(executable, *args)
     monkeypatch.setattr(compression, 'native', observed)
     reports = []
     result = run(db, 'compress', compression_mode=mode, publish=lambda report: reports.append(dict(report)))
-    assert calls.count('fpack.exe') == 4
-    assert calls.count('funpack.exe') == (4 if mode == 'safe' else 0)
+    assert calls.count('fpack') == 4
+    assert calls.count('funpack') == (4 if mode == 'safe' else 0)
     assert any(report['processed'] == 4 and report['published'] == 0 for report in reports)
     assert [report['published'] for report in reports] == sorted(report['published'] for report in reports)
     assert result['published'] == result['publication_total'] == 4
@@ -99,7 +99,7 @@ def test_progress_callback_failure_drains_workers_before_recovery(tmp_path, monk
     native, recovery = compression.native, compression.recover
     waiting, stopped = threading.Event(), threading.Event()
     def conversion(executable, flags, source, destination, checkpoint):
-        if executable.name == 'fpack.exe' and source.name == 'image-1.fit':
+        if executable.stem == 'fpack' and source.name == 'image-1.fit':
             waiting.set()
             try:
                 while True:
@@ -224,13 +224,13 @@ def test_failures_roll_back_session(tmp_path, monkeypatch, failure):
     def failing_native(*args):
         nonlocal calls
         calls += 1
-        if failure == 'second_file' and args[0].name == 'fpack.exe' and args[2].name == 'image-1.fit':
+        if failure == 'second_file' and args[0].stem == 'fpack' and args[2].name == 'image-1.fit':
             raise ValueError('synthetic tool failure')
         native(*args)
-        if failure == 'hash_mismatch' and args[0].name == 'funpack.exe':
+        if failure == 'hash_mismatch' and args[0].stem == 'funpack':
             output = args[3]
             output.write_bytes(output.read_bytes()[:-1] + b'X')
-        if failure == 'cancel' and args[0].name == 'funpack.exe':
+        if failure == 'cancel' and args[0].stem == 'funpack':
             cancel.set()
     monkeypatch.setattr(compression, 'native', failing_native)
     transaction = compression._transaction

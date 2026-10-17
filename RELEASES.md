@@ -1,5 +1,376 @@
 # Independent catalog release record
 
+## Bounded import resources and real HTTP lifecycle — October 17, 2026
+
+The first packaged lifecycle run found a real responsiveness issue: a queued
+upload's synchronous recovery checks blocked async middleware on the database
+lock while another import waited for an external SQLite writer. Its static UI
+probe timed out. The expanded source socket regression reproduced that failure;
+recovery checks now run in worker threads with their original refusal rules.
+The source/build/browser/native gates passed in that run (Linux 872/8 skips,
+Windows 878/2 skips, browser 24/24, native 7/7), but the overall lifecycle gate
+failed and is not counted as accepted native lifecycle validation.
+Recovery-preflight follow-up passed **126 focused HTTP/API/legacy-recovery
+tests** with the expanded static-response regression. The failing hosted run is
+[retained here](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39042004194);
+accepted final validation is recorded on the draft PR.
+
+Import preparation applies its 4,096-row cap in SQL. Duplicate lookup reads
+256-row keyset pages with a fixed upper ID and short database-lock scopes,
+preserving the complete candidate search and actual-byte positive checks.
+The request index caps combined file/directory handles at 16,384, reserving two
+slots for temporary hashing IO. It refuses an excessive suffix before opening
+beyond its allowance, releases provisional handles and retains earlier useful
+pins; overflow uses conservative reads and shallower candidates can still qualify.
+
+New regressions cover late-page/restored-mtime duplicates beyond admission,
+excluded/missing candidates, bounded preparation, cancellation, subsequent
+insertions, peak handle accounting and refusal before the first lease.
+A real-socket source check verifies complete-body disconnect draining, queued
+imports and graceful HTTP shutdown. The packaged gate also queues a harmless
+same-archive settings update, checks static UI responsiveness and closes the
+actual owned native window while a prior file still refuses writes. Both cases
+audit exact committed bytes, image/integrity/history units and staging cleanup;
+native shutdown must exit zero with no descendants/listener before job disposal.
+An isolated 50,000-row in-memory SQLite measurement lowered peak traced Python
+row materialization from 15,237,256 bytes to 1,238,344 for preparation. Complete
+paged traversal still visited all 50,000 rows and peaked at 181,541 bytes.
+This measures metadata allocations, not whole-process memory or HTTP throughput;
+raw local evidence is `logs/bounded-candidate-memory.json`. Final source and
+packaged outcomes are recorded on the draft PR and retained in CI artifacts.
+Initial local full validation passed **872 tests, eight skipped** in 227.03 seconds;
+the final HTTP test cleanup change passed its focused real-socket rerun.
+JavaScript, encoding/core guards and both workflow lint checks passed.
+Windows CI now requires ten pinning/process/budget/HTTP contracts to execute,
+alongside the fresh executable, browser/native UI and resource checks.
+
+## Shared directory ancestors — October 17, 2026
+
+The [baseline resource run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39037931678)
+passed all cleanup/cancellation/byte checks but measured 53,248 additional handles
+for 4,096 one-file-per-parent pins, rising to 86,016 with eight extra ancestors.
+Fifty deep-layout requests passed the warmed two-MiB heap gate (82,185 bytes of
+growth including retained reports); native handles returned to baseline or lower.
+
+Windows request indexes now retain one handle per unique directory. New suffix
+handles remain provisional until leaf/hash/version verification succeeds, and
+failure/cancellation closes only those additions. Directory keys never borrow
+an unrelated operation's thread-local pin lifetime. Acquisition/close ordering,
+Windows sharing flags, lexical/root checks, fresh positives/fallbacks, file cap
+and transaction behavior stay intact. Default recovery/compression callers retain
+their existing directory contexts. Fifty-two focused pin/compression checks pass
+locally, with three platform skips; the full local suite passed **865 tests,
+8 skipped**. Native sharing results are now recorded below.
+The Windows gate now requires the two new real directory-lifetime contracts.
+
+The [shared-ancestor resource run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39038863156)
+passed all 35 focused native regressions, six full-cap cycles and fifty smaller
+deep-layout cycles. Request-held handles fell **53,248 → 12,298** for fan-out and
+**86,016 → 12,306 (85.7% fewer)** with eight extra shared ancestors. Unique directory
+pins were 8,202/8,210; every candidate sample returned exactly to its 201-handle
+baseline, including cancellation. Archive hash counts stayed 4,099/257 per cycle.
+The warmed 45-sample retained-heap growth was 82,776 bytes including report records,
+below two MiB. Held heap ranges also fell; RSS and timings are observations on
+different AMD runners, not controlled comparisons. The mechanism keeps all byte,
+writer, root/alias, fallback and rollback contracts. See
+[the directory resource report](docs/import-directory-resources-20261017.md).
+
+## Directory fan-out and longer resource checks — October 17, 2026
+
+The resource stress tool now supports additional directory depth and records
+layout/path lengths, absolute retained Python heap and warmed steady-cycle
+growth. The default two-MiB retained-growth limit includes stored report samples;
+RSS remains observational. Focused regressions cover one-file-per-directory/deep
+layouts and deliberately retained allocations that must fail the growth gate.
+Seven resource tests pass locally with the Windows sampler check skipped here.
+A separate Windows workflow exercises 4,097-file fan-out, eight additional shared
+ancestors and fifty 256-file request cycles. It runs for relevant archive/observer
+PR changes or manual dispatch and retains each JSON/log.
+
+## Archive scaling and controlled comparison tools — October 17, 2026
+
+Added an opt-in Windows stress checker for 4,095/4,096/4,097 small valid FITS,
+three request-pin cycles, native handle/RSS/Python heap samples, capacity fallback,
+positive rehashing, writer/archive exclusion, cancellation draining and aggregate
+handle cleanup. Direct seeding isolates pin/lookup stress from HTTP throughput.
+Added a same-runner ABBA packaged comparison against the immediate pre-lazy
+baseline, using the same pinned build environment and all existing byte,
+duplicate/edit/Rice and owned-cleanup audits. Timings retain sample ranges and
+uncontrolled-cache caveats without speed thresholds. Manual CI retains all logs
+and reports. A local acceptance kit packages the executable, synthetic fixtures,
+manifest/verifier and unrun checklist for genuine clean/offline/display checks.
+
+The initial 15 focused regressions and full Linux suite (856 passed, 6 skipped)
+passed locally. The first Windows run passed 857 other tests but exposed retained
+executor semaphore handles in the stress observer. The worker probe now releases
+its executor scope before sampling, with a separate observer-handle regression;
+aggregate/per-request cleanup limits remain intact. Workflow lint and JavaScript/encoding/core
+checks pass. Preparing the kit does not execute physical or clean-VM acceptance.
+
+The corrected revision 9e38f14 passed Linux **857 tests, 6 skipped** and Windows
+**861 tests, 2 skipped**, including the five Windows resource-accounting checks.
+A parallel PR browser run passed 23/24 and native 7/7, exposing an immediate
+button count before the archive-health report's asynchronous rendering finished.
+The check now waits for the second session button before retaining the exact
+count/deletion assertions; no click or request is retried.
+
+The complete [measurement run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39033962051)
+passed all nine Windows boundary cycles and three cancellation checks. Handles
+returned to the initial baseline or lower; steady cycles retained 0.024–0.030 MiB
+of Python heap after cleanup. Held heap growth was 15.836–18.599 MiB, with
+82.559–97.863 MiB RSS while pins were held. Small retained-heap drift includes
+observer type-cache overhead; the sampler now caches its ctypes definitions,
+with a separate 200-sample Windows heap regression. All 12,288 archived files
+retained their hashes.
+The same-runner packaged ABBA comparison measured baseline imports of
+98.020/89.795 seconds and candidate imports of 55.548/58.812 seconds: median
+93.908 → 57.180 seconds, **39.1% lower elapsed time** for this small sample.
+All four full byte/duplicate/edit/Rice/cleanup audits passed. Both builds shared
+the pinned environment and two-CPU Intel runner; scheduling/caches remained
+uncontrolled, so the result is not a general timing guarantee. The source
+profile reconfirmed 6,034 hashes/25,041,582,720 archive bytes and 512 transactions.
+Browser **24/24** and native **7/7** passed. The generated acceptance kit's hashes
+were verified, with physical/clean-VM checks explicitly unrun. See
+[the scaling report](docs/import-scaling-20261017.md) for metrics, commands,
+limits, executable hashes and retained evidence.
+
+## Native smoke bridge startup — October 17, 2026
+
+A later PR run passed source/build/browser gates but failed its first native
+capability assertion with `Resulting promise was garbage collected`. The harness
+forced a reload during pywebview startup, allowing background bridge injections
+to overlap. It now observes the initial navigation and retains one capability
+Promise on the window while polling its settlement. Rejection, missing callbacks
+and timeout remain fatal; there are no RPC retries. Three JavaScript-engine
+regressions pass for retained pending calls, rejection and missing callbacks.
+This changes the smoke harness only; the successful import measurements below
+remain applicable.
+
+## Lazy request-local dedup admission — October 17, 2026
+
+Newly committed archive files now enter the Windows request-local negative index
+when a later upload first encounters them as candidates. Admission hashes current
+archive bytes under live writer-excluding file and directory pins, validates the
+lexical path/root identity, and retains at most 4,096 files. An initially empty
+batch takes its lease only on first successful admission. Positive duplicates
+still rehash; unsupported versions, open writers and capacity overflow retain
+current-byte checks. Failed admission retains no new handles. Request cleanup
+closes pins before releasing the lease, including cancellation and SQL failures.
+Publication and transaction boundaries are unchanged.
+
+A 24-file equal-size HTTP request now hashes 23 earlier files rather than 276.
+New regressions cover real Windows write/rename exclusion and open-writer fallback,
+first-lease ownership, positive rehashing, changed bytes before admission and
+restored-mtime edits across requests, internal leaf/parent aliases, root replacement,
+capacity/refused/failed admissions, cancellation on five paths, rollback and visible
+cleanup failure. The existing rename-race helper now forwards the cancellation
+argument without changing its contention or byte-preservation assertions.
+
+The repeated 512-file source profile measured **6,034 archive hashes and
+25,041,582,720 bytes read**, versus 11,368 hashes and 47,178,109,440 bytes before:
+**46.9% fewer archive bytes**. SQL SELECTs fell from 10,567 to 5,233, while all 512
+image/history transactions retained one BEGIN/COMMIT each. The separate packaged
+import took **69.023 seconds at 29.358 MiB/s**; all source/archive byte, duplicate,
+edit, Rice restoration and cleanup audits passed. The earlier run took 85.445
+seconds, but its AMD runner and the new Intel runner differ; these timings do not
+establish a controlled speedup. Both used Windows Server 2022/two logical CPUs
+without cold-cache control.
+[Successful measurement run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39029236559).
+
+The tested implementation is 2b9549666c5fdba0fb8624957d251154ea67d416.
+[PR validation](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39029221957)
+passed Linux **838 tests, 6 skipped**, Windows **842 tests, 2 skipped in 253.82
+seconds**, all six required Windows contracts, packaged browser **24/24**, and
+restricted native WinForms/WebView2 **7/7**. The separate measurement run's Linux
+suite passed **838 tests, 6 skipped in 179.59 seconds**. JavaScript, encoding/core,
+dependency and actionlint checks passed. The original popularity snapshot remains
+unavailable; the other skips have platform-specific coverage. Measurement evidence
+is retained in [the import profile](docs/import-profile-20261017.md).
+
+## Support diagnostics, continuous validation and import profiling — October 17, 2026
+
+Added a local **Support report** JSON download with allowlisted app/runtime/package
+versions, FITS utility integrity and at most 25 recent warning/error categories.
+It excludes raw messages, tracebacks, paths, library contents and environment
+values, and remains available during archive work. Frozen builds retain the seven
+selected distributions' metadata. The packaged keyboard-download check passed,
+including version availability, verified tools, privacy and concurrent export.
+
+CI now selects Linux and Windows source/build/packaged gates on pull requests and
+main pushes, with a stable terminal `validation` check. Markdown-only diffs skip
+expensive jobs; unknown diffs run everything. Weekly/manual runs can include larger
+measurements. Main/scheduled triggers take effect after merge; branch protection
+is configured separately. The separate browser environment is excluded from the
+shipped-text encoding scan, matching the existing application environments.
+
+The isolated source profiler counts actual SHA-256 bytes and SQLite transactions
+and measures selected synchronous phases across worker threads. Its real HTTP
+512-file run measured 11,368 archive hashes (47.178 GB) and 44.828 CPU seconds in
+archive hashing, 62.6% of process CPU. Both the source profile and separate packaged
+benchmark passed full byte, duplicate/edit and owned-cleanup audits; packaged Safe
+Rice/native restoration passed. Packaged import: 85.445 seconds, 23.716 MiB/s.
+See [the measured profile](docs/import-profile-20261017.md) for attribution limits.
+
+Local Linux source validation: **819 passed, 5 skipped in 186.08 seconds**;
+hosted Linux: **819 passed, 5 skipped in 151.01 seconds**. Hosted Windows:
+**822 passed, 2 skipped in 211.50 seconds**, all four required native contracts
+executed; restricted native window smoke **7/7**. JavaScript, encoding/core,
+dependency checks and actionlint passed. Measurement/source commit: efa2c929.
+[Run and retained evidence](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39014398000).
+
+The initial packaged browser gate passed 23/24, including the new support report,
+and found progress overlapping the toolbar at 900px. The header now reserves the
+indicator's intrinsic width and wraps actions. A focused Chromium check passed
+eleven widths from 480–1586px with count/clock/spinner and all actions contained;
+the permanent overlap gate now includes both sides of the 620px breakpoint.
+The complete packaged rerun is retained in
+[PR #1's validation checks](https://github.com/Terrazocker/nightseam-catalog/pull/1/checks).
+
+The original frozen popularity snapshot remains unavailable. Clean-VM/offline,
+physical DPI/monitor/Snap and native Save As acceptance remain manual; the
+documented Windows procedure covers those checks. No public release was made.
+
+## Windows import benchmark and restricted runtime — October 17, 2026
+
+The freshly packaged app imported 512 synthetic 4,150,080-byte FITS files through
+real HTTP in 24-file batches: **2,124,840,960 bytes in 87.017 seconds, 23.287 MiB/s**.
+The Windows Server 2022 runner had two logical CPUs. The first full request took
+11.032 seconds including resolver setup, later full requests ranged from 2.222 to
+4.673 seconds, and the last took 4.062 seconds. Generation/startup/audits/probes
+were excluded; caches were not flushed. Different hardware and the intervening
+cache safety correction prevent a controlled comparison to the old workstation.
+
+Every original source and initial archived copy matched its SHA-256. All 512 IDs
+and integrity records were present; duplicate probes retained class, session,
+capture coordinates and location, and an actual same-size/restored-mtime archive
+edit was detected on the next request. A fresh private instance passed Safe Rice
+ingest and actual native uncompress with byte-exact restoration. Both app instances
+and their scratch were cleaned up. Audit SQLite handles now close explicitly;
+a regression test proves closure without relying on garbage collection.
+
+The benchmark and native smoke used an empty child PATH with Python/Node
+environment overrides removed. Native WinForms/WebView2 passed **7/7** at 96 DPI;
+the browser gate passed **23/23**. The browser readiness helper now waits for
+requested window metrics and the body's dynamic viewport height to converge
+before geometry assertions, fixing a mixed-viewport sampling failure. Independent
+packaged checks execute after a successful build even if another check fails;
+any failed check still fails the overall job.
+
+Final Windows source validation: **814 passed, 2 skipped in 207.12 seconds**;
+all four required Windows contracts executed. Linux: **811 passed, 5 skipped in
+160.87 seconds**. JavaScript, encoding/core and dependency checks passed.
+Tested Windows commit: 9775ebae8206c4563ca4fa893faf88a8c9d6803c.
+https://github.com/Terrazocker/nightseam-catalog/actions/runs/39009833605
+Evidence: logs/windows-import-success.log and
+logs/windows-import-success/logs/windows-import-benchmark.json;
+logs/import-benchmark-linux.log/xml and logs/import-benchmark-js.log.
+
+The hosted machine retains installed OS/.NET/WebView2 components; network denial
+and clean-VM compatibility were not tested. Physical DPI changes, monitor
+transitions and Snap remain manual; docs/windows-manual-acceptance.md records the
+procedure. The original popularity snapshot provenance check remains blocked.
+
+## Packaged native Windows smoke - October 16, 2026
+
+The Windows workflow now tests a real WinForms/WebView2 window in addition to
+the packaged headless Chrome gate. All **7/7 native checks passed**: the real
+host bridge, standard frame styles, move/resize with stable interface density,
+maximize/restore, real folder-picker cancellation without changing the private
+archive, graceful close with every owned descendant/listener stopped, and saved
+normal placement. The runner measured 96 DPI and restored/saved bounds
+40,40,900,648. The embedded-page screenshot and measured results are retained.
+
+The harness isolates executable/data/archive/temp, LOCALAPPDATA and WebView2
+profiles. The new diagnostic --require-native-window option fails before browser
+fallback and rejects --browser/--no-browser combinations. Readiness now waits for
+WebView2's actual catalog target, the bridge's DOM marker using a CSP-safe selector,
+and the private archive input before opening Browse. Initial gate attempts exposed
+early page discovery and blocked string-evaluation assumptions in the new smoke;
+the application Content Security Policy remains unchanged.
+
+The final Windows run passed **807 tests, 2 skipped in 206.82 seconds**, all four
+required Windows contracts, a fresh executable build and **23/23 packaged browser
+checks**. Linux passed **804 tests, 5 skipped in 122.72 seconds**. JavaScript,
+encoding/core and dependency checks passed. Tested Windows commit:
+4f087058bf2b10a4f2860b219747f97631da71d7.
+https://github.com/Terrazocker/nightseam-catalog/actions/runs/38953312051
+Local evidence: logs/native-window-success.log,
+logs/native-artifact-success/tests/browser/artifacts/native-window.json and
+native-webview.png, logs/native-smoke-final-linux.log/xml.
+
+Physical display scaling changes, multiple-monitor transitions and Snap gestures
+still require manual hardware acceptance. The original frozen popularity snapshot
+remains unavailable; its provenance check is the only check unverified across both
+source platforms. No live replacement data was fetched.
+
+## Windows CI and cross-platform validation - October 16, 2026
+
+GitHub Actions on Windows Server 2022 x64 verified all 46 application dependency
+pins and ran the complete source suite on CPython 3.12.10. The initial run exposed
+a same-size/restored-mtime tool-cache collision. Windows file versions now include
+an opaque handle lifetime, preventing cached tool or negative-dedup reuse across
+unpinned gaps. Continuously held request pins retain batch reuse. Regression
+assertions still require changed utility bytes to fail integrity validation;
+individual Windows requests now explicitly expect conservative fresh reads.
+Current throughput has not been rebenchmarked after this safety correction.
+
+The corrected Windows run passed **803 tests, 2 skipped in 238.59 seconds**.
+The workflow separately required all four Windows-only process-tree, directory
+pinning, HTTP batch and file-sharing contracts to execute successfully. A fresh
+PyInstaller executable (0.1.0-g78b13b19) passed the packaged headless Chrome gate
+**23/23**, including actual Rice ingest/restoration, session symbols, responsive
+layout and map checks. The harness used private executable/data/archive/temp
+stores. Final Linux source validation passed **800 tests, 5 skipped in 122.10
+seconds**; JavaScript, encoding and core guards passed.
+
+Tested source commit: 78b13b19bdb01836646799655b4a2e98cbcde807.
+Successful Windows run with retained JUnit/log/browser artifacts:
+https://github.com/Terrazocker/nightseam-catalog/actions/runs/38946414023
+The Windows POSIX-only skip is covered on Linux. The sole check still unverified
+across both platforms is the original frozen popularity snapshot's provenance:
+the ignored raw snapshot and its metadata are unavailable here. No fresh data
+was fetched and no synthetic replacement was substituted. Local evidence:
+logs/windows-validation-success.log and logs/final-linux-tests.log/xml.
+
+## Linux x64 native FITS tools - October 16, 2026
+
+Source runs now select verified fpack/funpack bundles for Linux x64 or Windows
+x64, and explicitly reject unsupported platforms. The new Linux binaries use
+the same pinned, unmodified NASA CFITSIO 4.7.0 and zlib 1.3.2 sources as Windows.
+CFITSIO/zlib are statically linked; system glibc 2.34 or newer is required.
+Binary/source hashes, compiler/CMake versions, flags, dependency information and
+upstream licenses accompany the bundle. The shared build script supports native
+Linux rebuilds while retaining the Windows build and packaging path.
+
+Native-call observers and failure injection now identify tools independently of
+the Windows filename suffix. Integrity-cache tamper tests cover both bundles;
+new checks cover supported/unsupported platform selection and missing bundles.
+The focused native compression/ingest/performance suite passed **64 tests, 3
+skipped**. The final full suite passed **800 tests, 5 skipped in 121.61 seconds**,
+resolving all 29 failures from the earlier Linux run. Four skips cover Windows
+contracts; one covers an absent optional local popularity snapshot. JavaScript,
+encoding and core checks passed. Tests used private data/archive stores in logs/.
+Evidence: logs/linux-compression-tests.log, logs/linux-full-tests.log,
+logs/linux-full-tests.xml and logs/linux-js-check.log. Windows packaged desktop
+validation was not run in this Linux environment.
+
+## Linux cloud environment validation - October 16, 2026
+
+On Linux x64 with Python 3.12.14 and dependencies from requirements-dev.txt,
+the full source suite completed with **765 passed, 29 failed, 5 skipped in
+125.25 seconds**. All failures are in native compression (10), compressed
+ingest (16), or compression performance (3). The bundled Windows PE fpack.exe
+cannot execute here; native PermissionError failures also cause downstream
+publication assertions. Four skips cover Windows-specific contracts; one covers
+an absent local popularity snapshot.
+
+JavaScript imports, DOM references, syntax, encoding and core checks passed;
+pip check found no broken requirements. Tests used private stores under ignored
+logs/. No application code or native binaries changed. Windows packaging and
+the packaged desktop browser gate were not run on Linux. Full traceback evidence
+is in logs/environment-retest.log, machine-readable results in
+logs/environment-retest.xml, and JS output in logs/environment-retest-js.log.
+
 ## Session compression symbols - October 16, 2026
 
 Every capture-session row now shows a compact, distinct symbol for compressed,
