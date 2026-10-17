@@ -929,7 +929,7 @@ def desktop_catalog_import_progress(c):
              "the failure counter appears when a file fails")
     original_viewport = c.page.viewport_size
     try:
-        for width in (1586, 1366, 1281, 1280, 1279, 1240, 1101, 900, 480):
+        for width in (1586, 1366, 1281, 1280, 1279, 1240, 1101, 900, 621, 620, 480):
             c.page.set_viewport_size({"width": width, "height": 800})
             _settle_catalog_layout(c.page)
             collisions = c.page.evaluate("""() => {

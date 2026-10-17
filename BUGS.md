@@ -66,6 +66,13 @@ workstation. That workstation and larger archives remain unmeasured after the
 correction. Request-held batch pins still avoid repeated hashing within a request.
 See docs/import-performance-20261015.md for the run, audits and retained evidence.
 
+The October 17 worker-thread source profile measured 11,368 archive hashes and
+47.178 GB of actual reads for 2.125 GB of input. Archive hashing used 44.828 of
+71.578 process CPU seconds (62.6%); input copy/hash used 2.141 CPU seconds.
+This remains the leading measured CPU target. Cross-lifetime fresh reads and
+positive-duplicate verification must remain intact in any further optimisation.
+See docs/import-profile-20261017.md for methodology and limits.
+
 ## Windows handle sharing - October 15, 2026 (fixed)
 
 Behavioral tests proved READ_ATTRIBUTES-only handles did not exclude external

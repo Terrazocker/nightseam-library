@@ -518,7 +518,7 @@ body.catalog-only #topbar {
 }
 body.catalog-only .catalog-header-inner {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, max-content);
+  grid-template-columns: auto minmax(max-content, 1fr) minmax(0, max-content);
   align-items: center;
   width: 100%;
   min-height: 44px;
@@ -537,7 +537,7 @@ body.catalog-only .brand {
 body.catalog-only .catalog-brand-word { color: var(--text); }
 body.catalog-only .busy-slot {
   position: static;
-  width: 100%;
+  width: auto;
   max-width: 360px;
   height: auto;
   min-height: 0;

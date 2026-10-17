@@ -1,5 +1,48 @@
 # Independent catalog release record
 
+## Support diagnostics, continuous validation and import profiling — October 17, 2026
+
+Added a local **Support report** JSON download with allowlisted app/runtime/package
+versions, FITS utility integrity and at most 25 recent warning/error categories.
+It excludes raw messages, tracebacks, paths, library contents and environment
+values, and remains available during archive work. Frozen builds retain the seven
+selected distributions' metadata. The packaged keyboard-download check passed,
+including version availability, verified tools, privacy and concurrent export.
+
+CI now selects Linux and Windows source/build/packaged gates on pull requests and
+main pushes, with a stable terminal `validation` check. Markdown-only diffs skip
+expensive jobs; unknown diffs run everything. Weekly/manual runs can include larger
+measurements. Main/scheduled triggers take effect after merge; branch protection
+is configured separately. The separate browser environment is excluded from the
+shipped-text encoding scan, matching the existing application environments.
+
+The isolated source profiler counts actual SHA-256 bytes and SQLite transactions
+and measures selected synchronous phases across worker threads. Its real HTTP
+512-file run measured 11,368 archive hashes (47.178 GB) and 44.828 CPU seconds in
+archive hashing, 62.6% of process CPU. Both the source profile and separate packaged
+benchmark passed full byte, duplicate/edit and owned-cleanup audits; packaged Safe
+Rice/native restoration passed. Packaged import: 85.445 seconds, 23.716 MiB/s.
+See [the measured profile](docs/import-profile-20261017.md) for attribution limits.
+
+Local Linux source validation: **819 passed, 5 skipped in 186.08 seconds**;
+hosted Linux: **819 passed, 5 skipped in 151.01 seconds**. Hosted Windows:
+**822 passed, 2 skipped in 211.50 seconds**, all four required native contracts
+executed; restricted native window smoke **7/7**. JavaScript, encoding/core,
+dependency checks and actionlint passed. Measurement/source commit: efa2c929.
+[Run and retained evidence](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39014398000).
+
+The initial packaged browser gate passed 23/24, including the new support report,
+and found progress overlapping the toolbar at 900px. The header now reserves the
+indicator's intrinsic width and wraps actions. A focused Chromium check passed
+eleven widths from 480–1586px with count/clock/spinner and all actions contained;
+the permanent overlap gate now includes both sides of the 620px breakpoint.
+The complete packaged rerun is retained in
+[PR #1's validation checks](https://github.com/Terrazocker/nightseam-catalog/pull/1/checks).
+
+The original frozen popularity snapshot remains unavailable. Clean-VM/offline,
+physical DPI/monitor/Snap and native Save As acceptance remain manual; the
+documented Windows procedure covers those checks. No public release was made.
+
 ## Windows import benchmark and restricted runtime — October 17, 2026
 
 The freshly packaged app imported 512 synthetic 4,150,080-byte FITS files through
