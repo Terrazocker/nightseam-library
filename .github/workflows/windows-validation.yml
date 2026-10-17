@@ -260,19 +260,19 @@ jobs:
       - name: Prepare pinned Linux package environment
         run: |
           mkdir -p logs
-          python -m venv .venv-linux
-          .venv-linux/bin/python -m pip install -r requirements-build-linux-lock.txt
-          .venv-linux/bin/python -m pip check
+          python -m venv .venv-build
+          .venv-build/bin/python -m pip install -r requirements-build-linux-lock.txt
+          .venv-build/bin/python -m pip check
       - name: Build portable Linux x86_64 browser bundle
         run: |
           set -o pipefail
-          .venv-linux/bin/python scripts/build_linux.py 2>&1 | tee logs/linux-package-build.log
+          .venv-build/bin/python scripts/build_linux.py 2>&1 | tee logs/linux-package-build.log
       - name: Validate the extracted frozen runtime with restricted PATH
         run: |
           set -o pipefail
           packages=(dist/NightSeam-Catalog-*-linux-x86_64.tar.gz)
           test "${#packages[@]}" -eq 1
-          .venv-linux/bin/python scripts/check_linux_package.py --bundle "${packages[0]}" 2>&1 | tee logs/linux-package-smoke.log
+          .venv-build/bin/python scripts/check_linux_package.py --bundle "${packages[0]}" 2>&1 | tee logs/linux-package-smoke.log
       - name: Prepare separate Linux browser environment
         run: |
           python -m venv .venv-browser

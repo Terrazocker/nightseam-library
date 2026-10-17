@@ -33,9 +33,9 @@ To build from a clean checkout on glibc Linux x86_64, with Python 3.12, Node
 (source checks) and binutils installed:
 
 ```sh
-python3.12 -m venv .venv-linux
-.venv-linux/bin/python -m pip install -r requirements-build-linux-lock.txt
-.venv-linux/bin/python scripts/build_linux.py
+python3.12 -m venv .venv-build
+.venv-build/bin/python -m pip install -r requirements-build-linux-lock.txt
+.venv-build/bin/python scripts/build_linux.py
 ```
 
 Output is `dist/NightSeam-Catalog-VERSION-linux-x86_64/` plus `.tar.gz` and its
