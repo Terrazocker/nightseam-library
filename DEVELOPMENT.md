@@ -65,6 +65,9 @@ uses restricted child runtime paths, a short external SQLite writer and only
 owned scratch. Completed-body disconnects drain accepted imports; they do not
 imply cancellation. The gate audits byte/history publication and requires exit
 zero, no descendants and a closed listener before forced job cleanup is allowed.
+Mutation middleware performs recovery-state queries in worker threads: waiting
+for a publication worker's SQLite connection lock must not block the event loop
+or prevent static UI responses. Recovery refusal and publication rules still apply.
 app/archive_lock.py reserves the archive for these authorized
 workers until pins close; unrelated mutations wait. Windows pins require actual
 GENERIC_READ access (attribute-only handles do not enforce the sharing policy).

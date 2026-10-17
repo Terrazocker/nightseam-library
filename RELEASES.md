@@ -2,6 +2,19 @@
 
 ## Bounded import resources and real HTTP lifecycle — October 17, 2026
 
+The first packaged lifecycle run found a real responsiveness issue: a queued
+upload's synchronous recovery checks blocked async middleware on the database
+lock while another import waited for an external SQLite writer. Its static UI
+probe timed out. The expanded source socket regression reproduced that failure;
+recovery checks now run in worker threads with their original refusal rules.
+The source/build/browser/native gates passed in that run (Linux 872/8 skips,
+Windows 878/2 skips, browser 24/24, native 7/7), but the overall lifecycle gate
+failed and is not counted as accepted native lifecycle validation.
+Recovery-preflight follow-up passed **126 focused HTTP/API/legacy-recovery
+tests** with the expanded static-response regression. The failing hosted run is
+[retained here](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39042004194);
+accepted final validation is recorded on the draft PR.
+
 Import preparation applies its 4,096-row cap in SQL. Duplicate lookup reads
 256-row keyset pages with a fixed upper ID and short database-lock scopes,
 preserving the complete candidate search and actual-byte positive checks.
@@ -25,7 +38,7 @@ paged traversal still visited all 50,000 rows and peaked at 181,541 bytes.
 This measures metadata allocations, not whole-process memory or HTTP throughput;
 raw local evidence is `logs/bounded-candidate-memory.json`. Final source and
 packaged outcomes are recorded on the draft PR and retained in CI artifacts.
-Local full validation passed **872 tests, eight skipped** in 227.03 seconds;
+Initial local full validation passed **872 tests, eight skipped** in 227.03 seconds;
 the final HTTP test cleanup change passed its focused real-socket rerun.
 JavaScript, encoding/core guards and both workflow lint checks passed.
 Windows CI now requires ten pinning/process/budget/HTTP contracts to execute,

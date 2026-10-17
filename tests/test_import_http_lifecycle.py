@@ -1,10 +1,13 @@
 """Real sockets exercise complete-body disconnects and server shutdown drain."""
 from contextlib import ExitStack, closing
+import json
+import select
 import socket
 import sqlite3
 import threading
 from types import SimpleNamespace
 import uuid
+import urllib.request
 
 import uvicorn
 
@@ -48,12 +51,18 @@ def test_real_http_disconnect_queue_and_shutdown_preserve_units(tmp_path, monkey
                 assert blocker.execute('SELECT COUNT(*) FROM images').fetchone()[0] == 1
                 first.close()
                 queued = start('queued.fits', 2)
+                mutation = connections.enter_context(closing(gate.send(target, '/api/settings',
+                    'application/json', json.dumps({'image_dir': str(archive)}).encode('utf-8'))))
+                assert not select.select([queued, mutation], [], [], .1)[0]
+                with urllib.request.urlopen(f'http://127.0.0.1:{port}/catalog.html', timeout=1) as page:
+                    assert page.status == 200, 'Queued database preflight blocked the event loop'
             finally:
                 blocker.rollback()
                 if first is not None:
                     first.close()
             try:
                 gate.imported(queued)
+                assert gate.response(mutation)['ok']
             finally:
                 if queued is not None:
                     queued.close()

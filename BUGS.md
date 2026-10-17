@@ -1,5 +1,15 @@
 # Current NightSeam Catalog findings
 
+## Queued mutation recovery checks blocked the event loop — October 17, 2026 (fixed)
+
+The new packaged lifecycle gate reproduced a static UI timeout while an
+external SQLite writer paused import publication and another upload arrived.
+Async middleware called recovery-state queries synchronously; the connection
+lock held by the publication worker then blocked the event loop. The same
+real-socket regression failed locally before the fix. Recovery queries now run
+in worker threads, retaining the same refusal rules while queued requests wait
+off the event loop. Native final validation is recorded on the draft PR.
+
 ## Repeated directory ancestor pins — October 17, 2026 (mitigated)
 
 The baseline index shared exact parents but reopened their complete ancestry.
