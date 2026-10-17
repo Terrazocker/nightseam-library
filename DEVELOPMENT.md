@@ -40,6 +40,13 @@ Positive matches still rehash; failed admission and the 4,096-file bound retain
 individual checks. Cancellation reaches both admission and fallback reads, and
 temporary handles close on refusal. Publication and transaction boundaries remain
 unchanged; only previously committed candidates are pinned.
+Windows directory ancestry is shared within the request: each canonical directory
+has one live handle. A new candidate borrows successful ancestors and stages only
+its unseen suffix. New directory keys join the request cache only after the leaf
+pin, whole-byte hash and stable-version checks succeed. Failed admission closes
+the provisional suffix. File/child handles close before their owning ancestors;
+all keys clear before unrelated archive operations resume. An unrelated operation's
+thread-local pins never substitute for the batch's own directory lifetime.
 app/archive_lock.py reserves the archive for these authorized
 workers until pins close; unrelated mutations wait. Windows pins require actual
 GENERIC_READ access (attribute-only handles do not enforce the sharing policy).

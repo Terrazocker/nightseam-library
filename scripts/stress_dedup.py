@@ -205,6 +205,7 @@ def exercise(root, count, cycles=3, files_per_directory=32, depth=0,
                         'Positive duplicate was not freshly hashed')
                 live_heap, peak_heap = tracemalloc.get_traced_memory()
                 folders = len(index.folders)
+                directories = len(index.directories)
             finally:
                 index.close()
                 ingest._fingerprint_file = original
@@ -217,6 +218,7 @@ def exercise(root, count, cycles=3, files_per_directory=32, depth=0,
             bench.require(available(db) and not index.entries and not index.folders,
                 'Request cleanup retained pins or an archive lease')
             results.append(dict(cycle=cycle + 1, pinned_files=pinned, pinned_parents=folders,
+                unique_directory_pins=directories,
                 archive_hashes=reads, before=before, held=held, after_observer=after_observer, after=after,
                 held_python_heap_growth_bytes=live_heap - heap_before,
                 after_python_heap_growth_bytes=tracemalloc.get_traced_memory()[0] - heap_before,

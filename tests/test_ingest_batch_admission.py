@@ -133,14 +133,14 @@ def test_failed_or_bounded_admission_falls_back_without_retaining_handles(tmp_pa
     real_parent, real_version = archive_trash._parent, ingest.pinned_version
     active = []
     @contextmanager
-    def parent(*args):
+    def parent(*args, **kwargs):
         if reason == 'parent_error':
             raise OSError('synthetic directory pin refusal')
-        with real_parent(*args):
+        with real_parent(*args, **kwargs) as opened:
             token = object()
             active.append(token)
             try:
-                yield
+                yield opened
             finally:
                 active.remove(token)
     monkeypatch.setattr(archive_trash, '_parent', parent)
@@ -171,6 +171,7 @@ def test_failed_or_bounded_admission_falls_back_without_retaining_handles(tmp_pa
             assert upload(db, archive, exposure(i), dedup_batch=index)['ok']
             expected = int(reason == 'capacity' and i > 0)
             assert len(index.entries) == len(index.folders) == len(active) == expected
+            assert bool(index.directories) == (os.name == 'nt' and bool(expected))
         assert index.leased == (reason == 'capacity')
         assert len(reads) == (4 if reason == 'capacity' else 6)
     finally:
@@ -262,7 +263,7 @@ def test_cancelled_lazy_hash_drains_before_stage_cleanup_and_never_admits(tmp_pa
         monkeypatch.setattr(ingest, 'pinned_version', unsupported)
     elif mode == 'parent_refusal':
         @contextmanager
-        def refusal(*args):
+        def refusal(*args, **kwargs):
             raise OSError('synthetic pin refusal')
             yield
         monkeypatch.setattr(archive_trash, '_parent', refusal)

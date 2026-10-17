@@ -11,6 +11,7 @@ on:
       - scripts/stress_dedup.py
       - tests/test_dedup_stress.py
       - tests/test_ingest_batch_admission.py
+      - tests/test_ingest_directory_pins.py
       - .github/workflows/archive-resource-checks.yml
 
 permissions:
@@ -44,7 +45,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify resource observer and focused safety regressions
         run: |
-          & .venv-build/Scripts/python.exe -m pytest tests/test_dedup_stress.py tests/test_ingest_batch_admission.py -q --tb=short 2>&1 | Tee-Object -FilePath logs/resources-regressions.log
+          & .venv-build/Scripts/python.exe -m pytest tests/test_dedup_stress.py tests/test_ingest_batch_admission.py tests/test_ingest_directory_pins.py -q --tb=short 2>&1 | Tee-Object -FilePath logs/resources-regressions.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: One exposure per directory at the real file-pin cap
         run: |

@@ -1,6 +1,7 @@
 """Recovery-only support for exposures retained by the retired trash feature."""
 from contextlib import contextmanager, ExitStack
 from datetime import datetime, UTC
+from functools import lru_cache
 import ctypes
 import json
 import logging
@@ -161,31 +162,57 @@ def _payload(entry):
 
 
 @contextmanager
-def _parent(root, relative, identity):
-    """Pin Windows directory lineage; anchor POSIX renames to directory handles."""
+def _windows_directory_pin(folder):
+    """Exclude directory deletion/rename with the existing lineage pin flags."""
+    if folder.is_symlink() or folder.is_junction():
+        raise TrashUnavailable('Linked archive paths cannot be moved.')
+    kernel = _windows_directory_api()
+    handle = kernel.CreateFileW(str(folder), 0x80000000, 3, None, 3, 0x02000000 | 0x00200000, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        if folder.is_symlink() or folder.is_junction() or not folder.is_dir():
+            raise TrashUnavailable('An archive directory changed during the operation.')
+        yield
+    finally:
+        kernel.CloseHandle(handle)
+
+
+@lru_cache(maxsize=1)
+def _windows_directory_api():
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+                                  ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
+    kernel.CreateFileW.restype = ctypes.c_void_p
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    return kernel
+
+
+@contextmanager
+def _parent(root, relative, identity, *, held=None):
+    """Pin lineage, optionally borrowing the caller's live Windows directories.
+
+    Returned new directory keys stay provisional: the caller publishes them
+    only if it retains this context for the same lifetime as its held keys.
+    POSIX callers still receive their anchored directory descriptor.
+    """
     target = _contained(root, relative, identity)
-    if os.name == 'nt' and (root, identity, target.parent) in getattr(_PINNED_LINEAGE, 'parents', ()):
+    if os.name == 'nt' and held is None and (root, identity, target.parent) in getattr(_PINNED_LINEAGE, 'parents', ()):
         yield None
         return
     with ExitStack() as stack:
         if os.name == "nt":
-            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-            kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
-                                          ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
-            kernel.CreateFileW.restype = ctypes.c_void_p
-            kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+            opened = set() if held is not None else None
             for folder in [*reversed(target.parent.parents), target.parent]:
-                if folder.is_symlink() or folder.is_junction():
-                    raise TrashUnavailable("Linked archive paths cannot be moved.")
-                handle = kernel.CreateFileW(str(folder), 0x80000000, 3, None, 3, 0x02000000 | 0x00200000, None)
-                if handle == ctypes.c_void_p(-1).value:
-                    raise ctypes.WinError(ctypes.get_last_error())
-                stack.callback(kernel.CloseHandle, handle)
-                # The directory cannot be renamed/reparsed after it is pinned.
-                if folder.is_symlink() or folder.is_junction() or not folder.is_dir():
-                    raise TrashUnavailable("An archive directory changed during the operation.")
+                if held is not None and folder in held:
+                    continue
+                stack.enter_context(_windows_directory_pin(folder))
+                if opened is not None:
+                    opened.add(folder)
             _contained(root, relative, identity)
-            yield None
+            # Caller publishes these keys only if it retains this context. A
+            # refused candidate releases its provisional suffix immediately.
+            yield opened
         else:
             flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
             fd = os.open(root, flags)

@@ -129,7 +129,9 @@ jobs:
             'test_http_batch_checks_earlier_files_once_and_detects_next_request_edits',
             'test_batch_pins_refuse_writes_and_renames_until_closed',
             'test_empty_batch_first_admission_leases_archive_and_releases_pins',
-            'test_lazy_admission_with_open_writer_retains_no_pins'
+            'test_lazy_admission_with_open_writer_retains_no_pins',
+            'test_request_directory_pins_share_common_ancestors_and_exclude_writers',
+            'test_request_directory_pins_outlive_external_pin_context'
           )
           foreach ($name in $required) {
             $cases = @($report.testsuites.testsuite.testcase | Where-Object { $_.name -eq $name })

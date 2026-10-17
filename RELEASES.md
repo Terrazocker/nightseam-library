@@ -1,5 +1,23 @@
 # Independent catalog release record
 
+## Shared directory ancestors — October 17, 2026
+
+The [baseline resource run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39037931678)
+passed all cleanup/cancellation/byte checks but measured 53,248 additional handles
+for 4,096 one-file-per-parent pins, rising to 86,016 with eight extra ancestors.
+Fifty deep-layout requests passed the warmed two-MiB heap gate (82,185 bytes of
+growth including retained reports); native handles returned to baseline or lower.
+
+Windows request indexes now retain one handle per unique directory. New suffix
+handles remain provisional until leaf/hash/version verification succeeds, and
+failure/cancellation closes only those additions. Directory keys never borrow
+an unrelated operation's thread-local pin lifetime. Acquisition/close ordering,
+Windows sharing flags, lexical/root checks, fresh positives/fallbacks, file cap
+and transaction behavior stay intact. Default recovery/compression callers retain
+their existing directory contexts. Fifty-two focused pin/compression checks pass
+locally, with three platform skips; native fan-out results require the next run.
+The Windows gate now requires the two new real directory-lifetime contracts.
+
 ## Directory fan-out and longer resource checks — October 17, 2026
 
 The resource stress tool now supports additional directory depth and records

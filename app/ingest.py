@@ -69,6 +69,7 @@ class DedupBatch:
         self.root = None
         self.identity = None
         self.folders = set()
+        self.directories = set()
         self.leased = False
 
     def close(self):
@@ -85,6 +86,7 @@ class DedupBatch:
                     self.db = self.root = self.identity = None
                     self.entries.clear()
                     self.folders.clear()
+                    self.directories.clear()
 
     def negative(self, record, incoming):
         entry = self.entries.get(record['id'])
@@ -109,8 +111,10 @@ class DedupBatch:
                     if _contained(self.root, record['file'], self.identity) != path:
                         raise ValueError('Candidate is outside its pinned archive.')
                     parent = path.parent
+                    opened = None
                     if parent not in self.folders:
-                        context.enter_context(_parent(self.root, record['file'], self.identity))
+                        options = {'held': self.directories} if os.name == 'nt' else {}
+                        opened = context.enter_context(_parent(self.root, record['file'], self.identity, **options))
                     version = context.enter_context(pinned_version(path))
                     before = version() if version else None
                     if before is not None:
@@ -121,6 +125,8 @@ class DedupBatch:
                                 db.archive_lock.reserve(self)
                                 self.leased = True
                             self.stack.enter_context(context.pop_all())
+                            if os.name == 'nt' and opened is not None:
+                                self.directories.update(opened)
                             self.folders.add(parent)
                             self.entries[record['id']] = record['file'], measured[0]
                         return measured
