@@ -1,5 +1,57 @@
 # Windows import profile — October 17, 2026
 
+## Lazy admission results
+
+The request-local index now admits newly committed candidates lazily, measuring
+current archive bytes under continuously held file/directory pins. Later negative
+comparisons reuse that proof during the request. Positives rehash, and every new
+request performs fresh checks. No upload or database digest alone admits a file.
+
+The identical 512-file/24-per-request workload produced these measurements:
+
+| Measurement | Before | With lazy admission |
+| --- | --- | --- |
+| Incoming bytes | 2,124,840,960 | 2,124,840,960 |
+| Complete archive hashes | 11,368 | 6,034 |
+| Archive bytes read | 47,178,109,440 | 25,041,582,720 |
+| Candidate visits | 130,816 | 130,816 |
+| Pinned negative hits | 124,992 | 130,326 |
+| SQL SELECT statements | 10,567 | 5,233 |
+| Actual SQL BEGIN / COMMIT | 512 / 512 | 512 / 512 |
+| Source profile import wall time | 88.733 seconds | 67.837 seconds |
+| Source process CPU | 71.578 seconds | 66.578 seconds |
+| Archive hashing CPU | 44.828 seconds | 35.516 seconds |
+| Separate packaged import | 85.445 seconds | 69.023 seconds |
+| Packaged throughput | 23.716 MiB/s | 29.358 MiB/s |
+
+Archive hashing read **22,136,526,720 fewer bytes (46.9%)** and performed 5,334 fewer
+complete hashes. Candidate visits remain unchanged; additional pinned negatives
+also avoid 5,334 full-row SQLite fetches. A focused 24-new-file HTTP regression
+requires 23 earlier-file hashes instead of the former 276, while potential
+duplicates still trigger fresh verification. Reads across closed handle lifetimes
+remain conservative.
+
+Both measurements used Windows Server 2022 and two logical CPUs, but the earlier
+runner reported AMD64 Family 25 Model 17 Stepping 1 and the new runner Intel64
+Family 6 Model 106 Stepping 6. Caches were not flushed. The read-count reduction is
+directly measured on identical inputs; wall/CPU timings across these separate
+machines do not establish a controlled speedup. The source profile includes
+instrumentation overhead and is separate from packaged throughput.
+
+All 512 source/archive pairs, duplicate identity/class/session/location and
+same-size/restored-mtime edit probes passed. Safe Rice/native restoration passed
+in the packaged run, and both runs closed their owned processes/listeners/scratch.
+The measurement run also passed 842 Windows source tests (two skips), all six
+required Windows contracts, browser 24/24 and restricted native window 7/7.
+
+Optimized commit: 2b9549666c5fdba0fb8624957d251154ea67d416.
+Executable SHA-256: 6c2a7133908c0f2c157f20f38b293ea5857f45a68d5854fdb37c5304261961fe.
+[Successful measurement run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39029236559).
+Artifact: `windows-validation-2b9549666c5fdba0fb8624957d251154ea67d416`.
+Local JSON/logs: `logs/lazy-dedup-measurements/logs/`.
+
+## Original profile before lazy admission
+
 Archive rehashing dominated this measured plain-FITS import. The isolated source
 server performed **11,368 complete archive hashes, reading 47,178,109,440 bytes**
 for 2,124,840,960 incoming bytes. Archive hashing consumed 44.828 of 71.578 process

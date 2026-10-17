@@ -1,5 +1,46 @@
 # Independent catalog release record
 
+## Lazy request-local dedup admission — October 17, 2026
+
+Newly committed archive files now enter the Windows request-local negative index
+when a later upload first encounters them as candidates. Admission hashes current
+archive bytes under live writer-excluding file and directory pins, validates the
+lexical path/root identity, and retains at most 4,096 files. An initially empty
+batch takes its lease only on first successful admission. Positive duplicates
+still rehash; unsupported versions, open writers and capacity overflow retain
+current-byte checks. Failed admission retains no new handles. Request cleanup
+closes pins before releasing the lease, including cancellation and SQL failures.
+Publication and transaction boundaries are unchanged.
+
+A 24-file equal-size HTTP request now hashes 23 earlier files rather than 276.
+New regressions cover real Windows write/rename exclusion and open-writer fallback,
+first-lease ownership, positive rehashing, changed bytes before admission and
+restored-mtime edits across requests, internal leaf/parent aliases, root replacement,
+capacity/refused/failed admissions, cancellation on five paths, rollback and visible
+cleanup failure. The existing rename-race helper now forwards the cancellation
+argument without changing its contention or byte-preservation assertions.
+
+The repeated 512-file source profile measured **6,034 archive hashes and
+25,041,582,720 bytes read**, versus 11,368 hashes and 47,178,109,440 bytes before:
+**46.9% fewer archive bytes**. SQL SELECTs fell from 10,567 to 5,233, while all 512
+image/history transactions retained one BEGIN/COMMIT each. The separate packaged
+import took **69.023 seconds at 29.358 MiB/s**; all source/archive byte, duplicate,
+edit, Rice restoration and cleanup audits passed. The earlier run took 85.445
+seconds, but its AMD runner and the new Intel runner differ; these timings do not
+establish a controlled speedup. Both used Windows Server 2022/two logical CPUs
+without cold-cache control.
+[Successful measurement run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39029236559).
+
+The tested implementation is 2b9549666c5fdba0fb8624957d251154ea67d416.
+[PR validation](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39029221957)
+passed Linux **838 tests, 6 skipped**, Windows **842 tests, 2 skipped in 253.82
+seconds**, all six required Windows contracts, packaged browser **24/24**, and
+restricted native WinForms/WebView2 **7/7**. The separate measurement run's Linux
+suite passed **838 tests, 6 skipped in 179.59 seconds**. JavaScript, encoding/core,
+dependency and actionlint checks passed. The original popularity snapshot remains
+unavailable; the other skips have platform-specific coverage. Measurement evidence
+is retained in [the import profile](docs/import-profile-20261017.md).
+
 ## Support diagnostics, continuous validation and import profiling — October 17, 2026
 
 Added a local **Support report** JSON download with allowlisted app/runtime/package

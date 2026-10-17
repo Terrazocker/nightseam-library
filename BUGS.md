@@ -73,6 +73,14 @@ This remains the leading measured CPU target. Cross-lifetime fresh reads and
 positive-duplicate verification must remain intact in any further optimisation.
 See docs/import-profile-20261017.md for methodology and limits.
 
+Lazy request-local admission subsequently reduced the same workload to 6,034
+archive hashes and 25.042 GB read (46.9% fewer bytes), with 5,233 SELECTs instead
+of 10,567. Candidate visits still total 130,816, and new requests still rehash
+across closed Windows handle lifetimes. The packaged run took 69.023 seconds,
+but used a different Intel runner rather than the earlier AMD runner; no controlled
+timing speedup is claimed. Larger archives remain unmeasured. See the updated
+profile report for the validated implementation and audits.
+
 ## Windows handle sharing - October 15, 2026 (fixed)
 
 Behavioral tests proved READ_ATTRIBUTES-only handles did not exclude external

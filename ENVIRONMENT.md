@@ -33,9 +33,16 @@ hashing. A post-correction hosted Windows run imported 512 equal-size FITS files
 (2.12 GB) in 87.02 seconds, averaging 23.29 MiB/s on two logical CPUs. The original
 workstation has not been remeasured. See docs/import-performance-20261015.md.
 
+Lazy admission of newly committed files into the request-local index now reduces
+the same 512-file workload's archive reads from 47.178 GB to 25.042 GB (46.9%).
+The new packaged run took 69.023 seconds, 29.358 MiB/s, on a different Intel
+runner; the earlier run used AMD hardware. These timings are not a controlled
+comparison. Full byte/duplicate/edit and native Rice audits passed. See
+docs/import-profile-20261017.md for the source profile, limits and retained JSON.
+
 The Catalog validation workflow selects Linux and Windows correctness checks on
 pull requests and main pushes, with a stable terminal `validation` check. The
-Windows job runs the pinned source suite, requires four native Windows contracts
+Windows job runs the pinned source suite, requires native Windows pinning/process contracts
 to pass, builds a fresh executable, and checks it with headless Chrome and a real
 native WinForms/WebView2 window using private data. Weekly and optional manual
 runs add larger benchmarks; see DEVELOPMENT.md. These permanent triggers become

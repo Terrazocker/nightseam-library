@@ -31,7 +31,16 @@ Unsupported filesystems/open writers disable memoization. Only measured bytes
 populate the cache, and positive duplicate
 matches always rehash. A request-scoped DedupBatch pins up to 4,096 earlier
 same-size files and their directory lineage, validating their negative hashes
-once per batch. app/archive_lock.py reserves the archive for these authorized
+once per batch. Newly published files enter that index lazily when a later upload
+first encounters them as candidates: their current archive bytes are hashed under
+live file/directory pins, with lexical path and root identity validation. No upload
+or database digest alone admits a candidate. The index retains its root identity
+even when initially empty and acquires its lease on the first successful admission.
+Positive matches still rehash; failed admission and the 4,096-file bound retain
+individual checks. Cancellation reaches both admission and fallback reads, and
+temporary handles close on refusal. Publication and transaction boundaries remain
+unchanged; only previously committed candidates are pinned.
+app/archive_lock.py reserves the archive for these authorized
 workers until pins close; unrelated mutations wait. Windows pins require actual
 GENERIC_READ access (attribute-only handles do not enforce the sharing policy).
 Unsupported versions/open writers/overflow retain individual checks. Admission
