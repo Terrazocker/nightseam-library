@@ -1,5 +1,17 @@
 # Independent catalog release record
 
+## Directory fan-out and longer resource checks — October 17, 2026
+
+The resource stress tool now supports additional directory depth and records
+layout/path lengths, absolute retained Python heap and warmed steady-cycle
+growth. The default two-MiB retained-growth limit includes stored report samples;
+RSS remains observational. Focused regressions cover one-file-per-directory/deep
+layouts and deliberately retained allocations that must fail the growth gate.
+Seven resource tests pass locally with the Windows sampler check skipped here.
+A separate Windows workflow exercises 4,097-file fan-out, eight additional shared
+ancestors and fifty 256-file request cycles. It runs for relevant archive/observer
+PR changes or manual dispatch and retains each JSON/log.
+
 ## Archive scaling and controlled comparison tools — October 17, 2026
 
 Added an opt-in Windows stress checker for 4,095/4,096/4,097 small valid FITS,

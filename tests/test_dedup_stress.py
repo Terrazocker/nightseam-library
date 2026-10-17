@@ -35,6 +35,31 @@ def test_stress_refuses_existing_directory(tmp_path):
         stress.exercise(tmp_path, 1)
 
 
+def test_fanout_deep_paths_and_longer_stability_samples(tmp_path, monkeypatch):
+    monkeypatch.setattr(ingest, '_WINDOWS_BATCH_PINS', True)
+    monkeypatch.setattr(ingest, '_FINGERPRINT_CACHE_LIMIT', 0)
+    monkeypatch.setattr(ingest, '_BATCH_PIN_LIMIT', 8)
+    result = stress.exercise(tmp_path / 'deep', 9, cycles=8, files_per_directory=1,
+        depth=4, warmup_cycles=2)
+    assert all(c['pinned_parents'] == 8 for c in result['cycles'])
+    assert result['additional_depth'] == 4 and result['files_per_directory'] == 1
+    assert result['steady_state']['measured_cycles'] == 6
+    assert result['steady_state']['retained_python_growth_bytes'] < 2 * 1024**2
+
+
+def test_steady_state_detects_accumulating_retained_memory(tmp_path, monkeypatch):
+    monkeypatch.setattr(ingest, '_WINDOWS_BATCH_PINS', True)
+    monkeypatch.setattr(ingest, '_FINGERPRINT_CACHE_LIMIT', 0)
+    retained, close = [], ingest.DedupBatch.close
+    def leaking(index):
+        close(index)
+        retained.append(bytearray(512 * 1024))
+    monkeypatch.setattr(ingest.DedupBatch, 'close', leaking)
+    with pytest.raises(RuntimeError, match='Steady request cycles retained'):
+        stress.exercise(tmp_path / 'leak', 3, cycles=8, warmup_cycles=2,
+            steady_heap_limit_bytes=1024**2)
+
+
 def test_worker_probe_releases_its_own_observer_handles(tmp_path):
     db = stress.Database(tmp_path / 'observer.db')
     try:

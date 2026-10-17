@@ -1,5 +1,14 @@
 # Current NightSeam Catalog findings
 
+## Repeated directory ancestor pins — October 17, 2026 (under measurement)
+
+The request-local index shares exact parent pins, but each new parent currently
+reopens its complete directory lineage. Directory handles therefore scale with
+distinct parents times ancestor depth, in addition to the 4,096-file cap.
+The earlier 32-files-per-parent check measured 5,833 total handles at the cap.
+One-file-per-parent and deeper-path checks now measure the amplification and
+cleanup before choosing a request-scoped shared-ancestor implementation.
+
 ## Archive-health browser readiness — October 17, 2026 (fixed in harness)
 
 PR run 39033952706 passed source/build/native gates but its health-deletion check

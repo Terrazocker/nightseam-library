@@ -385,6 +385,15 @@ physical displays; preparing the kit does not establish acceptance results.
 Measured boundary resources, same-runner comparison samples and artifact hashes
 are recorded in `docs/import-scaling-20261017.md`.
 
+The separate Archive resource checks workflow runs on manual dispatch and PRs
+affecting archive pins or their observer/tests. It exercises 4,097 files with one
+file per directory, repeats with `--depth 8`, then checks 50 request cycles on
+256 files with the same fan-out/depth. `--warmup-cycles 5` excludes the first five
+heap samples from the steady comparison. `--steady-heap-limit-bytes` defaults to
+two MiB; the report explicitly includes retained sample records and does not
+claim to rule out native leaks from RSS. Resource and byte/lease/cancellation
+failures remain fatal. Each population has fresh owned scratch.
+
 The toolbar's **Support report** downloads a local JSON attachment. It contains
 application/Python/OS/selected package versions, bundled FITS utility integrity,
 browser/native capability flags and numeric Chromium version. At most 25 warning

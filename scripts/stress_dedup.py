@@ -80,7 +80,7 @@ def worker_available(db):
         return pool.submit(available, db).result(timeout=5)
 
 
-def seed(db, archive, count, files_per_directory):
+def seed(db, archive, count, files_per_directory, depth=0):
     archive.mkdir()
     records = []
     template = compressed_gate_image(False)
@@ -88,7 +88,8 @@ def seed(db, archive, count, files_per_directory):
         for number in range(count):
             raw = bytearray(template)
             raw[2880:2888] = struct.pack('>Q', number)
-            relative = f'stress/session-{number // files_per_directory:05d}/light/{number:05d}.fits'
+            prefix = '/'.join(['stress', *(f'd{i:02d}' for i in range(depth))])
+            relative = f'{prefix}/session-{number // files_per_directory:05d}/light/{number:05d}.fits'
             path = archive / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(raw)
@@ -136,7 +137,8 @@ async def cancelled_preparation(db, archive, size, checkpoint):
     return {'hash_checkpoint': reads, 'worker_drained': True, 'lease_released': True}
 
 
-def exercise(root, count, cycles=3, files_per_directory=32):
+def exercise(root, count, cycles=3, files_per_directory=32, depth=0,
+             warmup_cycles=5, steady_heap_limit_bytes=2 * 1024**2):
     """Root is newly allocated private scratch; never accept an existing archive."""
     bench.require(not root.exists(), 'Stress scratch must be a new directory')
     root.mkdir()
@@ -145,7 +147,7 @@ def exercise(root, count, cycles=3, files_per_directory=32):
     original = ingest._fingerprint_file
     tracing = False
     try:
-        records = seed(db, archive, count, files_per_directory)
+        records = seed(db, archive, count, files_per_directory, depth)
         size, cap = records[0]['file_size'], ingest._BATCH_PIN_LIMIT
         # Initialise native APIs and the discardable cache before the baseline.
         ingest._dedup_fingerprint(db, archive / records[0]['file'], '')
@@ -208,6 +210,7 @@ def exercise(root, count, cycles=3, files_per_directory=32):
                 ingest._fingerprint_file = original
             gc.collect()
             after = resources()
+            heap_after = tracemalloc.get_traced_memory()[0]
             bench.require(after['handles'] <= before['handles'] + 2,
                 f'A request leaked native handles: before={before}, held={held}, '
                 f'after_observer={after_observer}, after={after}')
@@ -217,6 +220,7 @@ def exercise(root, count, cycles=3, files_per_directory=32):
                 archive_hashes=reads, before=before, held=held, after_observer=after_observer, after=after,
                 held_python_heap_growth_bytes=live_heap - heap_before,
                 after_python_heap_growth_bytes=tracemalloc.get_traced_memory()[0] - heap_before,
+                after_python_heap_bytes=heap_after,
                 traced_peak_bytes=peak_heap, elapsed_seconds=time.perf_counter() - started))
             print(f'{count} files, cycle {cycle + 1}: {pinned} pinned; {reads} hashes; handles {before["handles"]}/{held["handles"]}/{after["handles"]}', flush=True)
         cancellation_before = resources()
@@ -227,6 +231,16 @@ def exercise(root, count, cycles=3, files_per_directory=32):
         final_resources = resources()
         bench.require(final_resources['handles'] <= case_baseline['handles'] + 2,
             f'Repeated requests accumulated native handles: before={case_baseline}, after={final_resources}')
+        steady = results[warmup_cycles:]
+        stability = None
+        if len(steady) >= 2:
+            retained_growth = steady[-1]['after_python_heap_bytes'] - steady[0]['after_python_heap_bytes']
+            bench.require(retained_growth <= steady_heap_limit_bytes,
+                f'Steady request cycles retained {retained_growth} Python bytes; limit {steady_heap_limit_bytes}')
+            stability = dict(warmup_cycles=warmup_cycles, measured_cycles=len(steady),
+                retained_python_growth_bytes=retained_growth, limit_bytes=steady_heap_limit_bytes,
+                rss_start_bytes=steady[0]['after']['rss_bytes'], rss_end_bytes=steady[-1]['after']['rss_bytes'],
+                includes_retained_report_samples=True, native_memory_leak_absence_established=False)
         for record in records:
             bench.require(bench.digest(archive / record['file']) == record['content_sha256'], 'Stress changed source bytes')
         bench.require(db.conn.execute('SELECT COUNT(*) FROM images').fetchone()[0] == count,
@@ -234,6 +248,9 @@ def exercise(root, count, cycles=3, files_per_directory=32):
         bench.require(not any(p.name.startswith('.nightseam-') or p.suffix == '.part'
             for p in archive.rglob('*')), 'Stress left staging files')
         return dict(files=count, file_bytes=size, seeded_bytes=count * size, cycles=results,
+            files_per_directory=files_per_directory, additional_depth=depth,
+            longest_absolute_path_chars=max(len(str(archive / r['file'])) for r in records),
+            steady_state=stability,
             cancellation=cancelled, case_baseline=case_baseline, final_resources=final_resources,
             all_archive_hashes_verified=count, pending_or_staging=0)
     finally:
@@ -251,12 +268,14 @@ def run(args):
     (scratch / '.owner-pid').write_text(str(os.getpid()), encoding='utf-8')
     report = dict(status='running', os=platform.platform(), cpu=platform.processor(),
         logical_cpus=os.cpu_count(), pin_limit=ingest._BATCH_PIN_LIMIT,
+        source_commit=os.environ.get('GITHUB_SHA'),
         windows_writer_exclusion_tested=os.name == 'nt',
         workload='small FITS; admission/handle stress, not realistic exposure throughput', cases=[])
     try:
         for count in args.counts:
             report['cases'].append(exercise(scratch / str(count), count,
-                args.cycles, args.files_per_directory))
+                args.cycles, args.files_per_directory, getattr(args, 'depth', 0),
+                getattr(args, 'warmup_cycles', 5), getattr(args, 'steady_heap_limit_bytes', 2 * 1024**2)))
         report['status'] = 'passed'
     except BaseException as exc:
         report.update(status='failed', error=f'{type(exc).__name__}: {exc}')
@@ -277,12 +296,17 @@ def main():
     parser.add_argument('--counts', type=int, nargs='+', default=[4095, 4096, 4097])
     parser.add_argument('--cycles', type=int, default=3)
     parser.add_argument('--files-per-directory', type=int, default=32)
+    parser.add_argument('--depth', type=int, default=0, help='additional shared ancestor directories')
+    parser.add_argument('--warmup-cycles', type=int, default=5)
+    parser.add_argument('--steady-heap-limit-bytes', type=int, default=2 * 1024**2)
     parser.add_argument('--output', type=Path, default=ROOT / 'logs/windows-dedup-stress.json')
     args = parser.parse_args()
     if os.name != 'nt':
         parser.error('authoritative request-pin stress requires Windows NTFS/ReFS')
     if min(args.counts) < 1 or args.cycles < 1 or args.files_per_directory < 1:
         parser.error('counts, cycles and files per directory must be positive')
+    if args.depth < 0 or args.warmup_cycles < 0 or args.steady_heap_limit_bytes < 0:
+        parser.error('depth, warmup cycles and steady heap limit must be nonnegative')
     run(args)
 
 
