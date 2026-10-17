@@ -583,11 +583,11 @@ def test_library_rename_waits_for_duplicate_verification_without_stale_paths(cli
     entered, release = threading.Event(), threading.Event()
     original = ingest._fingerprint_file
 
-    def paused(path):
+    def paused(path, cancel=None):
         assert not db.lock._is_owned()
         entered.set()
         assert release.wait(8)
-        return original(path)
+        return original(path, cancel)
 
     monkeypatch.setattr(ingest, "_fingerprint_file", paused)
     with ThreadPoolExecutor(max_workers=2) as pool:
