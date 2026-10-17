@@ -5,6 +5,23 @@ hosted Windows runner. CI's empty-PATH smoke retains installed OS/.NET/WebView2
 components and does not impose network denial. Its virtual display and emulated
 browser viewports do not establish physical DPI, monitor-transition or Snap behavior.
 
+## Prepared acceptance kit
+
+Manual CI dispatch with `run_scaling_checks=true` prepares
+`logs/windows-acceptance-kit.zip` in the Windows validation artifact. Alternatively
+run `python scripts/make_acceptance_kit.py --exe dist/NightSeam.exe --output logs/windows-acceptance-kit.zip`
+after a fresh build. Packaging does not execute any manual acceptance check.
+
+Extract the kit into a new private directory on the test VM. It contains the
+executable, three distinct synthetic FITS, a SHA-256 manifest, this procedure,
+licenses, `Verify-Kit.ps1` and `results.template.json`. Run
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\Verify-Kit.ps1` before launch.
+Copy the results template to `results.json`, record the machine/runtime/network
+and display configuration, and replace each `not_run` only after observing that
+check. Retain the executable hash, screenshots and restored-FITS hash evidence.
+All executable data stays beside the kit's executable; explicitly select a
+private archive before upload, as described below. Do not use an existing catalog.
+
 ## Clean Windows and disconnected operation
 
 Use a disposable VM with a clean Windows base installation and no Python, Node

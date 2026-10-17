@@ -11,6 +11,10 @@ on:
         description: Run the larger packaged import benchmark and source profile
         type: boolean
         default: false
+      run_scaling_checks:
+        description: Check the 4096-pin boundary and compare packaged builds on this runner
+        type: boolean
+        default: false
   schedule:
     - cron: '17 2 * * 0'
 
@@ -139,6 +143,40 @@ jobs:
         run: |
           & .venv-build/Scripts/python.exe scripts/profile_import.py 2>&1 | Tee-Object -FilePath logs/windows-import-profile.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Stress the actual request pin boundary and cancellation cleanup
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_scaling_checks }}
+        run: |
+          & .venv-build/Scripts/python.exe scripts/stress_dedup.py 2>&1 | Tee-Object -FilePath logs/windows-dedup-stress.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check out the immediate pre-lazy-admission baseline
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_scaling_checks }}
+        uses: actions/checkout@v4
+        with:
+          ref: 9c4f3128d2a3859c4c58c80fc3252d58bdbddbf9
+          path: logs/scaling-baseline
+          persist-credentials: false
+      - name: Build the baseline with the same pinned Python environment
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_scaling_checks }}
+        run: |
+          $sharedPython = (Resolve-Path .venv-build).Path
+          $baselineEnvironment = Join-Path (Get-Location).Path 'logs/scaling-baseline/.venv-build'
+          New-Item -ItemType Junction -Path $baselineEnvironment -Target $sharedPython | Out-Null
+          try {
+            & ./logs/scaling-baseline/build.ps1 -AllowDirty 2>&1 | Tee-Object -FilePath (Join-Path $env:GITHUB_WORKSPACE 'logs/windows-baseline-build.log')
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            [System.IO.Directory]::Delete($baselineEnvironment)
+          }
+      - name: Compare packaged baseline and candidate sequentially in ABBA order
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_scaling_checks }}
+        run: |
+          & .venv-build/Scripts/python.exe scripts/compare_import.py --baseline-exe logs/scaling-baseline/dist/NightSeam.exe --candidate-exe dist/NightSeam.exe --baseline-commit 9c4f3128d2a3859c4c58c80fc3252d58bdbddbf9 --candidate-commit $env:GITHUB_SHA 2>&1 | Tee-Object -FilePath logs/windows-import-comparison.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prepare a private kit for clean-VM and physical-desktop acceptance
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_scaling_checks }}
+        run: |
+          & .venv-build/Scripts/python.exe scripts/make_acceptance_kit.py 2>&1 | Tee-Object -FilePath logs/windows-acceptance-kit.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prepare separate browser environment
         id: browser_environment
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
@@ -169,6 +207,10 @@ jobs:
             logs/windows-tests.xml
             logs/windows-import-benchmark.json
             logs/windows-import-profile.json
+            logs/windows-dedup-stress.json
+            logs/windows-import-comparison.json
+            logs/windows-import-comparison-runs/
+            logs/windows-acceptance-kit.zip
             logs/import-profile-*.log
             logs/benchmark-nightseam.log*
             tests/browser/artifacts/

@@ -1,5 +1,22 @@
 # Independent catalog release record
 
+## Archive scaling and controlled comparison tools — October 17, 2026
+
+Added an opt-in Windows stress checker for 4,095/4,096/4,097 small valid FITS,
+three request-pin cycles, native handle/RSS/Python heap samples, capacity fallback,
+positive rehashing, writer/archive exclusion, cancellation draining and aggregate
+handle cleanup. Direct seeding isolates pin/lookup stress from HTTP throughput.
+Added a same-runner ABBA packaged comparison against the immediate pre-lazy
+baseline, using the same pinned build environment and all existing byte,
+duplicate/edit/Rice and owned-cleanup audits. Timings retain sample ranges and
+uncontrolled-cache caveats without speed thresholds. Manual CI retains all logs
+and reports. A local acceptance kit packages the executable, synthetic fixtures,
+manifest/verifier and unrun checklist for genuine clean/offline/display checks.
+
+The 15 focused regressions pass locally. Workflow lint and JavaScript/encoding/core
+checks pass. Windows boundary and controlled timing results require the opt-in
+runner; preparing the kit does not execute physical or clean-VM acceptance.
+
 ## Native smoke bridge startup — October 17, 2026
 
 A later PR run passed source/build/browser gates but failed its first native

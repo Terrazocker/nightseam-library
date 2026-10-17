@@ -352,6 +352,36 @@ also run the 512-file packaged import benchmark and isolated source profiler;
 the weekly run includes both. Artifacts retain logs, JUnit, measured JSON and
 packaged screenshots. The browser runner remains separate from application pins.
 
+Manual `run_scaling_checks=true` adds actual Windows request-pin stress at
+4,095/4,096/4,097 files, a packaged baseline/candidate comparison on that same
+runner, and a prepared manual-acceptance ZIP. These checks are opt-in because
+they build an additional historical executable and run four full imports.
+
+`python scripts/stress_dedup.py` seeds private small valid FITS directly into a
+private database, then exercises production preparation/lookup/close paths for
+three cycles at each boundary. It checks actual handles, bounded admission,
+fresh above-cap/positive hashes, exclusion of writers/unrelated archive work,
+cancelled-worker draining, aggregate handle drift and unchanged archived bytes.
+JSON includes live RSS/Python heap samples; RSS samples are not peak RSS and
+allocator retention is not automatically a leak. This is admission/handle stress,
+not full HTTP publication or realistic exposure-throughput measurement. Use
+`--files-per-directory 1` for a distinct parent per file; the default groups 32.
+
+`python scripts/compare_import.py --baseline-exe BEFORE.exe --candidate-exe AFTER.exe
+--baseline-commit BEFORE_SHA --candidate-commit AFTER_SHA` runs sequential AB/BA
+pairs using the current packaged HTTP benchmark and its byte/dedup/edit/Rice
+audits. Each run owns fresh stores and must confirm cleanup. CI builds pinned
+baseline `9c4f3128d2a3859c4c58c80fc3252d58bdbddbf9` (immediately before lazy
+admission) with the candidate's same pinned Python environment. Reports retain
+binary hashes, every sample and median/range, with no timing pass threshold.
+The machine is shared across samples; OS scheduling and warm caches remain
+uncontrolled. Artifact names retain all intermediate reports and controller logs.
+
+The acceptance ZIP carries the candidate executable, three synthetic fixtures,
+hash manifest, verification script and unrun result template. Follow
+`docs/windows-manual-acceptance.md` on a disposable clean/disconnected VM and
+physical displays; preparing the kit does not establish acceptance results.
+
 The toolbar's **Support report** downloads a local JSON attachment. It contains
 application/Python/OS/selected package versions, bundled FITS utility integrity,
 browser/native capability flags and numeric Chromium version. At most 25 warning

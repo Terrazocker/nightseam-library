@@ -40,6 +40,12 @@ runner; the earlier run used AMD hardware. These timings are not a controlled
 comparison. Full byte/duplicate/edit and native Rice audits passed. See
 docs/import-profile-20261017.md for the source profile, limits and retained JSON.
 
+Manual CI's `run_scaling_checks=true` additionally exercises the real Windows
+4,096-pin boundary and builds the immediate pre-lazy baseline for sequential
+ABBA packaged comparisons on the same runner. See DEVELOPMENT.md for commands,
+resource-measurement limits and the private acceptance ZIP. Physical displays
+and a genuinely clean/disconnected Windows VM still need separate acceptance.
+
 The Catalog validation workflow selects Linux and Windows correctness checks on
 pull requests and main pushes, with a stable terminal `validation` check. The
 Windows job runs the pinned source suite, requires native Windows pinning/process contracts
