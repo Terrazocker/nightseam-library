@@ -159,7 +159,7 @@ class HashProxy:
 
 
 def instrument(measurements):
-    from app import database, fits_metadata, imglib, ingest
+    from app import compression, database, fits_metadata, imglib, ingest
     # Replace module bindings, not the process-global hashlib/sqlite3 modules.
     ingest.hashlib = HashProxy(measurements)
     class Connection(sqlite3.Connection):
@@ -187,8 +187,19 @@ def instrument(measurements):
                 measurements.add(archive_hashes_incomplete=1)
             return result
     ingest._fingerprint_file = archive_hash
+    for attribute in ('_candidate_rows', '_alias_rows'):
+        if not hasattr(ingest, attribute):
+            continue  # The same controller can measure the earlier baseline.
+        original = getattr(ingest, attribute)
+        def fetched(*args, _original=original, _name=attribute, **kwargs):
+            with measurements.phase(_name.lstrip('_')):
+                rows = _original(*args, **kwargs)
+                measurements.add(**{_name.lstrip('_') + '_fetched': len(rows)})
+                return rows
+        setattr(ingest, attribute, fetched)
     for attribute, phase in (
         ('_dedup_fingerprint', 'candidate_validation'), ('_find_duplicate', 'duplicate_lookup'),
+        ('_known_duplicate', 'positive_preflight'),
         ('_copy_spooled_upload', 'incoming_copy_hash'), ('_finalize_import', 'publication'),
         ('_prepare_stage', 'stage_create'), ('_remove_stage', 'stage_cleanup'),
         ('_header_session', 'session_assignment'), ('_archive_target', 'archive_destination')):
@@ -210,9 +221,11 @@ def instrument(measurements):
     for attribute in ('all_objects', 'catalog_revision', 'image', 'images_for_object'):
         setattr(database.Database, attribute,
                 measurements.wrap(f'database_{attribute}', getattr(database.Database, attribute)))
+    compression.native = measurements.wrap('native_tool', compression.native)
+    compression.encode_verified = measurements.wrap('rice_encode_verify', compression.encode_verified)
 
 
-def child(root, port):
+def child(root, port, seed_count=0):
     import uvicorn
     from app import paths
     root = root.resolve()
@@ -228,6 +241,9 @@ def child(root, port):
     (root / 'data').mkdir()
     db = Database(root / 'data/nightseam.db')
     db.update_settings({'image_dir': str(root / 'archive')})
+    if seed_count:
+        from scripts.profile_populated_import import seed
+        seed(db, root / 'archive', seed_count, root / 'seed-manifest.json')
     app = create_app(db)
     runtime = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=port,
         log_level='warning', access_log=False))
@@ -256,9 +272,10 @@ def child(root, port):
 
 
 class SourceServer(harness.DesktopServer):
-    def __init__(self, stderr_log=None):
+    def __init__(self, stderr_log=None, seed_count=0):
         super().__init__(ROOT / 'main.py', seed=False)
         self.stderr_log = stderr_log or ROOT / 'logs/import-profile-child-stderr.log'
+        self.seed_count = seed_count
 
     def _start(self, timeout):
         self.port = harness.free_port()
@@ -270,7 +287,8 @@ class SourceServer(harness.DesktopServer):
         self.stderr_log.parent.mkdir(parents=True, exist_ok=True)
         with self.stderr_log.open('w', encoding='utf-8') as stream:
             self.tree = harness.ProcessTree([sys.executable, str(Path(__file__).resolve()),
-                '--child', str(self.tmp), '--port', str(self.port)], cwd=str(ROOT), env=environment,
+                '--child', str(self.tmp), '--port', str(self.port), '--seed-count', str(self.seed_count)],
+                cwd=str(ROOT), env=environment,
                 stdout=stream, stderr=harness.subprocess.STDOUT)
         self.proc = self.tree.proc
         self.base = f'http://127.0.0.1:{self.port}/'
@@ -335,6 +353,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--child', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--port', type=int, help=argparse.SUPPRESS)
+    parser.add_argument('--seed-count', type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument('--count', type=int, default=512)
     parser.add_argument('--batch-size', type=int, default=24)
     parser.add_argument('--output', type=Path, default=ROOT / 'logs/windows-import-profile.json')
@@ -342,7 +361,7 @@ def main():
     if args.child is not None:
         if not args.port:
             parser.error('a private child port is required')
-        child(args.child, args.port)
+        child(args.child, args.port, args.seed_count)
     else:
         if args.count < 3 or not 1 <= args.batch_size <= 24:
             parser.error('count must be at least 3 and batch size must be 1..24')

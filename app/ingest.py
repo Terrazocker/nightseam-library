@@ -20,6 +20,7 @@ from collections import OrderedDict
 from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from itertools import chain
 
 from . import fits as fitsio
 from . import imglib
@@ -157,11 +158,9 @@ class DedupBatch:
                 info = root.stat()
                 index.db, index.root = db, root
                 index.identity = info.st_dev, info.st_ino
-                with db.lock:
-                    marks = ','.join('?' for _ in sizes)
-                    records = [dict(row) for row in db.conn.execute(
-                        f'SELECT id,file FROM images WHERE file_size IN ({marks}) OR file_size IS NULL ORDER BY id LIMIT ?',
-                        (*sizes, _BATCH_PIN_LIMIT))]
+                records = _candidate_rows(db,
+                    [('file_size=?', (size,)) for size in sizes] + [('file_size IS NULL', ())],
+                    limit=_BATCH_PIN_LIMIT, fingerprints=False)
                 for record in records:
                     _check_reindex_cancelled(cancel)
                     path = paths.safe_join(root, record['file'])
@@ -277,13 +276,35 @@ def _fingerprint_file(path: Path, cancel_event=None) -> tuple[str, int, int] | N
         return None
 
 
-def _batch_candidates(db, digest, size, cancel=None):
+def _candidate_rows(db, selectors, *, limit, upper=None, after=None, fingerprints=True):
+    """Merge indexed ID-ordered streams instead of sorting all remaining hits.
+
+    UNION removes overlap between hash/size/unknown-size matches. A stable ID
+    uniquely identifies the row, so merging preserves the former OR ordering.
+    Selectors are internal SQL constants; all values remain bound parameters.
+    """
+    bounds = ('' if upper is None else ' AND id<=?') + ('' if after is None else ' AND id>?')
+    ids = (() if upper is None else (upper,)) + (() if after is None else (after,))
+    projection = 'id,file' + (',content_sha256,file_size,file_mtime_ns' if fingerprints else '')
+    query = ' UNION '.join(f'SELECT {projection} FROM images WHERE {where}{bounds}'
+                           for where, _ in selectors) + ' ORDER BY id LIMIT ?'
+    values = tuple(value for _, args in selectors for value in (*args, *ids)) + (limit,)
+    with db.lock:
+        cursor = db.conn.execute(query, values)
+        try:
+            return [dict(row) for row in cursor]
+        finally:
+            cursor.close()
+
+
+def _image_candidates(db, selectors, cancel=None):
     """Read bounded pages without retaining a cursor/DB lock during file IO.
 
     The archive lock serializes publication; an upper ID also prevents later
     insertions from extending this search. Every matching candidate up to that
     boundary remains eligible, even after admission reaches its pin budget.
     """
+    _check_reindex_cancelled(cancel)
     with db.lock:
         upper = db.conn.execute('SELECT MAX(id) FROM images').fetchone()[0]
     if upper is None:
@@ -291,23 +312,54 @@ def _batch_candidates(db, digest, size, cancel=None):
     last = None
     while True:
         _check_reindex_cancelled(cancel)
-        after = '' if last is None else ' AND id>?'
-        args = (digest, size, upper) + (() if last is None else (last,)) + (_CANDIDATE_PAGE_SIZE,)
-        with db.lock:
-            cursor = db.conn.execute(
-                'SELECT id,file FROM images WHERE '
-                '(content_sha256=? OR file_size=? OR file_size IS NULL) AND id<=?'
-                + after + ' ORDER BY id LIMIT ?', args)
-            try:
-                records = [dict(row) for row in cursor]
-            finally:
-                cursor.close()
+        records = _candidate_rows(db, selectors, limit=_CANDIDATE_PAGE_SIZE, upper=upper, after=last)
         if not records:
             return
         yield from records
         if len(records) < _CANDIDATE_PAGE_SIZE:
             return
         last = records[-1]['id']
+
+
+def _batch_candidates(db, digest, size, cancel=None):
+    return _image_candidates(db, [('content_sha256=?', (digest,)), ('file_size=?', (size,)),
+                                 ('file_size IS NULL', ())], cancel)
+
+
+def _alias_rows(db, digest, size, upper, after):
+    bounds = ' AND c.image_id<=?' + ('' if after is None else ' AND c.image_id>?')
+    ids = (upper,) + (() if after is None else (after,))
+    select = ('SELECT images.id AS id,images.file,c.current_sha256 AS mapped_sha256 '
+              'FROM image_compression c JOIN images ON images.id=c.image_id WHERE ')
+    query = ' UNION '.join(select + predicate + bounds for predicate in
+        ('c.original_sha256=? AND c.original_size=?', 'c.compressed_sha256=? AND c.compressed_size=?'))
+    with db.lock:
+        cursor = db.conn.execute(query + ' ORDER BY id LIMIT ?',
+            (digest, size, *ids, digest, size, *ids, _CANDIDATE_PAGE_SIZE))
+        try:
+            return [dict(row) for row in cursor]
+        finally:
+            cursor.close()
+
+
+def _alias_candidates(db, digest, size, cancel=None):
+    _check_reindex_cancelled(cancel)
+    with db.lock:
+        upper = db.conn.execute('SELECT MAX(image_id) FROM image_compression').fetchone()[0]
+    last = None
+    while upper is not None:
+        _check_reindex_cancelled(cancel)
+        records = _alias_rows(db, digest, size, upper, last)
+        yield from records
+        if len(records) < _CANDIDATE_PAGE_SIZE:
+            return
+        last = records[-1]['id']
+
+
+def _verified_image(db, record):
+    """Hydrate only the row whose recorded path was actually verified."""
+    image = db.image(record['id'])
+    return image if image is not None and image['file'] == record['file'] else None
 
 
 def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
@@ -322,19 +374,18 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
     """
     # A recorded conversion retains the original complete-byte identity as an
     # alias. Check current stored bytes against that mapping before deduping.
-    with db.lock:
-        aliases = [dict(r) for r in db.conn.execute(
-            'SELECT images.*,c.current_sha256 AS mapped_sha256 FROM images '
-            'JOIN image_compression c ON c.image_id=images.id '
-            'WHERE (c.original_sha256=? AND c.original_size=?) '
-            'OR (c.compressed_sha256=? AND c.compressed_size=?)', (digest, size, digest, size))]
-    for rec in aliases:
+    for rec in _alias_candidates(db, digest, size, cancel_event):
+        _check_reindex_cancelled(cancel_event)
         if rec['id'] == exclude_id:
             continue
         path = paths.safe_join(archive, rec['file'])
-        measured = _fingerprint_file(path) if path is not None else None
-        if measured and measured[0] == rec.pop('mapped_sha256'):
-            return rec
+        measured = (_fingerprint_file(path, cancel_event) if cancel_event is not None else
+                    _fingerprint_file(path)) if path is not None else None
+        _check_reindex_cancelled(cancel_event)
+        if measured and measured[0] == rec['mapped_sha256']:
+            image = _verified_image(db, rec)
+            if image is not None:
+                return image
     if dedup_batch is not None:
         candidates = _batch_candidates(db, digest, size, cancel_event)
     else:
@@ -345,9 +396,6 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
             continue
         if dedup_batch is not None:
             if dedup_batch.negative(rec, digest):
-                continue
-            rec = db.image(rec['id'])
-            if rec is None:
                 continue
         original = paths.safe_join(archive, rec["file"])
         if original is None:
@@ -362,14 +410,17 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
         # Restores and external tools can preserve size/mtime while replacing
         # bytes. A different cached digest must not reject a same-size original.
         measured = (dedup_batch.fingerprint(db, rec, original, digest, cancel_event)
-                    if dedup_batch is not None else _dedup_fingerprint(db, original, digest))
+                    if dedup_batch is not None else _dedup_fingerprint(db, original, digest, cancel_event))
+        _check_reindex_cancelled(cancel_event)
         if measured is None:
             continue
         actual, actual_size, mtime_ns = measured
         if (cached, rec.get("file_size"), rec.get("file_mtime_ns")) != measured:
             db.set_image_fingerprint(rec["id"], actual, actual_size, mtime_ns)
         if actual_size == size and actual == digest:
-            return rec
+            image = _verified_image(db, rec) if dedup_batch is not None else rec
+            if image is not None:
+                return image
     return None
 
 
@@ -401,13 +452,15 @@ def _dedup_fingerprint(db, path, incoming, cancel_event=None):
         return measured
 
 
-def _known_duplicate(db, archive, digest, size, enforce_root, session_target, frame, dedup_batch=None):
+def _known_duplicate(db, archive, digest, size, enforce_root, session_target, frame, dedup_batch=None,
+                     cancel_event=None):
     """Cheap exact-positive preflight avoids encoding already stored uploads.
 
     Finalization still checks all current same-size candidates and serializes
     publication. This early return only skips bytes freshly verified on disk.
     """
     with _batch_archive_lock(db, dedup_batch):
+        _check_reindex_cancelled(cancel_event)
         if db.pending_compression() or db.pending_trash():
             return None
         if enforce_root and Path(db.image_dir()).resolve() != archive:
@@ -418,18 +471,18 @@ def _known_duplicate(db, archive, digest, size, enforce_root, session_target, fr
                     return None
             except ValueError:
                 return None
-        with db.lock:
-            aliases = [dict(row) for row in db.conn.execute(
-                'SELECT images.*,c.current_sha256 AS mapped_sha256 FROM images '
-                'JOIN image_compression c ON c.image_id=images.id '
-                'WHERE (c.original_sha256=? AND c.original_size=?) '
-                'OR (c.compressed_sha256=? AND c.compressed_size=?)', (digest, size, digest, size))]
-        for record in [*aliases, *db.images_with_digest(digest)]:
+        for record in chain(_alias_candidates(db, digest, size, cancel_event),
+                            _image_candidates(db, [('content_sha256=?', (digest,))], cancel_event)):
+            _check_reindex_cancelled(cancel_event)
             target = paths.safe_join(archive, record['file'])
             expected = record.pop('mapped_sha256', digest)
-            measured = _fingerprint_file(target) if target is not None else None
+            measured = (_fingerprint_file(target, cancel_event) if cancel_event is not None else
+                        _fingerprint_file(target)) if target is not None else None
+            _check_reindex_cancelled(cancel_event)
             if measured and measured[0] == expected:
-                return record
+                image = _verified_image(db, record)
+                if image is not None:
+                    return image
     return None
 
 
@@ -738,7 +791,8 @@ async def ingest_one(db: Database, catalog: list[dict], archive: Path,
         cancel = threading.Event()
         if compress:
             duplicate = await _archive_io(_known_duplicate, db, archive, digest.hexdigest(),
-                stage.stat().st_size, enforce_archive_root, session_target, frame, dedup_batch)
+                stage.stat().st_size, enforce_archive_root, session_target, frame, dedup_batch, cancel,
+                cancel_event=cancel)
             if duplicate is not None:
                 return _duplicate_result(name, duplicate)
             try:

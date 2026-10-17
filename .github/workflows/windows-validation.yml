@@ -15,6 +15,10 @@ on:
         description: Check the 4096-pin boundary and compare packaged builds on this runner
         type: boolean
         default: false
+      run_large_populated:
+        description: Run only the populated 8–32 MiB packaged ABBA experiment
+        type: boolean
+        default: false
   schedule:
     - cron: '17 2 * * 0'
 
@@ -43,7 +47,7 @@ jobs:
 
   linux:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.run_large_populated)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -81,7 +85,7 @@ jobs:
 
   windows:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.run_large_populated)
     runs-on: windows-2022
     timeout-minutes: 45
     defaults:
@@ -133,7 +137,13 @@ jobs:
             'test_request_directory_pins_share_common_ancestors_and_exclude_writers',
             'test_request_directory_pins_outlive_external_pin_context',
             'test_combined_budget_refuses_deep_suffix_and_keeps_shallower_admission',
-            'test_real_http_disconnect_queue_and_shutdown_preserve_units'
+            'test_real_http_disconnect_queue_and_shutdown_preserve_units',
+            'test_duplicate_hash_cancellation_reaches_worker_before_stage_cleanup[preflight_alias]',
+            'test_duplicate_hash_cancellation_reaches_worker_before_stage_cleanup[preflight_exact]',
+            'test_duplicate_hash_cancellation_reaches_worker_before_stage_cleanup[final_alias]',
+            'test_duplicate_hash_cancellation_reaches_worker_before_stage_cleanup[final_plain]',
+            'test_ordered_merge_avoids_repeated_whole_population_sorts',
+            'test_late_positive_above_capacity_hydrates_only_verified_record'
           )
           foreach ($name in $required) {
             $cases = @($report.testsuites.testsuite.testcase | Where-Object { $_.name -eq $name })
@@ -231,8 +241,75 @@ jobs:
             tests/browser/artifacts/
           if-no-files-found: warn
 
+  large_populated:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_large_populated
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare the same pinned compiler environment for both builds
+        run: |
+          New-Item -ItemType Directory -Path logs -Force | Out-Null
+          python -m venv .venv-build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-build/Scripts/python.exe -m pip install -r requirements-build-lock.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build the candidate
+        run: |
+          & ./build.ps1 -AllowDirty 2>&1 | Tee-Object -FilePath logs/large-candidate-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check out the immediate pre-query-optimization baseline
+        uses: actions/checkout@v4
+        with:
+          ref: 89a7a82b4da1fe25cbb1ce07c75a2958b2d6f3ca
+          path: logs/large-baseline
+          persist-credentials: false
+      - name: Build the baseline with the same pinned environment
+        run: |
+          $sharedPython = (Resolve-Path .venv-build).Path
+          $baselineEnvironment = Join-Path (Get-Location).Path 'logs/large-baseline/.venv-build'
+          New-Item -ItemType Junction -Path $baselineEnvironment -Target $sharedPython | Out-Null
+          try {
+            & ./logs/large-baseline/build.ps1 -AllowDirty 2>&1 | Tee-Object -FilePath (Join-Path $env:GITHUB_WORKSPACE 'logs/large-baseline-build.log')
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            [System.IO.Directory]::Delete($baselineEnvironment)
+          }
+      - name: Install the controller browser driver after compiling both executables
+        run: |
+          & .venv-build/Scripts/python.exe -m pip install playwright==1.62.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compare native packaged imports sequentially in ABBA order
+        run: |
+          & .venv-build/Scripts/python.exe scripts/bench_populated_import.py --baseline-exe logs/large-baseline/dist/NightSeam.exe --candidate-exe dist/NightSeam.exe --baseline-commit 89a7a82b4da1fe25cbb1ce07c75a2958b2d6f3ca --candidate-commit $env:GITHUB_SHA 2>&1 | Tee-Object -FilePath logs/large-import-comparison.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain complete comparison evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: large-populated-${{ github.sha }}
+          path: |
+            logs/large-candidate-build.log
+            logs/large-baseline-build.log
+            logs/large-import-comparison.log
+            logs/large-import-comparison.json
+            logs/large-import-comparison-runs/
+          if-no-files-found: error
+
   validation:
-    needs: [changes, linux, windows]
+    needs: [changes, linux, windows, large_populated]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -242,9 +319,16 @@ jobs:
           CODE_SELECTED: ${{ needs.changes.outputs.code }}
           LINUX_RESULT: ${{ needs.linux.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
+          LARGE_SELECTED: ${{ github.event_name == 'workflow_dispatch' && inputs.run_large_populated }}
+          LARGE_RESULT: ${{ needs.large_populated.result }}
         run: |
           python - <<'PY'
           import os
+          if os.environ['LARGE_SELECTED'] == 'true':
+              if os.environ['LARGE_RESULT'] != 'success':
+                  raise SystemExit('The selected large populated experiment failed or did not execute')
+              print('Selected large populated experiment passed; source gates run in pull-request CI')
+              raise SystemExit(0)
           results = [os.environ['LINUX_RESULT'], os.environ['WINDOWS_RESULT']]
           allowed = {'success'} if os.environ['CODE_SELECTED'] == 'true' else {'success', 'skipped'}
           if os.environ['SELECTION_RESULT'] != 'success' or any(value not in allowed for value in results):

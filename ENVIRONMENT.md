@@ -72,6 +72,13 @@ It uses an external SQLite writer briefly to establish overlap, audits committed
 bytes/history and requires graceful process/listener cleanup before disposing
 of its private job. A disconnect drains accepted ingest; it does not imply
 cooperative upload cancellation. Physical/offline acceptance remains separate.
+The resource workflow also profiles real HTTP against 6,000 pre-existing mixed
+plain/Rice files (4,797 share one size), verifying late duplicates, malformed
+inputs, edited/missing originals, native restoration and exact history/byte
+publication. Local source SELECTs fell 58,064→493 without reducing hash work;
+query pages now merge existing indexed streams and defer full-row hydration.
+Alias/exact preflight reads also cooperate with cancellation. See
+docs/populated-import-20261017.md for reproducible commands and scope limits.
 
 The Catalog validation workflow selects Linux and Windows correctness checks on
 pull requests and main pushes, with a stable terminal `validation` check. The
