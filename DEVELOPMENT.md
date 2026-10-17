@@ -494,3 +494,12 @@ owner lock. Failed builds keep diagnostics and executable backups. Before a
 handoff, run the relevant gates, apply housekeeping and check `git status`;
 commit the verified source changes. Do not use `git clean -fdx`, which would
 delete ignored application data and recovery material.
+
+## Large populated benchmark
+
+`scripts/bench_populated_import.py` is an optional developer-only Windows ABBA
+experiment, separate from the fixed-size empty-library benchmark. It seeds owned
+stores before launch, measures real 8–32 MiB HTTP uploads and native WebView2
+roundtrips, and uses the owned Windows job for CPU/peak committed memory (not
+RSS). See docs/large-populated-benchmark.md for byte audits, cancellation scope,
+workflow selection and cache/timing limitations.

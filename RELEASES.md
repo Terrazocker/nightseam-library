@@ -1,5 +1,24 @@
 # Independent catalog release record
 
+## Large packaged import experiment and storage failures — October 17, 2026
+
+Added a separate populated-library ABBA controller with deterministic 8–32 MiB
+exposures, native WebView2 response probes, owned Windows-job CPU/peak committed
+memory accounting, real conversion cancellation and complete byte/history/cleanup
+audits. The optional workflow builds both variants with the same pinned compiler
+and runs sequentially; ordinary pull-request correctness gates remain unchanged.
+Scope, repeat commands and measurement limits are in
+docs/large-populated-benchmark.md; final packaged results are retained in the PR
+and CI artifacts rather than inferred from the earlier SQL-work measurements.
+
+Ten local focused tests passed. Seven new failure cases prove that partial
+stage/fallback-copy ENOSPC and Rice encoding/publication fsync failures preserve
+existing records, bytes and history and allow retry; real sleeping native children
+are terminated and reaped on cancellation and the conversion deadline. These
+were coverage gaps; the injections found no production defect. A real source
+HTTP smoke passed the controller's large-byte, identity, history, cancellation
+and exact Rice restoration audits; its UI/resource doubles are not measurements.
+
 ## Populated-library SQL work and duplicate cancellation — October 17, 2026
 
 Ordered indexed UNION pages replace repeated OR-result sorting. Narrow candidate
