@@ -11,12 +11,13 @@ import threading
 import time
 import uuid
 from collections import Counter
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from datetime import UTC, datetime
 from pathlib import Path
 
 from .paths import safe_join, safe_rel
 from .fits_metadata import is_fits_name
+from .discovery_spool import DiscoverySpool
 from . import imglib
 
 log = logging.getLogger(__name__)
@@ -196,13 +197,16 @@ def scan_archive(db, mode, cancel, publish):
         progress()
 
     acquired = False
+    resources = ExitStack()
     try:
         progress(True)
         while not acquired:
             checkpoint()
             acquired = db.archive_lock.acquire(timeout=.1)
         checkpoint()
-        archive, records = db.integrity_snapshot()
+        discovery = resources.enter_context(DiscoverySpool())
+        with db.integrity_scan_rows(checkpoint) as (archive, rows):
+            discovery.copy_records(rows, checkpoint)
         report["archive"] = archive
         try:
             root = Path(archive).resolve(strict=True)
@@ -219,14 +223,13 @@ def scan_archive(db, mode, cancel, publish):
             finding("archive_unavailable", "", "The archive folder is unavailable or unreadable.")
             return {**report, "status": "unavailable", "phase": "finished"}
         report.update(archive_available=True, resolved_archive=str(root), archive_identity=list(identity), phase="discovering")
-        report["baseline_sources"] = dict(Counter(rec.get("baseline_source") or "none" for rec in records))
-        known = {os.path.normcase(clean) for rec in records if (clean := safe_rel(rec["file"])) is not None}
-        pending, untracked = [""], []
+        report["baseline_sources"] = dict(discovery.baseline_sources)
+        discovery.push_directory('')
         progress(True)
-        while pending:
+        while discovery.pending_count:
             checkpoint()
             _check_root(root, identity)
-            folder = pending.pop()
+            folder = discovery.pop_directory()
             try:
                 if folder:
                     _contained(root, folder, identity)
@@ -235,15 +238,15 @@ def scan_archive(db, mode, cancel, publish):
                     for name, linked, directory in entries:
                         relative = f"{folder}/{name}" if folder else name
                         if linked:
-                            if os.path.normcase(relative) not in known:
+                            if not discovery.contains(relative):
                                 finding("unsafe_path", relative, "Linked archive paths are not followed.")
                         elif directory:
                             from .trash_paths import TRASH_FOLDER, managed_trash
                             if not folder and name == TRASH_FOLDER and managed_trash(root):
                                 continue
-                            pending.append(relative)
-                        elif is_fits_name(name) and os.path.normcase(relative) not in known:
-                            untracked.append(relative)
+                            discovery.push_directory(relative)
+                        elif is_fits_name(name) and not discovery.contains(relative):
+                            discovery.add_untracked(relative)
                         progress()
                 finally:
                     entries.close()
@@ -251,8 +254,9 @@ def scan_archive(db, mode, cancel, publish):
                 finding("unsafe_path", folder, str(exc))
             except OSError:
                 finding("unreadable_directory", folder, "This folder could not be enumerated; its contents were not checked.")
-        report.update(phase="checking", total=len(records) + len(untracked))
+        report.update(phase="checking", total=discovery.indexed_count + discovery.untracked_count)
         progress(True)
+        records = resources.enter_context(closing(discovery.records()))
         for rec in records:
             checkpoint()
             _check_root(root, identity)
@@ -261,7 +265,7 @@ def scan_archive(db, mode, cancel, publish):
             try:
                 info, observed = _inspect(root, relative, identity, mode == "deep", checkpoint, read_progress)
                 expected = rec.get("expected_sha256") or ""
-                if not _SHA256.fullmatch(expected):
+                if not isinstance(expected, str) or not _SHA256.fullmatch(expected):
                     finding("no_baseline", relative, "No recorded integrity hash is available for comparison.", rec, observed_sha256=observed)
                 elif mode == "deep":
                     if observed == expected:
@@ -289,7 +293,8 @@ def scan_archive(db, mode, cancel, publish):
             report["processed"] += 1
             report["unverified"] = report["processed"] - report["verified"]
             progress()
-        for relative in sorted(untracked):
+        untracked = resources.enter_context(closing(discovery.untracked()))
+        for relative in untracked:
             checkpoint()
             _check_root(root, identity)
             try:
@@ -314,8 +319,11 @@ def scan_archive(db, mode, cancel, publish):
         finding("archive_unavailable", "", "The archive became unavailable or changed. Results are partial.")
         return {**report, "status": "unavailable", "phase": "finished", "archive_available": False}
     finally:
-        if acquired:
-            db.archive_lock.release()
+        try:
+            resources.close()
+        finally:
+            if acquired:
+                db.archive_lock.release()
 
 
 class ArchiveHealthManager:

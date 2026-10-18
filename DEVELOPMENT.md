@@ -293,6 +293,47 @@ handles/reparse rejection on Windows. Reports retain 10,000 findings (200 shown)
 and count omitted findings. Private acknowledgement snapshots never enter API
 reports. Starts/acknowledgements serialize without holding SQLite during IO.
 
+app/discovery_spool.py stores pending directories and untracked paths in a
+private logs/health-discovery-<pid>-<random>/discovery.sqlite workspace. A 1 MiB
+SQLite page cache, disabled mmap and a maintained pathname index bound discovery
+memory without truncating counts or collecting a Python sort list. UTF-8 BLOBs
+with surrogatepass preserve raw strings, duplicates and Python lexical order;
+untracked paths use one WITHOUT ROWID primary-key tree (path, global occurrence),
+avoiding a second pathname copy in a separate ordering index. The occurrence
+counter advances only after a successful insert, retaining duplicate observations
+without a per-path Python map. Pending directories retain LIFO traversal.
+scripts/bench_health_spool.py compares actual historical/candidate spool modules
+in isolated processes, retaining ordered hashes, counts, source hashes and disk
+observations independently of the scanner benchmark's source selection.
+The spool is disposable, with no
+journal/durability requirement. Ordered cursors close before the connection and
+workspace on completion, cancellation or failure; storage/cleanup errors fail
+the job visibly. Housekeeping only reaps old workspaces with a confirmed dead
+owner. The archive stays read-only. Disk usage scales with discovered paths.
+scripts/stress_health_discovery.py gates heap, observed RSS, counts, ordering,
+handle release and scratch removal using lazy synthetic fanout, separately from
+real filesystem safety regressions.
+
+Health uses Database.integrity_scan_rows to copy a committed snapshot of archive
+configuration and the complete image/integrity join into the same spool. Its
+dedicated mode=ro connection uses a 1 MiB cache, disabled mmap and one explicit
+read transaction. Canonical opened filenames and device/inode checks reject
+replacement before archive inspection; percent-encoded native filenames retain
+literal characters, UNC and extended Windows path syntax without URI authority.
+Cancellation reaches row copies, SQLite VM work and busy waits. Shared db.lock
+is not held while materializing scratch. The source closes before enumeration,
+stat or hash IO; rollback-journal writers can wait during the copy itself.
+Full SQLite-native record values use an ID-primary-key spool table, and known
+membership uses exactly normcase(safe_rel(file)) BLOB keys. Duplicate/invalid
+paths remain separate records. Only retained actionable findings keep full
+private _record copies after spool cleanup, preserving exact stale-ack guards.
+Working memory depends on row/report payload size and SQLite caches rather than
+indexed row count; baseline-source histograms remain output-dependent. Temporary
+disk grows with the snapshot. --indexed in stress_health_discovery.py exercises
+real populated SQLite catalogs with synthetic filesystem work. The existing
+integrity_snapshot list API remains for compatibility; in-memory databases keep
+that API but cannot supply an independent file-backed health snapshot.
+
 Upload streams, hashing, header matching and optional Rice preparation run in
 bounded workers (up to CPU count, at most 24) outside archive_lock. Original and
 packed stages stay private until their ordered publication turn. One failed SQL
@@ -503,3 +544,14 @@ stores before launch, measures real 8–32 MiB HTTP uploads and native WebView2
 roundtrips, and uses the owned Windows job for CPU/peak committed memory (not
 RSS). See docs/large-populated-benchmark.md for byte audits, cancellation scope,
 workflow selection and cache/timing limitations.
+
+## Linux bundle
+
+Linux x86_64 has a separate browser-mode build in scripts/build_linux.py and
+requirements-build-linux-lock.txt. The builder bakes an owned source copy,
+inspects the bootloader/bundled ELF GLIBC symbols and never overwrites earlier
+outputs or includes profile stores. scripts/check_linux_package.py extracts and
+checks the actual tarball with private runtime paths and an empty developer PATH.
+An Ubuntu 22.04 frozen/browser job is required by normal Catalog validation;
+Windows native-window checks remain separate. See LINUX.md for commands, runtime
+paths, glibc compatibility and the system-browser requirement.

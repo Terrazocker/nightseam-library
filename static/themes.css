@@ -1558,6 +1558,12 @@ body.catalog-only .selected-map-empty .empty-icon { width: 4.5714rem; height: 4.
   body.catalog-only .library-session-table .session-empty-state { min-height: 160px; }
   body.catalog-only .library-session-rail { min-height: 130px; padding: 14px; }
 }
+/* Wider Linux system fonts can otherwise wrap the toolbar at tablet widths.
+   Keep primary action labels and use named icons for the secondary actions. */
+@media (max-width: 1000px) {
+  body.catalog-only #btnTopCopy span,
+  body.catalog-only #btnSupportReport span { display: none; }
+}
 @media (max-width: 620px) {
   body.catalog-only .catalog-header-inner { padding: 6px 10px; }
   body.catalog-only .brand { gap: .4rem; font-size: 1rem; }

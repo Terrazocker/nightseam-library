@@ -230,6 +230,19 @@ def run_native_window(url: str) -> bool:
         return False
 
 
+def open_browser(url: str) -> bool:
+    """Keep system browser processes separate from PyInstaller's libraries."""
+    if sys.platform == 'linux':
+        from app.folder_opener import open_desktop_target
+        try:
+            open_desktop_target(url)
+            return True
+        except OSError as exc:
+            logging.getLogger('nightseam').warning('Could not open the browser (%s). Open %s manually.', exc, url)
+            return False
+    return webbrowser.open(url)
+
+
 def launch_app_window(url: str) -> bool:
     """Fallback: Edge/Chrome launched in --app mode (own window, no tabs/URL bar)."""
     import os
@@ -295,14 +308,14 @@ def main() -> int:
         if args.no_browser:
             return 0                     # headless launch: nothing to open
         if args.browser:
-            webbrowser.open(launch_url)
+            open_browser(launch_url)
         else:
             if not run_native_window(launch_url):
                 if args.require_native_window:
                     log.error('The required native desktop window could not start.')
                     return 1
                 if not launch_app_window(launch_url):
-                    webbrowser.open(launch_url)
+                    open_browser(launch_url)
         return 0
 
     db = Database(paths.data_dir() / "nightseam.db")
@@ -348,10 +361,10 @@ def main() -> int:
             elif launch_app_window(url):
                 wait_for_exit(server, idle_secs)
             else:
-                threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+                threading.Timer(0.6, lambda: open_browser(url)).start()
                 wait_for_exit(server, idle_secs)
         elif ui_mode == "browser":
-            threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+            threading.Timer(0.6, lambda: open_browser(url)).start()
             wait_for_exit(server, idle_secs)
         else:
             wait_for_exit(server, idle_secs)

@@ -30,7 +30,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tests/browser'))
 import harness
 from fits_fixtures import compressed_gate_image
-from scripts.check_native_window import NativeWindows, wait_for
+from scripts.check_native_window import NativeWindows, native_catalog, wait_for
 
 
 def require(condition, message):
@@ -120,7 +120,8 @@ def audit(database, archive, expected):
 
 def run(executable, output):
     require(os.name == 'nt', 'Windows is required; no packaged lifecycle checks executed')
-    server = harness.DesktopServer(executable, seed=False, native=True, restricted_runtime=True)
+    server = harness.DesktopServer(executable, seed=False, native=True, restricted_runtime=True,
+                                   debug_port=harness.free_port())
     with executable.open('rb') as stream:
         executable_digest = hashlib.file_digest(stream, 'sha256').hexdigest()
     report = dict(status='running', source_commit=os.environ.get('GITHUB_SHA'),
@@ -132,6 +133,8 @@ def run(executable, output):
         server.start(timeout=60)
         windows = NativeWindows(server.tree)
         hwnd = wait_for(windows.main_window, 'owned native window', timeout=60)
+        with native_catalog(server):
+            report['native_bridge_ready_before_io'] = True
         archive, database = server.tmp / 'archive', server.tmp / 'data/nightseam.db'
         expected = {'seed.fits': (uuid.uuid4().hex, image(0))}
         with closing(send_upload(server, 'seed.fits', expected['seed.fits'][1], expected['seed.fits'][0])) as seed:
@@ -187,15 +190,22 @@ def run(executable, output):
                 wait_for(lambda: active_import(archive, pinned, name), 'pinned import before native close', timeout=2.5)
                 require(blocker.execute('SELECT COUNT(*) FROM images').fetchone()[0] == 3,
                         'Closing import published before native close')
+                require(windows.user.IsWindowVisible(hwnd), 'Owned native window was hidden before WM_CLOSE')
                 windows.post(hwnd, 0x0010)  # WM_CLOSE, only the owned native HWND.
-                wait_for(lambda: not windows.user.IsWindow(hwnd), 'native window to close during pinned IO', timeout=.8)
+                # WinForms hides an accepted close before WebView2 cleanup can
+                # wait for its browser process. Do not demand HWND destruction
+                # while intentionally keeping publication blocked by SQLite.
+                wait_for(lambda: not windows.user.IsWindowVisible(hwnd), 'native window to hide during pinned IO', timeout=.8)
                 require(not writer_allowed(pinned), 'Import finished before the native window closed')
+                report['native_close_accepted_while_pinned'] = True
                 require(time.monotonic() - started < 4, 'Shutdown writer hold approached SQLite timeout')
             finally:
                 blocker.rollback()
             imported(closing_request)
             require(server.proc.wait(timeout=30) == 0, 'Native close failed to finish gracefully')
             wait_for(windows.processes_exited, 'all owned native descendants to exit', timeout=20)
+            require(not windows.user.IsWindow(hwnd), 'Native HWND remains after process exit')
+            report['native_hwnd_destroyed'] = True
             harness._wait_listener_closed(server.port)
             audit(database, archive, expected)
             # Native close releases directory pins before forced harness cleanup.

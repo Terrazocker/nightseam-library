@@ -6,15 +6,21 @@ on:
     branches: [main]
     paths:
       - app/archive_trash.py
+      - app/archive_health.py
+      - app/discovery_spool.py
       - app/ingest.py
       - app/file_version.py
       - app/database.py
       - app/compression.py
       - app/server.py
       - scripts/stress_dedup.py
+      - scripts/stress_health_discovery.py
       - scripts/profile_import.py
       - scripts/profile_populated_import.py
       - tests/test_dedup_stress.py
+      - tests/test_discovery_spool.py
+      - tests/test_health_indexed_snapshot.py
+      - tests/test_archive_health.py
       - tests/test_ingest_batch_admission.py
       - tests/test_ingest_directory_pins.py
       - tests/test_ingest_candidate_pages.py
@@ -56,6 +62,18 @@ jobs:
       - name: Verify resource observer and focused safety regressions
         run: |
           & .venv-build/Scripts/python.exe -m pytest tests/test_dedup_stress.py tests/test_ingest_batch_admission.py tests/test_ingest_directory_pins.py tests/test_ingest_candidate_pages.py tests/test_import_http_lifecycle.py tests/test_ingest_query_work.py tests/test_ingest_duplicate_edges.py -q --tb=short 2>&1 | Tee-Object -FilePath logs/resources-regressions.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Archive-health discovery ordering, cancellation and failure cleanup
+        run: |
+          & .venv-build/Scripts/python.exe -m pytest tests/test_health_indexed_snapshot.py tests/test_discovery_spool.py tests/test_archive_health.py -q --tb=short 2>&1 | Tee-Object -FilePath logs/resources-health-regressions.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Wide archive-health discovery with bounded heap and RSS
+        run: |
+          & .venv-build/Scripts/python.exe scripts/stress_health_discovery.py --output logs/resources-health-discovery.json 2>&1 | Tee-Object -FilePath logs/resources-health-discovery.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Populated indexed health snapshot with bounded heap and RSS
+        run: |
+          & .venv-build/Scripts/python.exe scripts/stress_health_discovery.py --indexed --output logs/resources-health-indexed.json 2>&1 | Tee-Object -FilePath logs/resources-health-indexed.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: One exposure per directory at the real file-pin cap
         run: |

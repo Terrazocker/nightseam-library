@@ -5,7 +5,7 @@ for new databases; databases that still carry them keep those tables untouched
 (additive-migration policy) and no code reads them."""
 
 from __future__ import annotations
-from contextlib import nullcontext, contextmanager
+from contextlib import closing, nullcontext, contextmanager
 
 import csv
 import json
@@ -15,9 +15,11 @@ import re
 import shutil
 import sqlite3
 import threading
+import time
 import uuid
 from datetime import datetime, UTC
 from pathlib import Path
+from urllib.parse import quote
 
 from . import catalog_data
 from .paths import resource_dir, safe_rel
@@ -26,6 +28,13 @@ from .archive_lock import ArchiveLock
 
 log = logging.getLogger(__name__)
 BACKUP_HISTORY_LIMIT = 5
+
+
+def _readonly_sqlite_uri(path):
+    # Encode the native filename as URI path bytes, including its slashes. UNC
+    # and extended Windows paths then have no URI authority for SQLite to reject;
+    # percent decoding restores the exact native path before the VFS opens it.
+    return 'file:' + quote(str(path), safe='') + '?mode=ro'
 
 def finite_or_none(value):
     """The storage boundary never accepts a non-finite number (PY04-F2).
@@ -217,6 +226,12 @@ class Database:
             if existing:
                 self._write_backup_snapshot("pre-migration")
             self._initialize()
+            with closing(self.conn.execute('PRAGMA database_list')) as databases:
+                filename = next(row['file'] for row in databases if row['name'] == 'main')
+            self._integrity_scan_path = Path(filename) if filename else None
+            if self._integrity_scan_path is not None:
+                info = self._integrity_scan_path.stat()
+                self._integrity_scan_identity = (info.st_dev, info.st_ino)
         except BaseException:
             self.conn.close()
             raise
@@ -744,6 +759,74 @@ class Database:
                 "i.mtime_ns AS expected_mtime_ns,i.source AS baseline_source,"
                 "i.recorded_at AS baseline_recorded_at "
                 "FROM images LEFT JOIN image_integrity i ON i.image_id=images.id ORDER BY images.id")]
+
+    @contextmanager
+    def integrity_scan_rows(self, checkpoint):
+        """Committed, consistent health rows without the shared connection lock.
+
+        Consume only while materializing private scratch, never across archive IO.
+        Rollback-journal writers may wait for this short read transaction; normal
+        reads can continue. Both the SQLite cache and Python row iteration are
+        bounded. Keep integrity_snapshot's list API for its other callers.
+        """
+        checkpoint()
+        def verify_source():
+            if self._integrity_scan_path is None:
+                raise RuntimeError('Archive health requires a file-backed catalog snapshot')
+            info = self._integrity_scan_path.stat()
+            if (info.st_dev, info.st_ino) != self._integrity_scan_identity:
+                raise RuntimeError('The catalog file changed since opening; no health snapshot is valid')
+        verify_source()
+        interrupted = []
+        def progress():
+            try:
+                checkpoint()
+                return 0
+            except BaseException as exc:
+                interrupted[:] = [exc]
+                return 1
+        with closing(sqlite3.connect(_readonly_sqlite_uri(self._integrity_scan_path),
+                                   uri=True, timeout=.1)) as source:
+            source.row_factory = sqlite3.Row
+            source.set_progress_handler(progress, 1000)
+            def execute(sql):
+                while True:
+                    checkpoint()
+                    try:
+                        return source.execute(sql)
+                    except sqlite3.OperationalError as exc:
+                        if (getattr(exc, 'sqlite_errorcode', 0) & 0xff) != sqlite3.SQLITE_BUSY:
+                            raise
+                        checkpoint()
+                        time.sleep(.05)
+            try:
+                execute('PRAGMA cache_size=-1024').close()
+                execute('PRAGMA mmap_size=0').close()
+                execute('PRAGMA temp_store=FILE').close()
+                execute('BEGIN').close()
+                with closing(execute("SELECT value FROM settings WHERE key='image_dir'")) as cursor:
+                    setting = cursor.fetchone()
+                from .paths import default_archive_dir
+                try:
+                    archive = json.loads(setting[0]) if setting else None
+                except (ValueError, TypeError):
+                    archive = None
+                archive = str(archive) if archive else str(default_archive_dir())
+                with closing(execute(
+                    "SELECT images.*,i.sha256 AS expected_sha256,i.size AS expected_size,"
+                    "i.mtime_ns AS expected_mtime_ns,i.source AS baseline_source,"
+                    "i.recorded_at AS baseline_recorded_at "
+                    "FROM images LEFT JOIN image_integrity i ON i.image_id=images.id ORDER BY images.id")) as rows:
+                    verify_source()
+                    yield archive, rows
+                    verify_source()
+            except sqlite3.Error:
+                if interrupted:
+                    raise interrupted[0]
+                checkpoint()
+                raise
+            finally:
+                source.set_progress_handler(None, 0)
 
     def acknowledge_integrity(self, record, archive, job_id, action, *,
                               digest=None, size=None, mtime_ns=None):

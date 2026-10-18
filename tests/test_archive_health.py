@@ -160,6 +160,48 @@ def test_quick_metadata_is_not_content_verification_and_deep_is_read_only(librar
     assert before == (snapshot(db), target.read_bytes(), target.stat().st_mtime_ns)
 
 
+@pytest.mark.parametrize("mode", ["quick", "deep"])
+@pytest.mark.parametrize("malformed", [
+    hashlib.sha256(b"original exposure").hexdigest().encode("ascii"),
+    b"\xff\x00invalid hash",
+], ids=["ascii-blob", "non-utf8-blob"])
+def test_blob_baseline_is_unverified_without_aborting_other_records(library, monkeypatch, mode, malformed):
+    from app import discovery_spool
+
+    db, root = library
+    image_id, damaged = add_record(db, root)
+    healthy_id, healthy = add_record(db, root, "M31/session/lights/healthy.fit")
+    db.conn.execute("UPDATE image_integrity SET sha256=? WHERE image_id=?", (malformed, image_id))
+    db.conn.commit()
+    before = snapshot(db), damaged.read_bytes(), healthy.read_bytes()
+    scratch = root.parent / "health-scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(discovery_spool, "logs_dir", lambda: scratch)
+
+    with TestClient(create_app(db)) as client:
+        report = scan(client, mode)
+        assert report["status"] == "completed"
+        assert report["total"] == report["processed"] == 2
+        assert report["finding_counts"] == {"no_baseline": 1}
+        assert report["verified"] == (mode == "deep")
+        assert report["metadata_unchanged"] == (mode == "quick")
+        assert report["unverified"] == 2 - report["verified"]
+        finding, = report["findings"]
+        assert finding["image_id"] == image_id != healthy_id
+        assert finding["code"] == "no_baseline"
+        observed = hashlib.sha256(damaged.read_bytes()).hexdigest() if mode == "deep" else None
+        assert finding["observed_sha256"] == observed
+        assert "_record" not in finding and "expected_sha256" not in finding
+        assert report["pending_deletions"] == 0
+        assert acknowledge(client, report, image_id, "accept_contents").status_code == 409
+    assert before == (snapshot(db), damaged.read_bytes(), healthy.read_bytes())
+    stored = db.conn.execute("SELECT sha256 FROM image_integrity WHERE image_id=?", (image_id,)).fetchone()
+    assert stored[0] == malformed
+    assert not list(scratch.iterdir())
+    assert db.archive_lock.acquire(blocking=False)
+    db.archive_lock.release()
+
+
 def test_deep_detects_changes_with_same_size_and_time(library):
     db, root = library
     _, target = add_record(db, root, data=b"AAAA")

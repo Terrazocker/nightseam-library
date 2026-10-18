@@ -129,6 +129,63 @@ def test_catalog_resolver_uses_coordinates_then_preserves_unresolved_result():
     assert imglib.CatalogResolver([]).resolve("M31") is None
 
 
+def test_group_library_catalog_id_work_is_linear_and_first_row_wins(monkeypatch):
+    reads = 0
+    class Row(dict):
+        def __getitem__(self, key):
+            nonlocal reads
+            if key == 'id':
+                reads += 1
+            return super().__getitem__(key)
+    catalog = [_resolver_row(f'object-{i}', f'Target {i}') for i in range(60)]
+    catalog.append(_resolver_row('object-0', 'Later duplicate'))
+    normalize = imglib.normalize_catalog
+    monkeypatch.setattr(imglib, 'normalize_catalog', lambda rows: [Row(row) for row in normalize(rows)])
+    def unnecessary(*args):
+        raise AssertionError('Current IDs do not require the alias resolver')
+    monkeypatch.setattr(imglib, 'CatalogResolver', unnecessary)
+    groups = imglib.group_library([img(id=i, object_id=f'object-{i}') for i in range(40)], catalog)
+    assert len(groups) == 40
+    assert next(g for g in groups if g['object_id'] == 'object-0')['name'] == 'Target 0'
+    assert reads <= len(catalog) + len(groups), 'Catalog IDs were rescanned for each object group'
+
+
+def test_group_library_shares_legacy_lookup_without_resolving_user_unknowns(monkeypatch):
+    catalog = [_resolver_row('same', 'Atlas Alpha', search='Shared Alias'),
+               _resolver_row('second', 'Atlas Bravo'),
+               _resolver_row('same', 'Later Alias')]
+    frames = [img(id=i, object_id=f'gone-{i}', object_name='Later Alias', date_obs=None)
+              for i in range(12)]
+    frames += [img(id=20, object_id='gone-coordinates', object_name='unmatched', ra_hours=1., dec_deg=2.),
+               img(id=21, object_id=None, object_name='Shared Alias', ra_hours=0., dec_deg=0.)]
+    builds = 0
+    original = imglib.CatalogResolver
+    class CountedResolver(original):
+        def __init__(self, rows):
+            nonlocal builds
+            builds += 1
+            super().__init__(rows)
+    monkeypatch.setattr(imglib, 'CatalogResolver', CountedResolver)
+    groups = imglib.group_library(frames, catalog)
+    assert builds == 1, 'Legacy groups rebuilt the same catalog resolver'
+    known = [g for g in groups if g['object_id'] is not None]
+    assert len(known) == 13 and all(g['name'] == 'Atlas Alpha' for g in known)
+    assert all(g['n_images'] == g['n_sessions'] == 1 for g in known)
+    unresolved, = [g for g in groups if g['object_id'] is None]
+    assert unresolved['name'] == 'Shared Alias'
+    assert unresolved['ra_hours'] == unresolved['dec_deg'] == 0.
+    assert [frame['object_id'] for frame in frames[:12]] == [f'gone-{i}' for i in range(12)]
+
+
+def test_empty_or_intentionally_unresolved_library_needs_no_catalog_index(monkeypatch):
+    def unnecessary(*args):
+        raise AssertionError('An unresolved-only library does not need catalog normalization')
+    monkeypatch.setattr(imglib, 'normalize_catalog', unnecessary)
+    assert imglib.group_library([], CATALOG) == []
+    group, = imglib.group_library([img(id=1, object_name='M31', object_id=None)], CATALOG)
+    assert group['name'] == 'M31' and group['object_id'] is None
+
+
 # ---------------------------------------------------------------- sessions
 
 def test_session_compression_counts_exact_members_including_unknowns():

@@ -79,7 +79,20 @@ def tools():
 
 def native(executable, flags, source, destination, checkpoint):
     # No shell, source deletion or overwrite flags; output is private staging.
-    with subprocess.Popen([str(executable), *flags, '-O', str(destination), str(source)],
+    # Keep source ancestry out of CFITSIO's extended filename parser. Preserve
+    # absolute outputs normally (long '..' paths can fail on Windows copies).
+    # Only shorten outputs whose archive ancestry contains parser syntax.
+    # Popen's cwd never changes the server/worker cwd.
+    source, destination = Path(source).absolute(), Path(destination).absolute()
+    output_argument = str(destination)
+    if any(character in output_argument for character in '[]()'):
+        try:
+            output_argument = Path(os.path.relpath(destination, source.parent)).as_posix()
+        except ValueError:
+            # An unrelated Windows drive cannot be addressed relatively.
+            pass
+    with subprocess.Popen([str(Path(executable).absolute()), *flags, '-O',
+            output_argument, './' + source.name], cwd=source.parent,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)) as process:
         started = time.monotonic()

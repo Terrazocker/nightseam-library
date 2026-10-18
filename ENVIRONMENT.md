@@ -23,7 +23,19 @@ Runtime selection preserves hash checks and never searches PATH for utilities.
 Source tests: python -m pytest tests/ -q --tb=no. JS/encoding/core checks:
 python scripts/check_js.py. Tests keep private data and archives under logs/.
 
+## Linux browser packaging
+
+Linux packaging now has its own exact active dependency closure in
+requirements-build-linux-lock.txt. Run scripts/build_linux.py on glibc Linux
+x86_64/CPython 3.12. It bundles the browser-mode runtime and native FITS tools,
+inspects bundled ELF GLIBC requirements and creates a portable tarball without
+profile data. The initial local build/smoke passed on glibc 2.41 and its highest
+numeric bundled requirement was 2.35. An Ubuntu 22.04 package/browser CI job is
+required alongside source/Windows gates. See LINUX.md for writable paths,
+runtime requirements and exact verification commands.
+
 ## Windows desktop development
+
 
 Windows versions are valid only during their writer-excluding handle lifetime.
 Rapid changes can collide in file timestamps, so tool hashes and negative dedup

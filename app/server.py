@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -26,6 +27,7 @@ from starlette.concurrency import run_in_threadpool
 from .archive_health import ArchiveHealthManager
 from .compression import CompressionManager, recover as recover_compression
 from .database import Database
+from .folder_opener import open_folder
 from .archive_trash import recover_pending, pending_current
 from .imglib import CatalogResolver, name_key
 from .ingest import (ArchiveRenameRecoveryError, ReindexCancelled, DedupBatch, _archive_io,
@@ -596,7 +598,7 @@ def create_app(db: Database) -> FastAPI:
         if not folder.is_dir():
             raise HTTPException(404, "folder not found on disk")
         try:
-            os.startfile(folder)         # Windows file explorer
+            open_folder(folder)
         except OSError as exc:
             raise HTTPException(500, f"cannot open folder: {exc}")
         return {"ok": True}
@@ -606,13 +608,15 @@ def create_app(db: Database) -> FastAPI:
         from . import imglib
         imgs = db.images()
         objs = imglib.group_library(imgs, db.all_objects(advanced=True))
-        return {
+        # Construct/render in this worker: returning a dict makes FastAPI walk
+        # and encode the complete library on the ASGI event loop afterwards.
+        return JSONResponse(jsonable_encoder({
             "image_dir": db.image_dir(),
             "total_images": len(imgs),
             "total_exposure": round(
                 sum(float(i.get("exposure") or 0.0) for i in imgs), 1),
             "objects": objs,
-        }
+        }))
 
     @app.post("/api/library/edit")
     @serialize_archive

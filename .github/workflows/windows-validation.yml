@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
   workflow_dispatch:
     inputs:
       run_benchmarks:
@@ -216,9 +215,9 @@ jobs:
           & .venv-browser/Scripts/python.exe scripts/check_native_window.py --restricted-runtime --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-native.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Packaged HTTP disconnect, contention and native close during import
-        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && steps.browser_environment.outcome == 'success' }}
         run: |
-          & .venv-build/Scripts/python.exe scripts/check_import_lifecycle.py --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-import-lifecycle.log
+          & .venv-browser/Scripts/python.exe scripts/check_import_lifecycle.py --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/windows-import-lifecycle.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain validation evidence
         if: always()
@@ -240,6 +239,81 @@ jobs:
             logs/lifecycle-nightseam.log*
             tests/browser/artifacts/
           if-no-files-found: warn
+
+  linux_package:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.run_large_populated)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/logs/playwright-linux
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare pinned Linux package environment
+        run: |
+          mkdir -p logs
+          python -m venv .venv-build
+          .venv-build/bin/python -m pip install -r requirements-build-linux-lock.txt
+          .venv-build/bin/python -m pip check
+      - name: Build portable Linux x86_64 browser bundle
+        run: |
+          set -o pipefail
+          .venv-build/bin/python scripts/build_linux.py 2>&1 | tee logs/linux-package-build.log
+      - name: Validate the extracted frozen runtime with restricted PATH
+        run: |
+          set -o pipefail
+          packages=(dist/NightSeam-Catalog-*-linux-x86_64.tar.gz)
+          test "${#packages[@]}" -eq 1
+          .venv-build/bin/python scripts/check_linux_package.py --bundle "${packages[0]}" 2>&1 | tee logs/linux-package-smoke.log
+      # The same tarball must work without the compiler host's packages.
+      # Probe HTTP from a separate container sharing the offline loopback.
+      - name: First launch in clean offline Linux systems
+        run: |
+          set -o pipefail
+          packages=(dist/NightSeam-Catalog-*-linux-x86_64.tar.gz)
+          test "${#packages[@]}" -eq 1
+          images=(
+            'ubuntu:22.04@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956'
+            'ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac'
+            'debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587'
+          )
+          names=(ubuntu22 ubuntu24 debian12)
+          for i in "${!images[@]}"; do
+            .venv-build/bin/python scripts/check_linux_clean_system.py --bundle "${packages[0]}" --image "${images[$i]}" --output "logs/linux-package-clean-${names[$i]}.json" 2>&1 | tee "logs/linux-package-clean-${names[$i]}.log"
+          done
+      - name: Prepare separate Linux browser environment
+        run: |
+          python -m venv .venv-browser
+          .venv-browser/bin/python -m pip install playwright==1.62.0 Pillow==12.3.0
+          .venv-browser/bin/python -m playwright install --with-deps chromium
+      - name: Real browser checks against the fresh Linux executable
+        run: |
+          set -o pipefail
+          executables=(dist/NightSeam-Catalog-*-linux-x86_64/NightSeam)
+          test "${#executables[@]}" -eq 1
+          .venv-browser/bin/python scripts/check_browser.py --desktop --channel chromium --exe "${executables[0]}" 2>&1 | tee logs/linux-package-browser.log
+      - name: Retain Linux bundle and validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-package-${{ github.sha }}
+          path: |
+            dist/NightSeam-Catalog-*-linux-x86_64.tar.gz
+            dist/NightSeam-Catalog-*-linux-x86_64.tar.gz.sha256
+            dist/NightSeam-Catalog-*-linux-x86_64/build-info.json
+            logs/linux-package-*.log
+            logs/linux-package-*.json
+            logs/linux-build-*.log
+            tests/browser/artifacts/
+          if-no-files-found: error
 
   large_populated:
     if: github.event_name == 'workflow_dispatch' && inputs.run_large_populated
@@ -309,7 +383,7 @@ jobs:
           if-no-files-found: error
 
   validation:
-    needs: [changes, linux, windows, large_populated]
+    needs: [changes, linux, windows, linux_package, large_populated]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -319,6 +393,7 @@ jobs:
           CODE_SELECTED: ${{ needs.changes.outputs.code }}
           LINUX_RESULT: ${{ needs.linux.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
+          LINUX_PACKAGE_RESULT: ${{ needs.linux_package.result }}
           LARGE_SELECTED: ${{ github.event_name == 'workflow_dispatch' && inputs.run_large_populated }}
           LARGE_RESULT: ${{ needs.large_populated.result }}
         run: |
@@ -329,7 +404,7 @@ jobs:
                   raise SystemExit('The selected large populated experiment failed or did not execute')
               print('Selected large populated experiment passed; source gates run in pull-request CI')
               raise SystemExit(0)
-          results = [os.environ['LINUX_RESULT'], os.environ['WINDOWS_RESULT']]
+          results = [os.environ['LINUX_RESULT'], os.environ['WINDOWS_RESULT'], os.environ['LINUX_PACKAGE_RESULT']]
           allowed = {'success'} if os.environ['CODE_SELECTED'] == 'true' else {'success', 'skipped'}
           if os.environ['SELECTION_RESULT'] != 'success' or any(value not in allowed for value in results):
               raise SystemExit('A selected correctness check failed or did not execute')

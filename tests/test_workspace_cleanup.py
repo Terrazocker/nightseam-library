@@ -92,6 +92,20 @@ def test_abandoned_js_scratch_is_removed_but_live_owner_is_preserved(tmp_path):
     assert not stale.exists() and live.exists()
 
 
+def test_health_discovery_cleanup_preserves_live_recent_unknown_and_other_logs(tmp_path):
+    root = checkout(tmp_path)
+    stale = write(root, 'logs/health-discovery-2147483647-abcdefgh/.owner-pid', b'2147483647')
+    live = write(root, f'logs/health-discovery-{os.getpid()}-abcdefgh/.owner-pid', str(os.getpid()).encode())
+    unknown = write(root, 'logs/health-discovery-2147483647-ijklmnop/.owner-pid', b'0')
+    recent = write(root, 'logs/health-discovery-2147483647-qrstuvwx/.owner-pid', b'2147483647')
+    unrelated = write(root, 'logs/health-discovery-recovery/payload')
+    for path in (stale, live, unknown, unrelated):
+        os.utime(path.parent, (0, 0))
+    assert clean(root, apply=True) == 0
+    assert not stale.exists()
+    assert all(path.exists() for path in (live, unknown, recent, unrelated))
+
+
 def test_cleanup_refuses_symlink_and_external_paths(tmp_path):
     root = checkout(tmp_path)
     outside = tmp_path / "outside"

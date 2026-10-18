@@ -6,6 +6,7 @@ accepts browser fallback as native success. Does not simulate physical DPI/Snap.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import ctypes
 from ctypes import wintypes
 import json
@@ -161,6 +162,34 @@ class NativeWindows:
     def restore_thread(self):
         if self.previous_dpi:
             self.user.SetThreadDpiAwarenessContext(self.previous_dpi)
+
+
+@contextmanager
+def native_catalog(server):
+    """Observe initial navigation/bridge readiness without reloading or closing it."""
+    from playwright.sync_api import sync_playwright
+    debug_url = f'http://127.0.0.1:{server.debug_port}'
+    def debug_ready():
+        try:
+            return harness._http(debug_url + '/json/version', timeout=1)
+        except OSError:
+            return None
+    wait_for(debug_ready, 'private WebView2 debugging endpoint')
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.connect_over_cdp(debug_url, timeout=30000)
+        discovery = browser.new_browser_cdp_session()
+        def catalog_page():
+            discovery.send('Target.getTargets')  # Pump initial page events.
+            return next((page for context in browser.contexts for page in context.pages
+                         if page.url.startswith(server.base)), None)
+        try:
+            page = wait_for(catalog_page, 'native WebView2 catalog navigation')
+        finally:
+            discovery.detach()
+        page.locator('body[data-window-chrome="native"]').wait_for(state='attached')
+        if host_capabilities(page) != {'window_chrome': 'native', 'native_folder_picker': True}:
+            raise RuntimeError('Native catalog bridge capabilities differ')
+        yield page
 
 
 def run(executable, restricted_runtime=False):

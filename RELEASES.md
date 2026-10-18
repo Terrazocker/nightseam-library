@@ -1,5 +1,221 @@
 # Independent catalog release record
 
+## Binary integrity baseline handling — October 18, 2026
+
+Quick and Deep health checks now treat a non-text integrity hash as no_baseline
+rather than aborting the complete scan with TypeError. SQLite permits BLOBs in
+the legacy TEXT column. The check does not decode, trust or rewrite those bytes;
+healthy records continue to be checked, and invalid baselines cannot use the
+accept_contents acknowledgement.
+
+All four new API cases failed before the guard. The focused health/snapshot/spool
+suite then passed 86 tests with one Windows-only skip on Linux. Coverage includes
+matching ASCII digest bytes and non-UTF8 BLOBs in both modes, unchanged source
+rows/exposures, public JSON serialization, acknowledgement refusal and complete
+scratch/lock cleanup. Source release validation passed with zero errors.
+The final local full suite passed 965 tests with 9 skips in 213.77 seconds.
+
+## Native lifecycle startup and close observation — October 18, 2026
+
+The compact-spool Windows run passed 962 source tests, 24 browser checks and
+seven native-window checks, then timed out requiring HWND destruction within
+0.8 seconds during deliberately blocked publication. Its log also showed an
+uninitialized WebView2 BrowserProcessId during close. The lifecycle harness now
+observes initial private CDP navigation, native body chrome and a successful
+rooted capability RPC before any IO, using the prepared browser environment.
+WinForms hides an accepted close before potentially waiting for browser cleanup;
+the same 0.8-second bound now checks visibility loss while the file is still
+pinned. After releasing the writer it still requires committed bytes/history,
+HWND destruction, process exit, a closed listener and owned cleanup. Readiness,
+accepted-close and eventual-destruction results are retained explicitly.
+No application shutdown behavior or SQLite hold deadline was changed.
+
+## Compact ordered health spool — October 18, 2026
+
+Untracked paths now use one WITHOUT ROWID tree keyed by raw pathname and global
+observation sequence, removing the duplicate pathname table/ordering index.
+Duplicate observations, raw Unicode/surrogate ordering and bounded memory remain;
+the sequence advances only after successful insertion. Indexed-record snapshots
+and pending-directory storage are unchanged.
+
+Focused health/snapshot/spool validation passed 82 tests with one Windows-only
+skip on Linux. New regressions cover reverse insertion with a disk budget,
+interleaved duplicates, normalization-distinct Unicode, prefix keys and 3.5 KiB
+paths forcing SQLite overflow pages. The disk-budget case fails on the previous
+schema. Existing cancellation, live-cursor and storage failure tests still pass.
+
+scripts/bench_health_spool.py loads the actual historical spool from 6969a99,
+separately from the candidate, in fresh processes. For 100,000 synthetic files,
+matching pending-directory fanout and 5,883 repeated observations, allocated
+SQLite pages fell from 78.887 MiB to 59.133 MiB (25.0%); at 5,000 files they fell
+from 3.934 MiB to 2.941 MiB. Exact ordered multiset hashes, complete counts,
+duplicates, LIFO traversal and owned cleanup match. Instrumented times were
+5.55/5.40 seconds at 100,000 and 0.30/0.31 seconds at 5,000. These are single
+resource observations with tracing and uncontrolled CPU/cache conditions,
+not physical filesystem throughput or a timing speedup claim. Pending pages,
+freelist high-water usage and indexed snapshots still consume temporary disk.
+Evidence/source hashes: logs/health-spool-comparison.json and sibling reports.
+
+## Bounded indexed archive-health snapshots — October 18, 2026
+
+Health scans now stream a committed read-only catalog snapshot into the private
+spool, storing full native record values and indexed normalized known paths.
+The source has a 1 MiB cache and closes before filesystem discovery/inspection;
+the shared database connection lock is not held while copying. Duplicate paths,
+invalid-path findings, image-ID order, baseline-source counts and complete private
+acknowledgement records are preserved. The list-returning integrity_snapshot API
+for compression and other callers is unchanged.
+
+Review reproduced a wrong-catalog read when an open database was replaced by
+name. The reader now uses SQLite's canonical opened filename and verifies file
+identity before/after capture. Tests cover replacement before/during copying,
+symlink alias changes, cwd changes, concurrent committed catalog/archive/baseline
+changes, source lock release before filesystem work, cancellation during copying
+and SQLite VM work, cancellable exclusive writers, literal URI/Unicode filenames,
+legacy BLOB/quoted-column preservation, stale acknowledgement after spool removal
+and storage failures. URI encoding preserves native UNC/extended Windows syntax;
+a native Windows long-path test is included in platform CI.
+The final focused run passed 80 tests with one Windows-only skip on Linux;
+the existing wide unindexed-discovery resource gate also passed after integration.
+The first Windows resource run passed 77 regressions with four platform skips,
+then caught backslash keys in the new measurement source-hash map. Evidence keys
+now use portable forward slashes before rerunning both resource modes.
+
+Against b828712, the real populated SQLite catalog probe with synthetic filesystem
+work at 100,000 indexed rows reduced traced Python peak from 158.839 MiB to
+0.992 MiB and observed instrumented RSS growth from 252.062 MiB to 2.914 MiB.
+At 5,000 rows, candidate Python peak was 0.073 MiB and observed RSS growth
+2.375 MiB. The larger spool used 68.727 MiB of temporary disk; elapsed times were
+8.66 seconds before and 12.60 seconds after under tracing/observer overhead and
+uncontrolled CPU/cache conditions. Candidate source materialization took 6.08
+seconds in that instrumented run. External rollback-journal writers can wait
+during that phase; shared reads remain available. Source/code hashes and raw
+measurements are retained in logs/resources-health-indexed-final.json and sibling
+worker reports. These are memory/resource observations, not physical archive IO
+throughput or exact OS high-water measurements. Memory still depends on row and
+retained-report payload size, including output-dependent baseline-source labels;
+temporary disk grows with the catalog. Final platform outcomes are retained on
+the draft PR and in CI.
+
+## Bounded archive-health discovery memory — October 18, 2026
+
+Replaced the pending-directory stack and all-untracked pathname list with a
+private disk-backed SQLite spool, a 1 MiB page cache and indexed ordered reads.
+Findings retain exact Python pathname ordering and duplicates; full counts and
+omitted counts remain independent of the retained-report limit. Completion,
+cancellation, storage failures and cleanup failures release the archive lock;
+the archive and catalog remain unchanged. Abandoned spool housekeeping preserves
+live, recent and unknown-owner workspaces.
+
+The focused health/spool run passed 53 tests and housekeeping passed 10. Coverage
+includes wide-directory heap use, raw Unicode/surrogate ordering, report limits,
+discovery/iteration cancellation, and connect/schema/insert/read/close/cleanup
+failures. Windows CI now runs these regressions and the isolated-process resource
+gate alongside the existing archive stress checks.
+
+Against commit 9fc2b60, the local synthetic 100,000-file plus matching-directory
+fanout probe reduced traced Python peak from 43.125 MiB to 0.064 MiB and observed
+instrumented RSS growth from 63.293 MiB to 1.395 MiB. Candidate Python peaks were
+0.058/0.064 MiB at 5,000/100,000 files. This trades memory for temporary disk and
+work: the larger spool occupied 57.062 MiB and took 9.10 seconds versus 6.01
+seconds before. Enumeration/stat are lazy test doubles, indexed rows are absent,
+and RSS is sampled during progress updates with tracing/observer overhead.
+These observations establish discovery-queue behavior, not physical filesystem
+throughput or an exact OS high-water mark. Indexed-record snapshots/known paths
+were still proportional to catalog size at this stage (addressed by the indexed
+snapshot follow-up above). Disk exhaustion visibly fails the scan.
+Evidence: logs/resources-health-discovery-local.json and sibling worker reports.
+
+## Large library response performance — October 18, 2026
+
+Library grouping now uses one scan for requested catalog IDs, a single lazy
+fallback resolver for obsolete IDs, and no catalog normalization for an empty
+or intentionally unresolved-only library. Duplicate catalog IDs retain
+first-row precedence; obsolete IDs are resolved only for display, and stored
+image IDs/metadata and session membership are preserved. Indexes stay local to
+each request's catalog snapshot. Library JSON conversion/rendering now occurs
+in the route worker with the existing FastAPI encoding semantics.
+
+All four new regressions failed before the fixes. The focused library/API
+run passed 148 tests. A real HTTP test now serves catalog.html while library
+JSON rendering is deliberately held and verifies Unicode, fingerprint exclusion
+and equality with JSON export. The final encoding-preservation rerun is retained
+under logs/library-final-focused.log.
+
+The repeatable synthetic benchmark against commit 78e6a55 used a 12,000-row
+catalog and three alternating-order samples per implementation, requiring exact
+output equality. Median grouping time for 1,000 current objects was 164.2 ms
+before and 24.4 ms after; 64 obsolete IDs took 3.476 s before and 56.1 ms after.
+Four current objects took 4.36/4.14 ms; unresolved-only and empty cases also
+improved. These are local grouping observations with uncontrolled CPU/cache
+conditions, not HTTP throughput, physical IO or packaged application speedup
+claims. scripts/bench_library_grouping.py records samples and implementation
+hashes; final CI/source/package outcomes are retained in the draft PR.
+
+## Offline Linux runtime acceptance — October 18, 2026
+
+Added a non-root runtime-only Docker gate for the unchanged Linux tarball on
+minimal Ubuntu 22.04, Ubuntu 24.04 and Debian 12. Images are digest-pinned in CI;
+the base OS is read-only, no Python/Node or checkout/profile is installed, and
+external networking is disabled before first launch. A separate curl container
+shares its loopback for actual version/assets, private archive, Rice roundtrip,
+duplicate/history and shutdown/cleanup checks. Reports retain image/package and
+artifact identity. Browser/folder launch capture is explicitly a test double;
+real desktop/accessibility acceptance remains documented as not run.
+
+The earlier frozen bundle failed the new browser environment check. The rebuilt
+browser handoff restores the system library environment, with tests for missing
+xdg-open, literal arguments and unchanged Windows behavior. The new Rice check
+then found CFITSIO filename parsing failures under archive paths with parentheses
+and brackets; the native regression reproduced the failure before the fix.
+Utility subprocess cwd/relative arguments now avoid parsing source ancestry.
+The first Windows CI run caught a library-copy regression from long relative
+paths beginning with several parent traversals. Ordinary outputs retain their
+original absolute paths, including across Windows drives; only outputs with
+CFITSIO syntax in their ancestry are shortened relative to the source parent.
+The separate-branch regression also checks copies out of a special-character
+archive into a plain backup directory.
+
+The local frozen development bundle passed the complete offline runtime gate on
+all three OS images, including the literal archive parent and native Rice byte
+restoration. The freshly built packaged Chromium suite passed 24/24. A separate
+native regression verifies the absolute-output fallback needed when Windows
+library-copy output is on a different drive. Final clean CI artifact identities
+and platform-suite outcomes are retained in the follow-up PR and CI reports.
+
+Release instructions now distinguish Windows ZIP gates from Linux tarball,
+frozen-runtime and minimal-OS checks. No public release is published.
+
+## Linux x86_64 browser bundle — October 17, 2026
+
+Added a separate Linux build with an exact 39-package dependency closure, an
+isolated source/version bake, bundled native FITS tools, per-ELF GLIBC inspection,
+portable tarball/checksum and preserved existing outputs. Only public runtime
+assets are packaged; writable profiles remain beside the extracted executable.
+Linux uses a system browser; GTK/Qt native backends are not bundled. Build and
+runtime instructions are in LINUX.md.
+
+The first local executable built on glibc 2.41 with a highest numeric bundled
+GLIBC requirement of 2.35. Restricted-PATH frozen checks passed version/assets,
+real safe-Rice ingest and exact restoration, duplicate metadata, image/history
+publication, graceful SIGINT exit, listener/process/extraction/staging cleanup.
+Six archive-validation regressions passed. The first real Chromium gate passed
+23/24 and identified missing pywebview distribution metadata in the support
+report; the builder now copies that metadata while excluding the native module.
+The rebuilt local browser gate passed 24/24 and the local full suite passed
+900 tests, eight skipped. Ubuntu 22.04 passed the frozen runtime smoke, but its
+initial browser run found the compact toolbar wrapping with wider system fonts.
+That was reproduced locally with DejaVu Sans (84px instead of 45px at 900px).
+At intermediate widths, Copy/Support labels now reflow to accessible named icons,
+keeping primary labels, all actions and the stable 14px density. The browser
+regression exercises that font fallback. Final Ubuntu/Windows outcomes and
+artifacts are retained in the Linux draft PR. No public release was published.
+
+The archive-folder action previously called Windows-only os.startfile on Linux.
+It now delegates to xdg-open with literal path arguments and reaps the launcher;
+missing utilities and spawn failures return a clear per-action error. Windows
+retains startfile. UI feedback names the file manager rather than Explorer.
+
 ## Large packaged import experiment and storage failures — October 17, 2026
 
 Added a separate populated-library ABBA controller with deterministic 8–32 MiB

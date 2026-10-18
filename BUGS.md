@@ -1,5 +1,26 @@
 # Current NightSeam Catalog findings
 
+## Binary integrity baseline aborts health scans — October 18, 2026 (fixed)
+
+SQLite TEXT affinity permits a BLOB in image_integrity.sha256. A nonempty BLOB
+reached the text hash pattern and raised TypeError, aborting both Quick and Deep
+scans before subsequent healthy records. Health now requires a textual SHA-256
+baseline; a binary value produces the existing no_baseline finding. It is not
+coerced or accepted, and the stored bytes remain unchanged. API regressions cover
+ASCII digest and non-UTF8 BLOBs, continued healthy checking, acknowledgement
+refusal, read-only results, scratch cleanup and released archive locks.
+
+## Native lifecycle close observation — October 18, 2026 (fixed in harness)
+
+Run 39124675987 passed source/browser/native checks but required HWND destruction
+within 0.8 seconds while SQLite deliberately blocked publication. Pywebview hides
+an accepted close before its browser cleanup completes, and the harness also
+started IO before verifying WebView2 readiness. It now waits for the initial
+private catalog/bridge, checks a visible-to-hidden transition within the same
+deadline while the file remains pinned, then requires HWND/process/listener and
+staging cleanup after the writer releases. Application shutdown behavior and the
+SQLite hold limit are unchanged. See RELEASES.md for evidence and validation.
+
 ## Populated duplicate-query work and compression cancellation — October 17, 2026 (mitigated/fixed)
 
 Bounded OR pages still sorted the remaining matching rows on every fetch.
@@ -223,7 +244,71 @@ Recoverable-trash validation subsequently passed all 737 source tests with one
 POSIX-only skip (final run 179.21 seconds). The earlier rename-refusal evidence
 remains retained; these passing runs do not establish its underlying cause.
 
+## Literal archive ancestry and frozen browser launch — October 18, 2026 (fixed)
+
+The clean Linux runtime check exposed two issues missed by developer-host
+headless checks. Frozen browser handoff inherited PyInstaller's bundled library
+path; it now uses the same sanitized xdg-open launch as archive-folder opening.
+First and repeat-instance browser URLs and literal folder arguments are checked
+through an owned launcher capture, without modifying the server environment.
+
+CFITSIO treated parentheses/brackets in archive ancestry as extended filename
+syntax and refused Rice conversion. A real native round-trip regression failed
+before the fix. FITS utility subprocesses now use the validated source parent
+as their own cwd and relative staging arguments, keeping that ancestry out of
+the parser while leaving the server cwd and shell behavior unchanged.
+
+## Large library grouping and response stalls — October 18, 2026 (fixed)
+
+Library grouping rescanned the complete catalog for each stored object ID and
+rebuilt the alias resolver for every obsolete ID. Regression fixtures observed
+820 ID reads for 40 current groups and 13 resolver constructions for 13 obsolete
+groups. Grouping now scans catalog IDs once, retaining only requested rows and
+stopping early when all current IDs are found. One lazy per-call resolver
+handles obsolete IDs; intentionally unresolved groups remain unresolved.
+
+The synchronous library route also returned a raw dictionary. FastAPI walked
+and rendered its nested JSON on the event loop after the worker returned,
+blocking unrelated HTTP requests during encoding. The route now performs the
+same jsonable_encoder/JSONResponse conversion inside its worker. A real-socket
+regression held encoding and reproduced a blocked catalog request before the
+fix; after the fix the catalog responds while encoding remains held.
+
+## Archive-health discovery memory — October 18, 2026 (fixed)
+
+Pending directories and untracked FITS paths now use a private disk-backed
+SQLite spool with a 1 MiB page cache and indexed ordered iteration. Complete
+counts, raw pathname ordering, duplicates and cancellation are preserved.
+The synthetic 100,000-file plus directory-fanout probe reduced traced Python
+peak from 43.125 MiB to 0.064 MiB; observed instrumented RSS growth fell from
+63.293 MiB to 1.395 MiB. Scratch cleanup and storage failures are tested.
+Spool disk usage grows with discovered paths; storage exhaustion visibly fails
+the scan without changing the archive or catalog. The indexed-record follow-up
+below also removes its separate row-list and known-path-set memory growth.
+See RELEASES.md for measurement scope and disk/time tradeoffs.
+
+## Archive-health indexed snapshot memory — October 18, 2026 (fixed)
+
+Health scans now copy a consistent committed catalog view into private disk
+storage one native row at a time, with indexed known-path membership. Full raw
+rows and duplicate/invalid paths retain their previous reporting and stale
+acknowledgement semantics. The separate read-only source has a 1 MiB cache and
+closes before archive inspection; shared database reads remain available while
+copying. External rollback-journal writers can wait during materialization.
+Canonical opened filenames and file identity checks refuse catalog replacement
+instead of reading a different database. Cancellation, VM interruption, busy
+writers, source changes, legacy values and storage failures are covered by tests.
+Working memory scales with one row, SQLite caches and retained report payloads,
+rather than indexed row count. Report source histograms remain output-dependent;
+temporary disk still scales with catalog size. The list-returning snapshot API
+for compression and other callers is unchanged.
+
 ## Acceptance still open
+
+- Linux minimal offline systems now have a dedicated runtime gate; real
+  browser/file-manager integration, downloads and screen-reader behavior still
+  require the checklist in docs/linux-manual-acceptance.md. A captured launcher
+  is a test double, not evidence of a successful physical desktop session.
 
 - Windows automated archive health and FITS preview acceptance passed on
   October 13: 708 source tests, 14 packaged browser checks and a private frozen
