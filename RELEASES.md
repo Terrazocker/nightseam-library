@@ -1,5 +1,31 @@
 # Independent catalog release record
 
+## Compact ordered health spool — October 18, 2026
+
+Untracked paths now use one WITHOUT ROWID tree keyed by raw pathname and global
+observation sequence, removing the duplicate pathname table/ordering index.
+Duplicate observations, raw Unicode/surrogate ordering and bounded memory remain;
+the sequence advances only after successful insertion. Indexed-record snapshots
+and pending-directory storage are unchanged.
+
+Focused health/snapshot/spool validation passed 82 tests with one Windows-only
+skip on Linux. New regressions cover reverse insertion with a disk budget,
+interleaved duplicates, normalization-distinct Unicode, prefix keys and 3.5 KiB
+paths forcing SQLite overflow pages. The disk-budget case fails on the previous
+schema. Existing cancellation, live-cursor and storage failure tests still pass.
+
+scripts/bench_health_spool.py loads the actual historical spool from 6969a99,
+separately from the candidate, in fresh processes. For 100,000 synthetic files,
+matching pending-directory fanout and 5,883 repeated observations, allocated
+SQLite pages fell from 78.887 MiB to 59.133 MiB (25.0%); at 5,000 files they fell
+from 3.934 MiB to 2.941 MiB. Exact ordered multiset hashes, complete counts,
+duplicates, LIFO traversal and owned cleanup match. Instrumented times were
+5.55/5.40 seconds at 100,000 and 0.30/0.31 seconds at 5,000. These are single
+resource observations with tracing and uncontrolled CPU/cache conditions,
+not physical filesystem throughput or a timing speedup claim. Pending pages,
+freelist high-water usage and indexed snapshots still consume temporary disk.
+Evidence/source hashes: logs/health-spool-comparison.json and sibling reports.
+
 ## Bounded indexed archive-health snapshots — October 18, 2026
 
 Health scans now stream a committed read-only catalog snapshot into the private

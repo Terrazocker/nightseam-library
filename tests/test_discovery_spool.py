@@ -1,6 +1,7 @@
 """Discovery preserves paths/order/counts while bounding queues and cleanup."""
 from contextlib import closing
 import sqlite3
+import random
 import threading
 import tracemalloc
 
@@ -37,7 +38,46 @@ def test_spool_preserves_raw_unicode_duplicates_and_lifo(workspace):
             assert list(ordered) == sorted(paths)
         plan = spool.execute('EXPLAIN QUERY PLAN SELECT path FROM untracked ORDER BY path').fetchall()
         assert not any('TEMP B-TREE' in row[-1] for row in plan)
-        assert any('untracked_order' in row[-1] for row in plan)
+    assert not list(workspace.iterdir())
+
+
+def test_wide_spool_disk_budget_preserves_duplicate_observations(workspace):
+    with discovery_spool.DiscoverySpool() as spool:
+        # Reverse order forces the tree to maintain order during insertion.
+        # The previous duplicate pathname table+index exceeds this disk budget.
+        for i in reversed(range(10000)):
+            path = f'{i:08d}-' + 'x'*170 + '.fits'
+            spool.add_untracked(path)
+            if i % 17 == 0:
+                spool.add_untracked(path)
+        with closing(spool.execute('PRAGMA page_count')) as cursor:
+            pages = cursor.fetchone()[0]
+        with closing(spool.execute('PRAGMA page_size')) as cursor:
+            page_size = cursor.fetchone()[0]
+        assert pages * page_size < 5 * 1024 * 1024
+        previous = ''
+        count = duplicates = 0
+        with closing(spool.untracked()) as paths:
+            for path in paths:
+                assert path >= previous
+                duplicates += path == previous
+                previous = path
+                count += 1
+        assert count == spool.untracked_count == 10589 and duplicates == 589
+    assert not list(workspace.iterdir())
+
+
+def test_overflow_paths_and_normalization_distinct_duplicates_keep_exact_order(workspace):
+    paths = ['é.fit', 'e\u0301.fit', 'a', 'a.fit', 'a/b.fit', '😀.fit']
+    paths += [f'parent/{i:04d}/' + 'x'*3500 + '/a.fit' for i in range(100)]
+    paths += paths[::7] + paths[::3]
+    random.Random(42).shuffle(paths)
+    with discovery_spool.DiscoverySpool() as spool:
+        for path in paths:
+            spool.add_untracked(path)
+        with closing(spool.untracked()) as ordered:
+            assert list(ordered) == sorted(paths)
+        assert spool.untracked_count == len(paths)
     assert not list(workspace.iterdir())
 
 

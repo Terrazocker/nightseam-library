@@ -298,7 +298,14 @@ private logs/health-discovery-<pid>-<random>/discovery.sqlite workspace. A 1 MiB
 SQLite page cache, disabled mmap and a maintained pathname index bound discovery
 memory without truncating counts or collecting a Python sort list. UTF-8 BLOBs
 with surrogatepass preserve raw strings, duplicates and Python lexical order;
-pending directories retain LIFO traversal. The spool is disposable, with no
+untracked paths use one WITHOUT ROWID primary-key tree (path, global occurrence),
+avoiding a second pathname copy in a separate ordering index. The occurrence
+counter advances only after a successful insert, retaining duplicate observations
+without a per-path Python map. Pending directories retain LIFO traversal.
+scripts/bench_health_spool.py compares actual historical/candidate spool modules
+in isolated processes, retaining ordered hashes, counts, source hashes and disk
+observations independently of the scanner benchmark's source selection.
+The spool is disposable, with no
 journal/durability requirement. Ordered cursors close before the connection and
 workspace on completion, cancellation or failure; storage/cleanup errors fail
 the job visibly. Housekeeping only reaps old workspaces with a confirmed dead

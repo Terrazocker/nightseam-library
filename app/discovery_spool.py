@@ -40,8 +40,8 @@ class DiscoverySpool:
                     f'PRAGMA cache_size=-{CACHE_KIB}', 'PRAGMA cache_spill=ON',
                     'PRAGMA mmap_size=0', 'PRAGMA temp_store=FILE',
                     'CREATE TABLE pending(path BLOB NOT NULL)',
-                    'CREATE TABLE untracked(path BLOB NOT NULL)',
-                    'CREATE INDEX untracked_order ON untracked(path)', 'BEGIN'):
+                    'CREATE TABLE untracked(path BLOB NOT NULL, occurrence INTEGER NOT NULL, '
+                    'PRIMARY KEY(path,occurrence)) WITHOUT ROWID', 'BEGIN'):
                 with closing(self.execute(statement)):
                     pass
         except BaseException as exc:
@@ -115,8 +115,8 @@ class DiscoverySpool:
         return row[1].decode('utf-8', 'surrogatepass')
 
     def add_untracked(self, path):
-        with closing(self.execute('INSERT INTO untracked(path) VALUES(?)',
-                                  (path.encode('utf-8', 'surrogatepass'),))):
+        with closing(self.execute('INSERT INTO untracked(path,occurrence) VALUES(?,?)',
+                                  (path.encode('utf-8', 'surrogatepass'), self.untracked_count))):
             pass
         self.untracked_count += 1
 
