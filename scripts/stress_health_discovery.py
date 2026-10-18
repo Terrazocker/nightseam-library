@@ -57,7 +57,7 @@ def measure(count, reference, output, indexed=False):
     snapshot_closed = not indexed
     snapshot_seconds = None
     try:
-        report['runtime_source_sha256'] = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
+        report['runtime_source_sha256'] = {path.relative_to(ROOT).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in (Path(archive_health.__file__), Path(discovery_spool.__file__), Path(sys.modules[Database.__module__].__file__))}
         report['scanner_source_sha256'] = hashlib.sha256(source.encode('utf-8')).hexdigest() if reference else report['runtime_source_sha256']['app/archive_health.py']
         root = scratch / 'archive'

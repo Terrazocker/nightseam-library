@@ -21,6 +21,9 @@ and storage failures. URI encoding preserves native UNC/extended Windows syntax;
 a native Windows long-path test is included in platform CI.
 The final focused run passed 80 tests with one Windows-only skip on Linux;
 the existing wide unindexed-discovery resource gate also passed after integration.
+The first Windows resource run passed 77 regressions with four platform skips,
+then caught backslash keys in the new measurement source-hash map. Evidence keys
+now use portable forward slashes before rerunning both resource modes.
 
 Against b828712, the real populated SQLite catalog probe with synthetic filesystem
 work at 100,000 indexed rows reduced traced Python peak from 158.839 MiB to
