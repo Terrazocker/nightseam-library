@@ -293,6 +293,21 @@ handles/reparse rejection on Windows. Reports retain 10,000 findings (200 shown)
 and count omitted findings. Private acknowledgement snapshots never enter API
 reports. Starts/acknowledgements serialize without holding SQLite during IO.
 
+app/discovery_spool.py stores pending directories and untracked paths in a
+private logs/health-discovery-<pid>-<random>/discovery.sqlite workspace. A 1 MiB
+SQLite page cache, disabled mmap and a maintained pathname index bound discovery
+memory without truncating counts or collecting a Python sort list. UTF-8 BLOBs
+with surrogatepass preserve raw strings, duplicates and Python lexical order;
+pending directories retain LIFO traversal. The spool is disposable, with no
+journal/durability requirement. Ordered cursors close before the connection and
+workspace on completion, cancellation or failure; storage/cleanup errors fail
+the job visibly. Housekeeping only reaps old workspaces with a confirmed dead
+owner. The archive stays read-only. Disk usage scales with discovered paths;
+indexed-record snapshots and known-path sets still scale with catalog size.
+scripts/stress_health_discovery.py gates heap, observed RSS, counts, ordering,
+handle release and scratch removal using lazy synthetic fanout, separately from
+real filesystem safety regressions.
+
 Upload streams, hashing, header matching and optional Rice preparation run in
 bounded workers (up to CPU count, at most 24) outside archive_lock. Original and
 packed stages stay private until their ordered publication turn. One failed SQL

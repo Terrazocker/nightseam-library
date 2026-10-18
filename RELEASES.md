@@ -1,5 +1,33 @@
 # Independent catalog release record
 
+## Bounded archive-health discovery memory — October 18, 2026
+
+Replaced the pending-directory stack and all-untracked pathname list with a
+private disk-backed SQLite spool, a 1 MiB page cache and indexed ordered reads.
+Findings retain exact Python pathname ordering and duplicates; full counts and
+omitted counts remain independent of the retained-report limit. Completion,
+cancellation, storage failures and cleanup failures release the archive lock;
+the archive and catalog remain unchanged. Abandoned spool housekeeping preserves
+live, recent and unknown-owner workspaces.
+
+The focused health/spool run passed 53 tests and housekeeping passed 10. Coverage
+includes wide-directory heap use, raw Unicode/surrogate ordering, report limits,
+discovery/iteration cancellation, and connect/schema/insert/read/close/cleanup
+failures. Windows CI now runs these regressions and the isolated-process resource
+gate alongside the existing archive stress checks.
+
+Against commit 9fc2b60, the local synthetic 100,000-file plus matching-directory
+fanout probe reduced traced Python peak from 43.125 MiB to 0.064 MiB and observed
+instrumented RSS growth from 63.293 MiB to 1.395 MiB. Candidate Python peaks were
+0.058/0.064 MiB at 5,000/100,000 files. This trades memory for temporary disk and
+work: the larger spool occupied 57.062 MiB and took 9.10 seconds versus 6.01
+seconds before. Enumeration/stat are lazy test doubles, indexed rows are absent,
+and RSS is sampled during progress updates with tracing/observer overhead.
+These observations establish discovery-queue behavior, not physical filesystem
+throughput or an exact OS high-water mark. Indexed-record snapshots/known paths
+remain proportional to catalog size. Disk exhaustion visibly fails the scan.
+Evidence: logs/resources-health-discovery-local.json and sibling worker reports.
+
 ## Large library response performance — October 18, 2026
 
 Library grouping now uses one scan for requested catalog IDs, a single lazy

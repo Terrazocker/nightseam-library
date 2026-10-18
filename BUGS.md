@@ -253,16 +253,20 @@ same jsonable_encoder/JSONResponse conversion inside its worker. A real-socket
 regression held encoding and reproduced a blocked catalog request before the
 fix; after the fix the catalog responds while encoding remains held.
 
-## Acceptance still open
+## Archive-health discovery memory — October 18, 2026 (fixed)
 
-- Archive-health discovery retains all untracked FITS pathnames before
-  verification/reporting, then sorts their references. MAX_FINDINGS bounds
-  retained report entries, not discovery memory. Very large unindexed archives
-  therefore need memory proportional to their discovered pathname lengths.
-  Enumeration streams, skips managed trash/links and checks cancellation, but
-  has no separate discovery count/memory bound. A bounded discovery/spooling
-  design remains performance work; it must preserve complete counts, scan
-  cancellation and deterministic findings.
+Pending directories and untracked FITS paths now use a private disk-backed
+SQLite spool with a 1 MiB page cache and indexed ordered iteration. Complete
+counts, raw pathname ordering, duplicates and cancellation are preserved.
+The synthetic 100,000-file plus directory-fanout probe reduced traced Python
+peak from 43.125 MiB to 0.064 MiB; observed instrumented RSS growth fell from
+63.293 MiB to 1.395 MiB. Scratch cleanup and storage failures are tested.
+Spool disk usage grows with discovered paths; storage exhaustion visibly fails
+the scan without changing the archive or catalog. The indexed-record snapshot
+and known-path set still scale with indexed catalog size; this change bounds
+discovery queues, not the entire health scan. See RELEASES.md for scope/tradeoffs.
+
+## Acceptance still open
 
 - Linux minimal offline systems now have a dedicated runtime gate; real
   browser/file-manager integration, downloads and screen-reader behavior still

@@ -134,7 +134,7 @@ def candidates(root: Path, *, build_output=False, backups_only=False,
         logs = root / "logs"
         if logs.is_dir():
             for path in logs.iterdir():
-                match = re.fullmatch(r"(?:\.js-syntax-(\d+)-\d+|test-js-syntax-(\d+)-[0-9a-f]{8})", path.name)
+                match = re.fullmatch(r"(?:\.js-syntax-(\d+)-\d+|test-js-syntax-(\d+)-[0-9a-f]{8}|health-discovery-(\d+)-[a-z0-9_]{8})", path.name)
                 if not match or not path.is_dir() or path.stat().st_mtime > threshold:
                     continue
                 owner = next(group for group in match.groups() if group is not None)

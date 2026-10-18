@@ -11,12 +11,13 @@ import threading
 import time
 import uuid
 from collections import Counter
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from datetime import UTC, datetime
 from pathlib import Path
 
 from .paths import safe_join, safe_rel
 from .fits_metadata import is_fits_name
+from .discovery_spool import DiscoverySpool
 from . import imglib
 
 log = logging.getLogger(__name__)
@@ -196,6 +197,7 @@ def scan_archive(db, mode, cancel, publish):
         progress()
 
     acquired = False
+    resources = ExitStack()
     try:
         progress(True)
         while not acquired:
@@ -221,12 +223,13 @@ def scan_archive(db, mode, cancel, publish):
         report.update(archive_available=True, resolved_archive=str(root), archive_identity=list(identity), phase="discovering")
         report["baseline_sources"] = dict(Counter(rec.get("baseline_source") or "none" for rec in records))
         known = {os.path.normcase(clean) for rec in records if (clean := safe_rel(rec["file"])) is not None}
-        pending, untracked = [""], []
+        discovery = resources.enter_context(DiscoverySpool())
+        discovery.push_directory('')
         progress(True)
-        while pending:
+        while discovery.pending_count:
             checkpoint()
             _check_root(root, identity)
-            folder = pending.pop()
+            folder = discovery.pop_directory()
             try:
                 if folder:
                     _contained(root, folder, identity)
@@ -241,9 +244,9 @@ def scan_archive(db, mode, cancel, publish):
                             from .trash_paths import TRASH_FOLDER, managed_trash
                             if not folder and name == TRASH_FOLDER and managed_trash(root):
                                 continue
-                            pending.append(relative)
+                            discovery.push_directory(relative)
                         elif is_fits_name(name) and os.path.normcase(relative) not in known:
-                            untracked.append(relative)
+                            discovery.add_untracked(relative)
                         progress()
                 finally:
                     entries.close()
@@ -251,7 +254,7 @@ def scan_archive(db, mode, cancel, publish):
                 finding("unsafe_path", folder, str(exc))
             except OSError:
                 finding("unreadable_directory", folder, "This folder could not be enumerated; its contents were not checked.")
-        report.update(phase="checking", total=len(records) + len(untracked))
+        report.update(phase="checking", total=len(records) + discovery.untracked_count)
         progress(True)
         for rec in records:
             checkpoint()
@@ -289,7 +292,8 @@ def scan_archive(db, mode, cancel, publish):
             report["processed"] += 1
             report["unverified"] = report["processed"] - report["verified"]
             progress()
-        for relative in sorted(untracked):
+        untracked = resources.enter_context(closing(discovery.untracked()))
+        for relative in untracked:
             checkpoint()
             _check_root(root, identity)
             try:
@@ -314,8 +318,11 @@ def scan_archive(db, mode, cancel, publish):
         finding("archive_unavailable", "", "The archive became unavailable or changed. Results are partial.")
         return {**report, "status": "unavailable", "phase": "finished", "archive_available": False}
     finally:
-        if acquired:
-            db.archive_lock.release()
+        try:
+            resources.close()
+        finally:
+            if acquired:
+                db.archive_lock.release()
 
 
 class ArchiveHealthManager:
