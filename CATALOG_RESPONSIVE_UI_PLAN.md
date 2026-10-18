@@ -19,7 +19,7 @@ current captures cover Library, Import Exposures, and Sky Map at:
 - 2000x800 and 2000x1400, isolating height changes at unchanged width.
 
 Evidence is saved locally in:
-`~/.codex/visualizations/2026/09/30/01a0f3c0-f719-7b71-8728-5d4c06a14aae/catalog-review-20261001/`.
+a local Codex visualization folder (`catalog-review-20261001/`, not committed).
 `metrics.json` contains measured rectangles, font sizes, and scroll dimensions.
 The captures produced no page errors. These were diagnostic captures, not a
 full test-suite run or native DPI acceptance.
@@ -230,7 +230,7 @@ was performed. The development executable was rebuilt after final visual review.
   mapping remain intact. Source-planner drawing lifecycle remains synchronous.
 
 Evidence directory:
-`~/.codex/visualizations/2026/09/30/01a0f3c0-f719-7b71-8728-5d4c06a14aae/catalog-responsive-implemented/`.
+a local Codex visualization folder (`catalog-responsive-implemented/`, not committed).
 It contains27 new captures and `metrics.json`. All captured viewports from480px
 to2560px retain14px root/body text;2000x800 and2000x1400 retain the same horizontal
 container bounds and density. Capture page errors:0. Baseline Library panels

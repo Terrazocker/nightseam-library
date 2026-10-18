@@ -64,7 +64,7 @@ so archive membership should follow stored sessions, not a date-folder split.
 
 ## Data and screening protocol
 
-Source: `Example-data`, read-only.
+Source: a local `Example-data` folder, read-only.
 There are 2,057 unique complete-file hashes, all uncompressed `.fit`, exactly
 4,152,960 bytes each. Each has one primary image: unsigned 16-bit, 1080 × 1920,
 BITPIX=16, BZERO=32768, BSCALE=1, Bayer GRBG, Seestar S30, 10-second Light,
@@ -193,7 +193,7 @@ complete-file restoration. Their timings are in-memory encode/decode, with sourc
 excluded, and cannot be compared directly with the disk-I/O archive timings.
 No lossy compression was tested. [NASA FITS compression overview](https://heasarc.gsfc.nasa.gov/docs/software/fitsio/fpack/fpack.html)
 
-A later [native fpack/funpack round-trip test](<docs/fpack-funpack-roundtrip-20261015.md>)
+A later [native fpack/funpack round-trip test](<fpack-funpack-roundtrip-20261015.md>)
 restored **all 2,057 original full-file SHA-256 hashes**, using `fpack -r` and
 `funpack -C`, without a saved header or output repair. It compressed the complete
 collection to 4,698,034,560 bytes (45.00% saved). Two files encoded through the
@@ -256,7 +256,7 @@ per-session compressed sizes/archive hashes, native tool logs, FITS codec result
 hardware/version details and benchmark scripts. Temporary setup failures were
 corrected and excluded; all reported runs completed their verification and cleanup.
 
-An [aggregate archive CSV](<docs/example-data-compression-benchmark-20261015.csv>)
+An [aggregate archive CSV](<example-data-compression-benchmark-20261015.csv>)
 is saved alongside this report. The FITS-specific pixel-codec tables above have
 separate JSON evidence because their in-memory timing contract differs.
 

@@ -16,13 +16,13 @@ point images are never automatically Rice-quantized. DEVELOPMENT.md and
 CATALOG_IMPORT_GUIDE.md describe the current behavior. Recommendations below
 retain the original research scope.
 
-Real-data follow-up: the later [example-data benchmark](<docs/example-data-compression-benchmark-20261015.md>)
+Real-data follow-up: the later [example-data benchmark](<example-data-compression-benchmark-20261015.md>)
 tests the user-supplied Seestar S30 light frames. Its measured session-archive
 recommendation is ZIP/Bzip2 for space savings, with Zstd6 as the fast alternative.
 The original synthetic measurements and general FITS discussion below retain
 their original scope; they do not establish the best codec for those real frames.
 
-Exact-restoration follow-up: the [native fpack/funpack experiment](<docs/fpack-funpack-roundtrip-20261015.md>)
+Exact-restoration follow-up: the [native fpack/funpack experiment](<fpack-funpack-roundtrip-20261015.md>)
 restored all 2,057 supplied integer FITS files with their original complete-file
 SHA-256 using `fpack -r` followed by `funpack -C`. No external header sidecar or
 output repair was used. The initial pixel tests below did not establish that
@@ -243,10 +243,10 @@ floating-point bytes.
 
 Source evidence in the installed Astropy compressed module directory:
 
-- [header.py](<.venv-build/Lib/site-packages/astropy/io/fits/hdu/compressed/header.py:341>) omits ZSCALE/ZZERO at q=0.
-- [_tiled_compression.py](<.venv-build/Lib/site-packages/astropy/io/fits/hdu/compressed/_tiled_compression.py:631>) checks for ZSCALE; line 697 dispatches the requested codec.
-- [_codecs.py](<.venv-build/Lib/site-packages/astropy/io/fits/hdu/compressed/_codecs.py:299>) converts Rice input to integers.
-- [settings.py](<.venv-build/Lib/site-packages/astropy/io/fits/hdu/compressed/settings.py:27>) establishes NO_DITHER as the actual default.
+- `astropy/io/fits/hdu/compressed/header.py:341` omits ZSCALE/ZZERO at q=0.
+- `astropy/io/fits/hdu/compressed/_tiled_compression.py:631` checks for ZSCALE; line 697 dispatches the requested codec.
+- `astropy/io/fits/hdu/compressed/_codecs.py:299` converts Rice input to integers.
+- `astropy/io/fits/hdu/compressed/settings.py:27` establishes NO_DITHER as the actual default.
 
 The fpack guide explicitly requires GZIP when q=0 for exact floating-point
 compression. Use GZIP_2/q=0 as a candidate, then independently verify the result.
@@ -285,17 +285,17 @@ Compression is not redundancy or a substitute for another verified copy.
 These findings are from repository inspection at d941c9f:
 
 - Upload accepts .fit/.fits and requires leading SIMPLE bytes
-  ([ingest](<app/ingest.py:401>), [header parser](<app/fits.py:45>)). Pickers and drag/drop share the suffix limit.
+  ([ingest](<../app/ingest.py#L401>), [header parser](<../app/fits.py#L45>)). Pickers and drag/drop share the suffix limit.
 - Metadata parsing reads only primary-HDU cards. No runtime compressed-image
   decoder or extension traversal is present. A tiled FITS renamed .fits can pass
   the shallow checks while its extension metadata is missed; that is accidental
   acceptance, not complete support.
 - Reindex and untracked-file discovery likewise recognize only .fit/.fits
-  ([reindex](<app/ingest.py:831>), [health scan](<app/archive_health.py:230>)).
+  ([reindex](<../app/ingest.py#L831>), [health scan](<../app/archive_health.py#L230>)).
 - Ingest preserves and hashes original complete bytes; duplicate records retain
-  their original identity/class/location ([deduplication](<app/ingest.py:139>)).
+  their original identity/class/location ([deduplication](<../app/ingest.py#L139>)).
 - Deep Archive Health checks physical stored bytes against a separate retained
-  integrity baseline ([inspection](<app/archive_health.py:119>), [baseline storage](<app/database.py:559>)).
+  integrity baseline ([inspection](<../app/archive_health.py#L119>), [baseline storage](<../app/database.py#L559>)).
 - Astropy 7.2.2 is already declared, locked and included by build hooks, but its
   presence alone does not make compressed ingestion supported.
 
@@ -372,8 +372,8 @@ not used to date the underlying standards or studies. Current online Astropy
 documentation describes version 8.0.1; experiments and installed-source inspection
 used NightSeam's pinned 7.2.2. No package versions were changed.
 
-Reproduction script: [probe.py](<logs/fits-compression-research-20261015/probe.py>).
-Raw results: [results.json](<logs/fits-compression-research-20261015/results.json>).
+Reproduction script: `logs/fits-compression-research-20261015/probe.py` (local only, not committed).
+Raw results: `logs/fits-compression-research-20261015/results.json` (local only, not committed).
 The benchmark has 22 image/method cases with three timed repetitions each,
 plus two special-value probes. All completed without codec exceptions or warnings;
 lossy cases intentionally report unequal pixels. No independent CFITSIO
