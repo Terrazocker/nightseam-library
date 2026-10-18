@@ -1,5 +1,43 @@
 # Independent catalog release record
 
+## Bounded indexed archive-health snapshots — October 18, 2026
+
+Health scans now stream a committed read-only catalog snapshot into the private
+spool, storing full native record values and indexed normalized known paths.
+The source has a 1 MiB cache and closes before filesystem discovery/inspection;
+the shared database connection lock is not held while copying. Duplicate paths,
+invalid-path findings, image-ID order, baseline-source counts and complete private
+acknowledgement records are preserved. The list-returning integrity_snapshot API
+for compression and other callers is unchanged.
+
+Review reproduced a wrong-catalog read when an open database was replaced by
+name. The reader now uses SQLite's canonical opened filename and verifies file
+identity before/after capture. Tests cover replacement before/during copying,
+symlink alias changes, cwd changes, concurrent committed catalog/archive/baseline
+changes, source lock release before filesystem work, cancellation during copying
+and SQLite VM work, cancellable exclusive writers, literal URI/Unicode filenames,
+legacy BLOB/quoted-column preservation, stale acknowledgement after spool removal
+and storage failures. URI encoding preserves native UNC/extended Windows syntax;
+a native Windows long-path test is included in platform CI.
+The final focused run passed 80 tests with one Windows-only skip on Linux;
+the existing wide unindexed-discovery resource gate also passed after integration.
+
+Against b828712, the real populated SQLite catalog probe with synthetic filesystem
+work at 100,000 indexed rows reduced traced Python peak from 158.839 MiB to
+0.992 MiB and observed instrumented RSS growth from 252.062 MiB to 2.914 MiB.
+At 5,000 rows, candidate Python peak was 0.073 MiB and observed RSS growth
+2.375 MiB. The larger spool used 68.727 MiB of temporary disk; elapsed times were
+8.66 seconds before and 12.60 seconds after under tracing/observer overhead and
+uncontrolled CPU/cache conditions. Candidate source materialization took 6.08
+seconds in that instrumented run. External rollback-journal writers can wait
+during that phase; shared reads remain available. Source/code hashes and raw
+measurements are retained in logs/resources-health-indexed-final.json and sibling
+worker reports. These are memory/resource observations, not physical archive IO
+throughput or exact OS high-water measurements. Memory still depends on row and
+retained-report payload size, including output-dependent baseline-source labels;
+temporary disk grows with the catalog. Final platform outcomes are retained on
+the draft PR and in CI.
+
 ## Bounded archive-health discovery memory — October 18, 2026
 
 Replaced the pending-directory stack and all-untracked pathname list with a
@@ -25,7 +63,8 @@ seconds before. Enumeration/stat are lazy test doubles, indexed rows are absent,
 and RSS is sampled during progress updates with tracing/observer overhead.
 These observations establish discovery-queue behavior, not physical filesystem
 throughput or an exact OS high-water mark. Indexed-record snapshots/known paths
-remain proportional to catalog size. Disk exhaustion visibly fails the scan.
+were still proportional to catalog size at this stage (addressed by the indexed
+snapshot follow-up above). Disk exhaustion visibly fails the scan.
 Evidence: logs/resources-health-discovery-local.json and sibling worker reports.
 
 ## Large library response performance — October 18, 2026

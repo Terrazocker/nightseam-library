@@ -302,11 +302,30 @@ pending directories retain LIFO traversal. The spool is disposable, with no
 journal/durability requirement. Ordered cursors close before the connection and
 workspace on completion, cancellation or failure; storage/cleanup errors fail
 the job visibly. Housekeeping only reaps old workspaces with a confirmed dead
-owner. The archive stays read-only. Disk usage scales with discovered paths;
-indexed-record snapshots and known-path sets still scale with catalog size.
+owner. The archive stays read-only. Disk usage scales with discovered paths.
 scripts/stress_health_discovery.py gates heap, observed RSS, counts, ordering,
 handle release and scratch removal using lazy synthetic fanout, separately from
 real filesystem safety regressions.
+
+Health uses Database.integrity_scan_rows to copy a committed snapshot of archive
+configuration and the complete image/integrity join into the same spool. Its
+dedicated mode=ro connection uses a 1 MiB cache, disabled mmap and one explicit
+read transaction. Canonical opened filenames and device/inode checks reject
+replacement before archive inspection; percent-encoded native filenames retain
+literal characters, UNC and extended Windows path syntax without URI authority.
+Cancellation reaches row copies, SQLite VM work and busy waits. Shared db.lock
+is not held while materializing scratch. The source closes before enumeration,
+stat or hash IO; rollback-journal writers can wait during the copy itself.
+Full SQLite-native record values use an ID-primary-key spool table, and known
+membership uses exactly normcase(safe_rel(file)) BLOB keys. Duplicate/invalid
+paths remain separate records. Only retained actionable findings keep full
+private _record copies after spool cleanup, preserving exact stale-ack guards.
+Working memory depends on row/report payload size and SQLite caches rather than
+indexed row count; baseline-source histograms remain output-dependent. Temporary
+disk grows with the snapshot. --indexed in stress_health_discovery.py exercises
+real populated SQLite catalogs with synthetic filesystem work. The existing
+integrity_snapshot list API remains for compatibility; in-memory databases keep
+that API but cannot supply an independent file-backed health snapshot.
 
 Upload streams, hashing, header matching and optional Rice preparation run in
 bounded workers (up to CPU count, at most 24) outside archive_lock. Original and

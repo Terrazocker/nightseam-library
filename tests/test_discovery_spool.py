@@ -123,6 +123,14 @@ def test_storage_failures_fail_job_and_release_every_owned_resource(workspace, t
     class Connection:
         def __init__(self, *args, **kwargs):
             self.actual = connect(*args, **kwargs)
+        def __getattr__(self, name):
+            return getattr(self.actual, name)
+        @property
+        def row_factory(self):
+            return self.actual.row_factory
+        @row_factory.setter
+        def row_factory(self, value):
+            self.actual.row_factory = value
         def execute(self, sql, parameters=()):
             if (failure == 'schema' and sql.startswith('CREATE')) or (
                     failure == 'insert' and sql.startswith('INSERT INTO untracked')):

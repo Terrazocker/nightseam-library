@@ -1,11 +1,12 @@
 """Disposable disk-backed queues for read-only archive-health discovery."""
 from contextlib import closing
+from collections import Counter
 import os
 from pathlib import Path
 import sqlite3
 import tempfile
 
-from .paths import logs_dir
+from .paths import logs_dir, safe_rel
 
 CACHE_KIB = 1024
 
@@ -25,6 +26,8 @@ class DiscoverySpool:
     def __init__(self):
         self.workspace = self.connection = None
         self.pending_count = self.untracked_count = 0
+        self.indexed_count = 0
+        self.baseline_sources = Counter()
 
     def __enter__(self):
         try:
@@ -47,6 +50,47 @@ class DiscoverySpool:
                 raise DiscoveryStorageError(f'Archive-health temporary discovery storage failed: {exc}') from exc
             raise
         return self
+
+    def copy_records(self, rows, checkpoint):
+        """Freeze complete native SQLite values one row at a time, in ID order."""
+        with closing(self.execute('CREATE TABLE known(path BLOB PRIMARY KEY) WITHOUT ROWID')):
+            pass
+        insert = None
+        for row in rows:
+            checkpoint()
+            record = dict(row)
+            if insert is None:
+                columns = ','.join('"' + key.replace('"', '""') + '"' +
+                                   (' INTEGER PRIMARY KEY' if key == 'id' else '') for key in record)
+                with closing(self.execute(f'CREATE TABLE indexed_records({columns})')):
+                    pass
+                insert = 'INSERT INTO indexed_records VALUES(' + ','.join('?' for _ in record) + ')'
+            with closing(self.execute(insert, tuple(record.values()))):
+                pass
+            clean = safe_rel(record['file'])
+            if clean is not None:
+                key = os.path.normcase(clean).encode('utf-8', 'surrogatepass')
+                with closing(self.execute('INSERT OR IGNORE INTO known(path) VALUES(?)', (key,))):
+                    pass
+            self.baseline_sources[record.get('baseline_source') or 'none'] += 1
+            self.indexed_count += 1
+        checkpoint()
+
+    def contains(self, path):
+        key = os.path.normcase(path).encode('utf-8', 'surrogatepass')
+        with closing(self.execute('SELECT 1 FROM known WHERE path=?', (key,))) as cursor:
+            return cursor.fetchone() is not None
+
+    def records(self):
+        if not self.indexed_count:
+            return
+        with closing(self.execute('SELECT * FROM indexed_records ORDER BY id')) as cursor:
+            names = [column[0] for column in cursor.description]
+            try:
+                for row in cursor:
+                    yield dict(zip(names, row))
+            except sqlite3.Error as exc:
+                raise DiscoveryStorageError(f'Archive-health temporary discovery storage failed: {exc}') from exc
 
     def execute(self, statement, parameters=()):
         try:

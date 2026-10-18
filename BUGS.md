@@ -262,9 +262,25 @@ The synthetic 100,000-file plus directory-fanout probe reduced traced Python
 peak from 43.125 MiB to 0.064 MiB; observed instrumented RSS growth fell from
 63.293 MiB to 1.395 MiB. Scratch cleanup and storage failures are tested.
 Spool disk usage grows with discovered paths; storage exhaustion visibly fails
-the scan without changing the archive or catalog. The indexed-record snapshot
-and known-path set still scale with indexed catalog size; this change bounds
-discovery queues, not the entire health scan. See RELEASES.md for scope/tradeoffs.
+the scan without changing the archive or catalog. The indexed-record follow-up
+below also removes its separate row-list and known-path-set memory growth.
+See RELEASES.md for measurement scope and disk/time tradeoffs.
+
+## Archive-health indexed snapshot memory — October 18, 2026 (fixed)
+
+Health scans now copy a consistent committed catalog view into private disk
+storage one native row at a time, with indexed known-path membership. Full raw
+rows and duplicate/invalid paths retain their previous reporting and stale
+acknowledgement semantics. The separate read-only source has a 1 MiB cache and
+closes before archive inspection; shared database reads remain available while
+copying. External rollback-journal writers can wait during materialization.
+Canonical opened filenames and file identity checks refuse catalog replacement
+instead of reading a different database. Cancellation, VM interruption, busy
+writers, source changes, legacy values and storage failures are covered by tests.
+Working memory scales with one row, SQLite caches and retained report payloads,
+rather than indexed row count. Report source histograms remain output-dependent;
+temporary disk still scales with catalog size. The list-returning snapshot API
+for compression and other callers is unchanged.
 
 ## Acceptance still open
 

@@ -204,7 +204,9 @@ def scan_archive(db, mode, cancel, publish):
             checkpoint()
             acquired = db.archive_lock.acquire(timeout=.1)
         checkpoint()
-        archive, records = db.integrity_snapshot()
+        discovery = resources.enter_context(DiscoverySpool())
+        with db.integrity_scan_rows(checkpoint) as (archive, rows):
+            discovery.copy_records(rows, checkpoint)
         report["archive"] = archive
         try:
             root = Path(archive).resolve(strict=True)
@@ -221,9 +223,7 @@ def scan_archive(db, mode, cancel, publish):
             finding("archive_unavailable", "", "The archive folder is unavailable or unreadable.")
             return {**report, "status": "unavailable", "phase": "finished"}
         report.update(archive_available=True, resolved_archive=str(root), archive_identity=list(identity), phase="discovering")
-        report["baseline_sources"] = dict(Counter(rec.get("baseline_source") or "none" for rec in records))
-        known = {os.path.normcase(clean) for rec in records if (clean := safe_rel(rec["file"])) is not None}
-        discovery = resources.enter_context(DiscoverySpool())
+        report["baseline_sources"] = dict(discovery.baseline_sources)
         discovery.push_directory('')
         progress(True)
         while discovery.pending_count:
@@ -238,14 +238,14 @@ def scan_archive(db, mode, cancel, publish):
                     for name, linked, directory in entries:
                         relative = f"{folder}/{name}" if folder else name
                         if linked:
-                            if os.path.normcase(relative) not in known:
+                            if not discovery.contains(relative):
                                 finding("unsafe_path", relative, "Linked archive paths are not followed.")
                         elif directory:
                             from .trash_paths import TRASH_FOLDER, managed_trash
                             if not folder and name == TRASH_FOLDER and managed_trash(root):
                                 continue
                             discovery.push_directory(relative)
-                        elif is_fits_name(name) and os.path.normcase(relative) not in known:
+                        elif is_fits_name(name) and not discovery.contains(relative):
                             discovery.add_untracked(relative)
                         progress()
                 finally:
@@ -254,8 +254,9 @@ def scan_archive(db, mode, cancel, publish):
                 finding("unsafe_path", folder, str(exc))
             except OSError:
                 finding("unreadable_directory", folder, "This folder could not be enumerated; its contents were not checked.")
-        report.update(phase="checking", total=len(records) + discovery.untracked_count)
+        report.update(phase="checking", total=discovery.indexed_count + discovery.untracked_count)
         progress(True)
+        records = resources.enter_context(closing(discovery.records()))
         for rec in records:
             checkpoint()
             _check_root(root, identity)
