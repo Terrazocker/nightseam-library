@@ -223,7 +223,26 @@ Recoverable-trash validation subsequently passed all 737 source tests with one
 POSIX-only skip (final run 179.21 seconds). The earlier rename-refusal evidence
 remains retained; these passing runs do not establish its underlying cause.
 
+## Literal archive ancestry and frozen browser launch — October 18, 2026 (fixed)
+
+The clean Linux runtime check exposed two issues missed by developer-host
+headless checks. Frozen browser handoff inherited PyInstaller's bundled library
+path; it now uses the same sanitized xdg-open launch as archive-folder opening.
+First and repeat-instance browser URLs and literal folder arguments are checked
+through an owned launcher capture, without modifying the server environment.
+
+CFITSIO treated parentheses/brackets in archive ancestry as extended filename
+syntax and refused Rice conversion. A real native round-trip regression failed
+before the fix. FITS utility subprocesses now use the validated source parent
+as their own cwd and relative staging arguments, keeping that ancestry out of
+the parser while leaving the server cwd and shell behavior unchanged.
+
 ## Acceptance still open
+
+- Linux minimal offline systems now have a dedicated runtime gate; real
+  browser/file-manager integration, downloads and screen-reader behavior still
+  require the checklist in docs/linux-manual-acceptance.md. A captured launcher
+  is a test double, not evidence of a successful physical desktop session.
 
 - Windows automated archive health and FITS preview acceptance passed on
   October 13: 708 source tests, 14 packaged browser checks and a private frozen

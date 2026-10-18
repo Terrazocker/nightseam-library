@@ -54,6 +54,33 @@ def no_stages(db, archive):
     assert db.conn.execute('SELECT COUNT(*) FROM compression_journal').fetchone()[0] == 0
 
 
+def test_native_rice_roundtrip_under_literal_archive_parent(tmp_path):
+    # CFITSIO parses parentheses/brackets in full path arguments as syntax.
+    parent = tmp_path / 'archive $(literal); [test] with spaces'
+    parent.mkdir()
+    original = exposure()
+    source, packed, restored = (parent / name for name in ('original.fit', 'packed.fz', 'restored.fit'))
+    source.write_bytes(original)
+    utilities = compression.tools()
+    compression.native(utilities['fpack'], ['-r'], source, packed, lambda: None)
+    compression.native(utilities['funpack'], ['-C'], packed, restored, lambda: None)
+    assert restored.read_bytes() == source.read_bytes() == original
+
+
+def test_native_preserves_absolute_output_when_volumes_have_no_relative_path(tmp_path, monkeypatch):
+    source, packed, restored = (tmp_path / name for name in ('original.fit', 'packed.fz', 'restored.fit'))
+    original = exposure()
+    source.write_bytes(original)
+    def different_drive(*args):
+        raise ValueError('path is on a different drive')
+    utilities = compression.tools()
+    with monkeypatch.context() as patch:
+        patch.setattr(compression.os.path, 'relpath', different_drive)
+        compression.native(utilities['fpack'], ['-r'], source, packed, lambda: None)
+        compression.native(utilities['funpack'], ['-C'], packed, restored, lambda: None)
+    assert restored.read_bytes() == source.read_bytes() == original
+
+
 @pytest.mark.parametrize('mode', ['fast', 'safe'])
 def test_session_modes_parallel_workers_and_real_publication_progress(tmp_path, monkeypatch, mode):
     db, archive, originals = library(tmp_path, count=4)

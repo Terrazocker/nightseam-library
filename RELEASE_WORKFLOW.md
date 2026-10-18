@@ -20,11 +20,51 @@ build a clean 0.1.0 release. Source validation can use check_release.py with
 3. Run relevant tests while editing, the full suite at completion, check_js.py
    and the source release guard. Tests/scratch stay in ignored logs/.
 4. Commit the reviewed changes, create a new vVERSION tag at the clean commit,
-   and compile with build.ps1. Never retag. Existing executable replacement
+   and compile with the platform builder below. Never retag. Existing executable replacement
    requires its verified backup and must respect an open application.
 5. Run packaged check_browser.py --desktop on a private executable/data copy.
-   Run check_release.py --no-stage, make_release.py and the full release guard.
-   Keep checksums/version/member validation and the private-data exclusion intact.
+   Complete the platform-specific runtime and distribution gates below. Keep
+   checksums/version/member validation and the private-data exclusion intact.
+
+## Windows distribution
+
+Build with `build.ps1`, run `check_release.py --no-stage`, then
+`make_release.py` and the full release guard. These executable/ZIP gates are
+Windows-specific. Follow [Windows manual acceptance](docs/windows-manual-acceptance.md)
+for clean disconnected VM and physical display checks; CI cannot complete all
+of those interactive checks.
+
+## Linux distribution
+
+Use glibc Linux x86_64, CPython 3.12, Node and binutils with the independent
+`requirements-build-linux-lock.txt` closure. Follow [LINUX.md](LINUX.md) to
+prepare `.venv-build`, then run:
+
+```sh
+.venv-build/bin/python scripts/build_linux.py
+.venv-build/bin/python scripts/check_linux_package.py \
+  --bundle dist/NightSeam-Catalog-VERSION-linux-x86_64.tar.gz
+.venv-build/bin/python scripts/check_linux_clean_system.py \
+  --bundle dist/NightSeam-Catalog-VERSION-linux-x86_64.tar.gz \
+  --image ubuntu:22.04
+```
+
+Replace VERSION with the actual frozen build version. Use the separate browser
+environment from CI to run `scripts/check_browser.py --desktop --channel chromium
+--exe dist/NightSeam-Catalog-VERSION-linux-x86_64/NightSeam`. The required CI
+gate additionally tests the same tarball on pinned Ubuntu 22.04/24.04 and Debian
+12 minimal images with external networking disabled. Retain their reports,
+packaged browser results, tarball, checksum and `build-info.json` together.
+The manifest must record clean source provenance, the tested executable hash
+and actual GLIBC requirements. Do not use `--allow-dirty` for a release.
+
+The Linux builder produces the tarball/checksum directly; do not pass it through
+the Windows-only `make_release.py` or claim its ZIP checks validated a tarball.
+Publish only a reviewed, tested archive with its checksum and build metadata
+after release publication is explicitly authorized. Complete
+[Linux desktop acceptance](docs/linux-manual-acceptance.md) before claiming
+interactive desktop support. ARM, musl and GTK/Qt native mode remain outside
+the current Linux target.
 
 ## Remote and publication
 
@@ -33,7 +73,7 @@ the user authorized origin setup and source publication to
 https://github.com/Terrazocker/nightseam-catalog.git. main remains the default
 development branch. Feature work uses codex/ branches.
 A GitHub repository and executable release publication are distinct choices.
-Upload only the verified release ZIP and its checksum/manifest when authorized.
+Upload only verified platform archives and their checksums/manifests when authorized.
 Never commit source data/, dist/data/, logs/, executable backups or credentials.
 The retired combined updater stays disabled until an independent update policy
 is designed and tested. Public releases are not implied by a local build.

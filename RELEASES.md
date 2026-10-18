@@ -1,5 +1,33 @@
 # Independent catalog release record
 
+## Offline Linux runtime acceptance — October 18, 2026
+
+Added a non-root runtime-only Docker gate for the unchanged Linux tarball on
+minimal Ubuntu 22.04, Ubuntu 24.04 and Debian 12. Images are digest-pinned in CI;
+the base OS is read-only, no Python/Node or checkout/profile is installed, and
+external networking is disabled before first launch. A separate curl container
+shares its loopback for actual version/assets, private archive, Rice roundtrip,
+duplicate/history and shutdown/cleanup checks. Reports retain image/package and
+artifact identity. Browser/folder launch capture is explicitly a test double;
+real desktop/accessibility acceptance remains documented as not run.
+
+The earlier frozen bundle failed the new browser environment check. The rebuilt
+browser handoff restores the system library environment, with tests for missing
+xdg-open, literal arguments and unchanged Windows behavior. The new Rice check
+then found CFITSIO filename parsing failures under archive paths with parentheses
+and brackets; the native regression reproduced the failure before the fix.
+Utility subprocess cwd/relative arguments now avoid parsing archive ancestry.
+
+The local frozen development bundle passed the complete offline runtime gate on
+all three OS images, including the literal archive parent and native Rice byte
+restoration. The freshly built packaged Chromium suite passed 24/24. A separate
+native regression verifies the absolute-output fallback needed when Windows
+library-copy output is on a different drive. Final clean CI artifact identities
+and platform-suite outcomes are retained in the follow-up PR and CI reports.
+
+Release instructions now distinguish Windows ZIP gates from Linux tarball,
+frozen-runtime and minimal-OS checks. No public release is published.
+
 ## Linux x86_64 browser bundle — October 17, 2026
 
 Added a separate Linux build with an exact 39-package dependency closure, an

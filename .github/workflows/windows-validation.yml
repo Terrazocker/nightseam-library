@@ -273,6 +273,22 @@ jobs:
           packages=(dist/NightSeam-Catalog-*-linux-x86_64.tar.gz)
           test "${#packages[@]}" -eq 1
           .venv-build/bin/python scripts/check_linux_package.py --bundle "${packages[0]}" 2>&1 | tee logs/linux-package-smoke.log
+      # The same tarball must work without the compiler host's packages.
+      # Probe HTTP from a separate container sharing the offline loopback.
+      - name: First launch in clean offline Linux systems
+        run: |
+          set -o pipefail
+          packages=(dist/NightSeam-Catalog-*-linux-x86_64.tar.gz)
+          test "${#packages[@]}" -eq 1
+          images=(
+            'ubuntu:22.04@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956'
+            'ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac'
+            'debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587'
+          )
+          names=(ubuntu22 ubuntu24 debian12)
+          for i in "${!images[@]}"; do
+            .venv-build/bin/python scripts/check_linux_clean_system.py --bundle "${packages[0]}" --image "${images[$i]}" --output "logs/linux-package-clean-${names[$i]}.json" 2>&1 | tee "logs/linux-package-clean-${names[$i]}.log"
+          done
       - name: Prepare separate Linux browser environment
         run: |
           python -m venv .venv-browser

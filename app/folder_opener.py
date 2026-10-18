@@ -15,9 +15,14 @@ def open_folder(folder):
         return
     if sys.platform != 'linux':
         raise OSError(errno.ENOSYS, 'Opening folders is unavailable on this platform')
+    open_desktop_target(str(folder))
+
+
+def open_desktop_target(target):
+    """Launch Linux desktop URLs/paths without the frozen app's libraries."""
     executable = shutil.which('xdg-open')
     if executable is None:
-        raise OSError(errno.ENOENT, 'xdg-open is unavailable; install xdg-utils to open archive folders')
+        raise OSError(errno.ENOENT, 'xdg-open is unavailable; install xdg-utils to open links or archive folders')
     environment = dict(os.environ)
     if getattr(sys, 'frozen', False):
         # System desktop programs must not load the onefile bundle's libraries.
@@ -27,10 +32,10 @@ def open_folder(folder):
         else:
             environment['LD_LIBRARY_PATH'] = original
     # No shell: spaces/metacharacters in archive paths remain literal arguments.
-    process = subprocess.Popen([executable, str(folder)], stdin=subprocess.DEVNULL,
+    process = subprocess.Popen([executable, target], stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, env=environment)
     def reap():
         code = process.wait()
         if code:
-            logging.getLogger('nightseam').warning('The desktop folder opener exited with status %s', code)
-    threading.Thread(target=reap, name='folder-opener', daemon=True).start()
+            logging.getLogger('nightseam').warning('The desktop opener exited with status %s', code)
+    threading.Thread(target=reap, name='desktop-opener', daemon=True).start()
