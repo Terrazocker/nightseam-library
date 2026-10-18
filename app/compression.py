@@ -347,7 +347,14 @@ def convert(db, mode, anchor_id, image_ids, cancel, publish, destination=None, c
     journal = False
     committed = False
     token = uuid.uuid4().hex
-    report = dict(processed=0, converted=0, skipped=0, total=0, phase='waiting', bytes_before=0, bytes_after=0, published=0, publication_total=0, compression_mode=compression_mode)
+    report = dict(processed=0, converted=0, skipped=0, total=0, phase='waiting', bytes_before=0, bytes_after=0, published=0, publication_total=0, compression_mode=compression_mode,
+                  skipped_missing=0, skipped_unsupported=0, skipped_files=[])
+    def note_skip(record, reason):
+        report['skipped_' + reason] += 1
+        # Keep job polling bounded even for a very large damaged session.
+        if len(report['skipped_files']) < 50:
+            report['skipped_files'] = [*report['skipped_files'],
+                dict(file=record['file'], reason=reason)]
     try:
         while not acquired:
             checkpoint()
@@ -367,7 +374,24 @@ def convert(db, mode, anchor_id, image_ids, cancel, publish, destination=None, c
         utilities = tools()
         baselines = {r['id']: r for r in snapshot}
         report.update(total=len(records), publication_total=len(records), phase='preparing')
-        publish(report)
+        available_records = []
+        for record in records:
+            checkpoint()
+            source = _contained(root, record['file'], identity)
+            try:
+                source.stat()
+            except FileNotFoundError:
+                if mode != 'compress':
+                    raise
+                # A missing leaf/parent is an existing catalog finding, not an
+                # excuse to ignore a vanished/replaced archive root or links.
+                _contained(root, record['file'], identity)
+                note_skip(record, 'missing')
+                report['processed'] += 1
+                report['skipped'] += 1
+            else:
+                available_records.append(record)
+        publish(dict(report))
         stage = _stage_name(token)
         # Journal exists before staging, so interrupted preparation is recoverable.
         with _transaction(db) as conn:
@@ -403,7 +427,7 @@ def convert(db, mode, anchor_id, image_ids, cancel, publish, destination=None, c
                 if parent is None:
                     raise ValueError('Unsafe library-copy destination folder.')
                 parent.mkdir(parents=True, exist_ok=True)
-        locations = [(root, record['file'], identity) for record in records]
+        locations = [(root, record['file'], identity) for record in available_records]
         locations.append((work_root, stage + '/anchor', work_identity))
         if mode == 'copy':
             locations.extend((work_root, 'images/' + record['file'], work_identity) for record in records)
@@ -460,8 +484,6 @@ def convert(db, mode, anchor_id, image_ids, cancel, publish, destination=None, c
                 if mapping:
                     mapping['current_sha256'] = unpacked[0]
                 converted = True
-            elif mode == 'compress' and file_kind == 'unsupported':
-                raise ValueError(f'Cannot safely Rice-compress {relative}: supported images are lossless 8/16/32-bit integer FITS. Originals retained.')
             unchanged = (version() == original_version if original_version is not None else
                          fingerprint(root, relative, identity, checkpoint) == current)
             if not unchanged:
@@ -507,7 +529,8 @@ def convert(db, mode, anchor_id, image_ids, cancel, publish, destination=None, c
                     raise ValueError(f'Destination already exists: {output_rel}')
                 item = dict(id=record['id'], old=relative, new=output_rel, sha256=result[0], size=result[1],
                     mtime_ns=result[2], source_sha256=current[0], source_size=current[1], mapping=mapping)
-            return item, exported, converted, current[1], result[1]
+            reason = 'unsupported' if mode == 'compress' and file_kind == 'unsupported' else None
+            return item, exported, converted, current[1], result[1], record, reason
 
         def prepare_pinned(record):
             source = _contained(root, record['file'], identity)
@@ -515,8 +538,8 @@ def convert(db, mode, anchor_id, image_ids, cancel, publish, destination=None, c
                 before = version() if version else None
                 return prepare(record, version, before)
 
-        with closing(parallel(records, prepare_pinned)) as results:
-            for item, exported, converted, before_size, after_size in results:
+        with closing(parallel(available_records, prepare_pinned)) as results:
+            for item, exported, converted, before_size, after_size, record, reason in results:
                 if item:
                     plan.append(item)
                 if exported:
@@ -526,6 +549,8 @@ def convert(db, mode, anchor_id, image_ids, cancel, publish, destination=None, c
                 report['bytes_after'] += after_size
                 report['processed'] += 1
                 report['converted' if converted else 'skipped'] += 1
+                if reason:
+                    note_skip(record, reason)
                 publish(dict(report))
         plan.sort(key=lambda item: item['id'])
         manifest.sort(key=lambda item: item['record']['id'])

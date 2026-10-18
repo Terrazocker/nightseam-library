@@ -1746,6 +1746,23 @@ def test_too_many_files_in_one_ingest_request(client, monkeypatch):
     assert r.status_code == 200
 
 
+def test_large_import_batch_keeps_order_history_and_refuses_overflow(client, db):
+    files = [("files", (f"batch-{i}.fits", m31_fits(exposure=i + 1),
+                        "application/fits")) for i in range(96)]
+    response = client.post("/api/images/ingest", files=files,
+                           data={"run_id": "large-batch-regression"})
+    assert response.status_code == 200
+    results = response.json()["results"]
+    assert [item["file"] for item in results] == [f"batch-{i}.fits" for i in range(96)]
+    assert all(item["ok"] and not item.get("skipped") for item in results)
+    assert len({item["id"] for item in results}) == len(db.images()) == 96
+    assert sum(item["n_files"] for item in db.import_batches()) == 96
+    overflow = client.post("/api/images/ingest", files=files + [files[0]])
+    assert overflow.status_code == 400 and "too many files" in overflow.json()["detail"]
+    assert len(db.images()) == 96
+    assert not list(Path(db.image_dir()).glob("*.part"))
+
+
 # --------------------------------------------------- panorama profile shapes
 
 # ------------------------------------------------------------- site validation

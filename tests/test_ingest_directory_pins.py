@@ -10,6 +10,18 @@ from app import archive_trash, ingest
 from scripts import stress_dedup as stress
 
 
+def prepare_and_admit(db, archive, size):
+    """A negative search, rather than preparation, acquires live request pins."""
+    index = ingest.DedupBatch.prepare(db, archive, {size})
+    try:
+        with db.archive_lock.for_batch(index):
+            assert ingest._find_duplicate(db, archive, 'absent', size, dedup_batch=index) is None
+        return index
+    except BaseException:
+        index.close()
+        raise
+
+
 @pytest.fixture
 def directory_pins(monkeypatch):
     monkeypatch.setattr(ingest, '_WINDOWS_BATCH_PINS', True)
@@ -49,7 +61,7 @@ def test_request_directory_pins_share_common_ancestors_and_exclude_writers(tmp_p
     records = stress.seed(db, archive, 4, 1, depth=3)
     index = None
     try:
-        index = ingest.DedupBatch.prepare(db, archive, {records[0]['file_size']})
+        index = prepare_and_admit(db, archive, records[0]['file_size'])
         expected = set()
         for record in records:
             parent = (archive / record['file']).parent
@@ -81,7 +93,7 @@ def test_failed_new_branch_preserves_earlier_directory_pins(tmp_path, monkeypatc
     db = stress.Database(tmp_path / 'catalog.db')
     archive = tmp_path / 'archive'
     records = stress.seed(db, archive, 1, 1)
-    index = ingest.DedupBatch.prepare(db, archive, {records[0]['file_size']})
+    index = prepare_and_admit(db, archive, records[0]['file_size'])
     previous = set(active), set(index.directories), set(index.folders)
     path = archive / 'new-branch/fail/deep/new.fits'
     path.parent.mkdir(parents=True)
@@ -141,7 +153,7 @@ def test_request_directory_pins_outlive_external_pin_context(tmp_path):
     index = None
     try:
         with external.use():
-            index = ingest.DedupBatch.prepare(db, archive, {records[0]['file_size']})
+            index = prepare_and_admit(db, archive, records[0]['file_size'])
         external.close()
         assert index.directories
         with pytest.raises(OSError):
@@ -160,7 +172,7 @@ def test_combined_budget_refuses_deep_suffix_and_keeps_shallower_admission(tmp_p
     db = stress.Database(tmp_path / 'catalog.db')
     archive = tmp_path / 'archive'
     records = stress.seed(db, archive, 1, 1)
-    index = ingest.DedupBatch.prepare(db, archive, {records[0]['file_size']})
+    index = prepare_and_admit(db, archive, records[0]['file_size'])
     # Two free slots: a deep new branch cannot fit, a leaf in the held parent can.
     initial_leaves = len(index.entries)
     leaf_active = 0
@@ -185,8 +197,8 @@ def test_combined_budget_refuses_deep_suffix_and_keeps_shallower_admission(tmp_p
             finally:
                 leaf_active -= 1
     def bounded_hash(path, *args):
-        # _fingerprint_file opens exactly one read stream while both version
-        # contexts remain live; include it when checking the actual IO peak.
+        # _fingerprint_file opens one read stream under the existing leaf pin;
+        # include it when checking the actual IO peak.
         assert len(active) + initial_leaves + leaf_active + 1 <= limit
         return original_hash(path, *args)
     monkeypatch.setattr(ingest, 'pinned_version', bounded_version)

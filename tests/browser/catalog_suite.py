@@ -105,6 +105,10 @@ def desktop_catalog_rice_ingest_chunks(c):
         c.expect(b'name="compress"\r\n\r\ntrue' in body, 'every chunk explicitly requests compression')
         c.expect(b'name="compression_mode"\r\n\r\nsafe' in body, 'every chunk carries the captured Safe choice')
         count = body.count(b'name="files"; filename=')
+        c.expect(body.find(b'name="file_count"\r\n\r\n%d\r\n' % count) != -1 and
+                 body.find(b'name="compression_mode"') < body.find(b'name="files"') and
+                 body.find(b'name="file_count"') < body.find(b'name="files"'),
+                 'options and the declared file count precede the streamed files')
         requests.append(count)
         c.expect(c.page.locator('#compressOnIngest').is_disabled(), 'checkbox locked during upload')
         c.expect(c.page.locator('#ingestSafeMode').is_disabled(), 'mode locked during upload')
@@ -288,6 +292,50 @@ def desktop_catalog_rice_session_roundtrip(c):
     c.expect((saved / 'nightseam.db').is_file(), 'copy includes catalog snapshot')
 
 
+@check('desktop-catalog-import-byte-batches', 'catalog')
+def desktop_catalog_import_byte_batches(c):
+    """Logical file sizes exercise the byte budget without allocating huge files."""
+    import re
+
+    captured = []
+
+    def accept(route):
+        body = route.request.post_data_buffer
+        names = [name.decode('ascii') for name in re.findall(br'name="files"; filename="([^"]+)"', body)]
+        run = re.search(br'name="run_id"\r\n\r\n([^\r]+)', body).group(1)
+        safe = b'name="compression_mode"\r\n\r\nsafe' in body
+        captured.append((names, run, safe))
+        route.fulfill(json={'results': [{'file': name, 'ok': True} for name in names]})
+
+    c.page.route('**/api/images/ingest', accept)
+    c.goto()
+    c.page.locator('#catalog-tab-import').click()
+    expected = [['size-0.fit', 'size-1.fit'], ['size-2.fit'], ['size-3.fit'],
+                ['size-4.fit', 'size-5.fit'], ['size-6.fit']]
+    for compressed in (False, True):
+        captured.clear()
+        if compressed:
+            c.page.locator('#compressOnIngest').check()
+            c.page.locator('#ingestSafeMode').check()
+        c.page.evaluate("""() => {
+          const sizes = [256, 256, 1, 600, 1, 511, 1];
+          const files = sizes.map((size, i) => {
+            const file = new File(['tiny fixture'], `size-${i}.fit`);
+            Object.defineProperty(file, 'size', {value: size * 1024 * 1024});
+            return file;
+          });
+          const input = document.querySelector('#fitFiles');
+          Object.defineProperty(input, 'files', {value: files, configurable: true});
+          input.dispatchEvent(new Event('change', {bubbles: true}));
+          delete input.files;
+        }""")
+        c.page.wait_for_function("() => !document.querySelector('#btnIngest').disabled && document.querySelector('#ingestProgress .import-files')?.textContent === '7 / 7 files processed'")
+        c.expect_eq([names for names, _, _ in captured], expected,
+                    'exact byte budget fits, overflow flushes and a large file travels alone')
+        c.expect_eq(len({run for _, run, _ in captured}), 1, 'every chunk retains one run ID')
+        c.expect(all(safe == compressed for _, _, safe in captured), 'every chunk retains captured verification')
+
+
 @check("desktop-catalog-compressed-fits-metadata", "catalog")
 def desktop_catalog_compressed_fits_metadata(c):
     """Real UI uploads/readback use the harness's verified private archive."""
@@ -339,6 +387,98 @@ def desktop_catalog_compressed_fits_metadata(c):
     c.page.locator('#catalog-tab-library').click()
     c.page.locator('[data-library-object]').filter(has_text='Compressed gate capture').first.click()
     c.page.locator('#librarySessions tr.library-session').first.wait_for()
+
+
+@check("desktop-catalog-folder-import", "catalog")
+def desktop_catalog_folder_import(c):
+    """A real directory chooser recursively uploads FITS and preserves byte identity."""
+    import gzip
+    from pathlib import Path
+    from fits_fixtures import compressed_gate_image
+
+    c.goto()
+    archive = Path(c.page.request.get(c.url('/api/state')).json()['image_dir']).resolve()
+    scratch = (Path(__file__).resolve().parents[2] / 'logs/browser').resolve()
+    c.expect(archive.is_relative_to(scratch), 'folder fixtures require the private archive')
+    source = archive.parent / 'folder-import-source'
+    nested = source / 'night' / 'camera'
+    nested.mkdir(parents=True)
+    raw = compressed_gate_image(False).replace(
+        b'Compressed gate capture', b'Folder import fixture'.ljust(len(b'Compressed gate capture')))
+    other = raw[:2880] + b'\x00\x7f' + raw[2882:]
+    tiled = compressed_gate_image(True).replace(
+        b'Compressed gate capture', b'Folder import fixture'.ljust(len(b'Compressed gate capture')))
+    payloads = {
+        source / 'renamed.FITS': raw,
+        nested / 'same.fit': other,
+        nested / 'wrapped.FITS.GZ': gzip.compress(raw, mtime=0),
+        nested / 'tile.FZ': tiled,
+        nested / 'notes.txt': b'Not an exposure',
+    }
+    for path, data in payloads.items():
+        path.write_bytes(data)
+    original = c.page.request.post(c.url('/api/images/ingest'), multipart={
+        'files': {'name': 'same.fit', 'mimeType': 'application/octet-stream', 'buffer': raw},
+    }).json()['results'][0]
+    c.expect(original.get('ok') and not original.get('skipped'), str(original))
+
+    c.goto()
+    c.page.locator('#catalog-tab-import').click()
+    c.page.locator('[data-frame-override=dark]').click()
+    requests = []
+
+    def upload(route):
+        requests.append(route.request.url)
+        c.expect(c.page.locator('#btnIngestFolder').is_disabled(), 'folder action locks during import')
+        c.expect(c.page.locator('#fitFolder').is_disabled(), 'directory input locks during import')
+        c.expect_eq(c.page.locator('#fitFolder').input_value(), '', 'directory resets before upload')
+        route.continue_()
+
+    c.page.route('**/api/images/ingest', upload)
+
+    def choose(directory):
+        with c.page.expect_file_chooser() as picked:
+            c.page.locator('#btnIngestFolder').click()
+        picked.value.set_files(str(directory))
+
+    with c.page.expect_response(lambda response: response.url.endswith('/api/images/ingest')
+                                and response.status == 200) as response:
+        choose(source)
+    results = response.value.json()['results']
+    c.page.wait_for_function("() => !document.querySelector('#btnIngestFolder').disabled")
+    c.expect_eq(len(results), 4, 'nested FITS are selected; non-FITS are excluded')
+    c.expect(all(result.get('ok') for result in results), str(results))
+    by_name = {result['file']: result for result in results}
+    duplicate = by_name['renamed.FITS']
+    c.expect(duplicate.get('skipped'), 'renamed identical bytes skip the existing exposure')
+    for key in ('id', 'stored', 'imagetyp', 'date_obs'):
+        c.expect_eq(duplicate[key], original[key], f'duplicate retains original {key}')
+    c.expect(not by_name['same.fit'].get('skipped'), 'different bytes with the same filename import')
+    c.expect(by_name['same.fit']['id'] != original['id'], 'same filename does not define identity')
+    c.expect_eq(by_name['same.fit']['imagetyp'], 'dark', 'folder import honors frame override')
+    c.expect_in('3 of 4 files imported · 1 already imported', c.page.locator('#ingestSummary').inner_text())
+    c.expect_eq((archive / original['stored']).read_bytes(), raw, 'existing exposure stays unchanged')
+    for path, data in payloads.items():
+        c.expect_eq(path.read_bytes(), data, 'source folder files stay unchanged')
+
+    with c.page.expect_response(lambda response: response.url.endswith('/api/images/ingest')
+                                and response.status == 200) as response:
+        choose(source)
+    repeated = response.value.json()['results']
+    c.page.wait_for_function("() => !document.querySelector('#btnIngestFolder').disabled")
+    c.expect_eq(len(repeated), 4)
+    c.expect(all(result.get('ok') and result.get('skipped') for result in repeated),
+             'selecting the same folder again skips every imported exposure')
+    c.expect_in('0 of 4 files imported · 4 already imported', c.page.locator('#ingestSummary').inner_text())
+    c.expect_eq(len(requests), 2)
+    empty = archive.parent / 'folder-without-fits'
+    empty.mkdir()
+    (empty / 'readme.txt').write_text('No FITS here', encoding='utf-8')
+    choose(empty)
+    c.page.locator('#toasts .toast').filter(
+        has_text='No supported FITS exposures found in this folder or its subfolders.').wait_for()
+    c.expect_eq(len(requests), 2, 'a folder without FITS makes no upload request')
+    c.expect_eq(c.page.locator('#fitFolder').input_value(), '')
 
 
 @check("desktop-catalog-solar-sessions", "catalog")
@@ -397,10 +537,11 @@ def desktop_catalog_solar_sessions(c):
     response = c.page.request.post(c.url('/api/settings'), data={'observing_site': None})
     c.expect_eq(response.status, 200)
     def upload(stamp, identity, **fields):
+        # Streamed imports require options before the files.
         response = c.page.request.post(c.url('/api/images/ingest'), multipart={
+            **fields,
             'files': {'name': identity + '.fit', 'mimeType': 'application/octet-stream',
-                      'buffer': capture(stamp, identity, 'M42', (40, -74) if fields else None)},
-            **fields})
+                      'buffer': capture(stamp, identity, 'M42', (40, -74) if fields else None)}})
         c.expect_eq(response.status, 200)
         result = response.json()['results'][0]
         c.expect(result['ok'], 'real packaged calibration upload must succeed')
@@ -906,16 +1047,16 @@ def desktop_catalog_import_progress(c):
                     "completed elapsed time must stay frozen")
         c.expect(progress.is_visible(), "completed import counters must remain visible")
 
-    select(26)
+    select(98)
     c.expect_eq(progress.locator(".import-files").inner_text(),
-                "0 / 26 files processed", "pending files are not processed yet")
+                "0 / 98 files processed", "pending files are not processed yet")
     c.expect(not progress.locator(".import-failed").is_visible(),
              "successful imports must not show a failure counter")
     c.page.clock.run_for(2100)
     c.expect(progress.locator(".import-elapsed").inner_text() != "00:00 elapsed",
              "elapsed time must advance while a batch is pending")
     c.expect_eq(progress.locator(".import-files").inner_text(),
-                "0 / 26 files processed", "time alone must not advance file progress")
+                "0 / 98 files processed", "time alone must not advance file progress")
     c.expect(c.page.locator("#btnTopIngest").is_disabled() and
              c.page.locator("#btnTopReindex").is_disabled() and
              c.page.locator("#btnTopExport").is_disabled(),
@@ -927,19 +1068,19 @@ def desktop_catalog_import_progress(c):
     c.expect_eq(len(requests), 1, "repeated file selection must not overlap an import")
     c.expect_eq(len(reindexes), 0, "a reindex must not overlap an import")
     with c.page.expect_request("**/api/images/ingest"):
-        answer(24)
+        answer(96)
     _wait_pending_batch(c.page)
     c.expect_eq(progress.locator(".import-files").inner_text(),
-                "24 / 26 files processed", "confirmed response advances file progress")
+                "96 / 98 files processed", "confirmed response advances file progress")
     c.expect_eq(len(pending), 1, "the remaining files wait for the second response")
     answer(2)
-    finished(26, 26)
+    finished(98, 98)
     c.expect(not progress.locator(".import-failed").is_visible(),
              "completed successful import keeps the failure counter hidden")
 
-    select(26)
+    select(98)
     with c.page.expect_request("**/api/images/ingest"):
-        answer(24, failed=True)
+        answer(96, failed=True)
     _wait_pending_batch(c.page)
     c.expect_eq(progress.locator(".import-failed").inner_text(), "1 failed",
                 "a per-file failure has its own counter")
@@ -965,23 +1106,24 @@ def desktop_catalog_import_progress(c):
                 c.page.screenshot(path=str(c.artifacts / f"active-import-progress-{width}x800.png"))
     finally:
         c.page.set_viewport_size(original_viewport)
+
     answer(2)
-    finished(26, 26)
+    finished(98, 98)
     c.expect_in("Unreadable FITS header", c.page.locator("#ingestResults").inner_text(),
                 "the failed file's reason remains reviewable")
 
-    select(60)
+    select(204)
     with c.page.expect_request("**/api/images/ingest"):
-        answer(24)
+        answer(96)
     _wait_pending_batch(c.page)
     pending.pop(0).fulfill(status=503, content_type="application/json",
                           body='{"detail":"temporary import interruption"}')
-    finished(24, 60)
+    finished(96, 204)
     c.expect(not progress.locator(".import-failed").is_visible(),
              "unconfirmed outcomes must not be reported as confirmed file failures")
     c.expect_eq(progress.locator(".import-pending").inner_text(), "12 not attempted",
                 "the remaining queue was never submitted")
-    c.expect_in("24 file outcomes unconfirmed", progress.inner_text(),
+    c.expect_in("96 file outcomes unconfirmed", progress.inner_text(),
                 "an interrupted request must distinguish unknown outcomes")
     c.expect_eq(len(requests), 6, "the interrupted import must stop without another batch")
     c.expect(c.page.locator("#btnTopIngest").is_enabled() and
@@ -990,7 +1132,7 @@ def desktop_catalog_import_progress(c):
 
     # A server exception is now a successful HTTP response with explicit
     # partial outcomes. It must halt the remaining browser chunks too.
-    select(60)
+    select(204)
     with c.page.expect_request("**/api/library"):
         pending.pop(0).fulfill(json={"results": [
             {"file": "exposure-00.fits", "ok": True},
@@ -998,10 +1140,10 @@ def desktop_catalog_import_progress(c):
              "error": "Import outcome unconfirmed after a database error."},
             *[{"file": f"exposure-{index:02d}.fits", "ok": False,
                "unattempted": True, "error": "Not attempted after the import stopped."}
-              for index in range(2, 24)],
+              for index in range(2, 96)],
         ]})
-    finished(1, 60)
-    c.expect_eq(progress.locator(".import-pending").inner_text(), "58 not attempted",
+    finished(1, 204)
+    c.expect_eq(progress.locator(".import-pending").inner_text(), "202 not attempted",
                 "both unattempted server files and unsent browser chunks remain pending")
     c.expect_in("1 file outcomes unconfirmed", progress.inner_text(),
                 "only the exceptional file has an unknown outcome")
@@ -1033,7 +1175,7 @@ def desktop_catalog_import_duplicates(c):
                 "reason": "already_imported" if skipped else "original_restored" if restored else "",
                 "stored": f"orion/session/lights/exposure-{i:02d}.fits",
                 "object": {"name": "Orion Nebula"}, "exposure": 300,
-                "date": "2026-09-30T22:00:00", "filter": "Ha", "imagetyp": "light",
+                "date": "2098-09-30T22:00:00", "filter": "Ha", "imagetyp": "light",
                 "error": "Unreadable FITS header" if failed else ""}
 
     def select(count):
@@ -1047,15 +1189,15 @@ def desktop_catalog_import_duplicates(c):
             `${count} / ${count} files processed` &&
           !document.querySelector('#btnIngest').disabled""", arg=count)
 
-    select(26)
+    select(98)
     c.expect(not progress.locator(".import-skipped").is_visible(),
              "the already-imported counter stays hidden before a duplicate is found")
     with c.page.expect_request("**/api/images/ingest"):
         pending.pop(0).fulfill(json={"results": [
             result(0, skipped=True), result(1, skipped=True),
-            *[result(i) for i in range(2, 23)], result(23, failed=True)]})
+            *[result(i) for i in range(2, 95)], result(95, failed=True)]})
     _wait_pending_batch(c.page)
-    c.expect_eq(progress.locator(".import-files").inner_text(), "24 / 26 files processed",
+    c.expect_eq(progress.locator(".import-files").inner_text(), "96 / 98 files processed",
                 "duplicates are processed files, alongside new files and failures")
     c.expect_eq(progress.locator(".import-skipped").inner_text(), "2 already imported",
                 "duplicate responses have their own neutral counter")
@@ -1063,12 +1205,12 @@ def desktop_catalog_import_duplicates(c):
              "duplicate counter becomes visible while a later batch is pending")
     c.expect_eq(progress.locator(".import-failed").inner_text(), "1 failed",
                 "only an actual failed file contributes to the failure counter")
-    pending.pop(0).fulfill(json={"results": [result(24, skipped=True), result(25, skipped=True)]})
-    finish(26)
+    pending.pop(0).fulfill(json={"results": [result(96, skipped=True), result(97, skipped=True)]})
+    finish(98)
     c.expect_eq(c.page.locator("#ingestSummary").inner_text(),
-                "21 of 26 files imported · 4 already imported · 1 failed",
+                "93 of 98 files imported · 4 already imported · 1 failed",
                 "the imported count excludes duplicates even when existing exposure metadata is present")
-    c.expect_eq(c.page.locator("#ingestResults .ingest-item.ok").count(), 21,
+    c.expect_eq(c.page.locator("#ingestResults .ingest-item.ok").count(), 93,
                 "only new files receive the successful new-import presentation")
     c.expect_eq(c.page.locator("#ingestResults .ingest-item.skipped").count(), 4,
                 "duplicates receive a neutral presentation rather than success or failure")
@@ -1702,7 +1844,7 @@ def desktop_catalog_responsive_layout(c):
             frame_selector.scroll_into_view_if_needed()
             c.expect(frame_selector.bounding_box()['height'] >= 40,
                      'short Import forms must preserve readable frame-type controls')
-            for selector in ('#btnIngest', '#btnArcBrowse', '#btnTopReindex'):
+            for selector in ('#btnIngest', '#btnIngestFolder', '#btnArcBrowse', '#btnTopReindex'):
                 c.page.locator(selector).scroll_into_view_if_needed()
                 c.expect(c.page.locator(selector).is_visible(),
                          f"import action {selector} must remain reachable at {width}x{height}")
@@ -1767,3 +1909,57 @@ def desktop_catalog_responsive_layout(c):
             dpr_context.close()
     finally:
         c.page.set_viewport_size(original_viewport)
+
+
+@check('desktop-catalog-compression-skips-missing-and-stacked', 'catalog')
+def desktop_catalog_compression_skips_missing_and_stacked(c):
+    """Real conversion tolerates a floating stack and a manually deleted source."""
+    import struct
+    from pathlib import Path
+    from fits_fixtures import _header, _padded
+
+    metadata = [('OBJECT', 'Mixed compression fixture'), ('DATE-OBS', '2026-09-15T22:14:05'),
+                ('SITELAT', 52.52), ('SITELONG', 13.405), ('IMAGETYP', 'LIGHT')]
+    def image(bitpix, value):
+        return _header([('SIMPLE', True), ('BITPIX', bitpix), ('NAXIS', 2),
+                        ('NAXIS1', 8), ('NAXIS2', 8), *metadata]) + _padded(
+            struct.pack('>64f' if bitpix == -32 else '>64h', *[value] * 64))
+    originals = {'integer.fit': image(16, 1), 'stacked.fit': image(-32, 1.5),
+                 'deleted.fit': image(16, 2)}
+    c.goto()
+    c.page.locator('#catalog-tab-import').click()
+    with c.page.expect_response(lambda response: response.url.endswith('/api/images/ingest')
+                                and response.status == 200) as response:
+        c.page.locator('#fitFiles').set_input_files([
+            {'name': name, 'mimeType': 'application/fits', 'buffer': raw}
+            for name, raw in originals.items()])
+    results = {item['file']: item for item in response.value.json()['results']}
+    c.expect(all(item.get('ok') for item in results.values()), str(results))
+    c.page.wait_for_function("() => !document.querySelector('#btnIngest').disabled")
+    archive = Path(c.page.request.get(c.url('/api/state')).json()['image_dir']).resolve()
+    c.expect(archive.is_relative_to((Path(__file__).resolve().parents[2] / 'logs/browser').resolve()),
+             'manual deletion requires the private test archive')
+    missing = (archive / results['deleted.fit']['stored']).resolve()
+    c.expect(missing.is_relative_to(archive), 'deleted fixture must stay in private archive')
+    c.expect_eq(missing.read_bytes(), originals['deleted.fit'])
+    missing.unlink()
+    c.page.locator('#catalog-tab-library').click()
+    c.page.locator('[data-library-object]').filter(has_text='Mixed compression fixture').first.click()
+    c.page.locator('#librarySessions tr.library-session').first.click()
+    c.page.locator('[data-rice-mode=compress]').click()
+    c.page.locator('#compressionStart').click()
+    c.page.wait_for_function("() => document.querySelector('#compressionStatus').textContent.startsWith('Complete')",
+                             timeout=30000)
+    status = c.page.locator('#compressionStatus').inner_text()
+    for text in ('1 converted', '2 skipped', '1 missing', '1 unsupported'):
+        c.expect_in(text, status)
+    c.page.locator('#compressionSkipped summary').click()
+    c.expect_in('stacked.fit', c.page.locator('#compressionSkippedFiles').inner_text())
+    c.expect_in('deleted.fit', c.page.locator('#compressionSkippedFiles').inner_text())
+    c.expect_eq((archive / results['stacked.fit']['stored']).read_bytes(), originals['stacked.fit'])
+    group = next(item for item in c.page.request.get(c.url('/api/library')).json()['objects']
+                 if item['name'] == 'Mixed compression fixture')
+    c.expect_eq(len(group['images']), 3, 'missing and unsupported catalog records stay present')
+    integer = next(item for item in group['images'] if item['id'] == results['integer.fit']['id'])
+    c.expect(integer['file'].endswith('.fz'), 'eligible exposure is compressed')
+    c.page.screenshot(path=str(c.artifacts / 'compression-skips-missing-and-stacked.png'), full_page=True)

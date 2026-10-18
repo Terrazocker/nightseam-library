@@ -108,8 +108,8 @@ def main():
     args = parser.parse_args()
     if os.name != 'nt':
         parser.error('packaged comparison requires Windows')
-    if args.pairs < 2 or args.count < 3 or not 1 <= args.batch_size <= 24:
-        parser.error('use at least two pairs, at least three files and batch size 1..24')
+    if args.pairs < 2 or args.count < 3 or not 1 <= args.batch_size <= 96:
+        parser.error('use at least two pairs, at least three files and batch size 1..96')
     run(args)
 
 

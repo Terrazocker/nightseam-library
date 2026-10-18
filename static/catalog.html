@@ -54,6 +54,7 @@
       <p class="hint">Creates a new library folder with individual FITS files, a catalog snapshot and a verification manifest. Your current archive stays in place. Unsupported images are copied unchanged.</p>
     </div>
     <p id="compressionStatus" role="status" aria-live="polite">Ready.</p>
+    <details id="compressionSkipped" hidden><summary>Skipped exposures</summary><p class="hint">Unsupported files stay unchanged. Missing files remain in the catalog; check archive health to review them. Up to 50 paths are shown.</p><ul id="compressionSkippedFiles" style="max-height:10rem;overflow:auto"></ul></details>
     <label id="compressionPrepareLabel" for="compressionProgress">Preparing files · 0 / 0</label>
     <progress id="compressionProgress" max="1" value="0" style="width:100%" aria-label="Files prepared"></progress>
     <label id="compressionWriteLabel" for="compressionWriteProgress">Writing and replacing files · 0 / 0</label>
@@ -121,9 +122,14 @@
           <p id="compressOnIngestHelp" class="hint">Source files stay untouched. Unsupported or already compressed files are imported unchanged.</p>
           <div id="dropZone" class="import-drop-zone">
             <input type="file" id="fitFiles" accept=".fit,.fits,.fts,.fz,.fit.gz,.fits.gz,.fts.gz,.fz.gz" multiple hidden>
+            <input type="file" id="fitFolder" webkitdirectory multiple hidden>
             <svg class="large-outline-icon" viewBox="0 0 32 40" fill="none" aria-hidden="true"><path d="M6 1.5h13l11.5 11.8v24.2H6a3 3 0 0 1-3-3v-30a3 3 0 0 1 3-3Z"/><path d="M19 2v12h11"/></svg>
-            <button id="btnIngest" class="primary" type="button">Import exposures...</button>
+            <div class="import-picker-actions">
+              <button id="btnIngest" class="primary" type="button">Import exposures...</button>
+              <button id="btnIngestFolder" type="button" aria-describedby="folderImportHelp">Import folder...</button>
+            </div>
             <p class="hint">or drop exposures here</p>
+            <p id="folderImportHelp" class="hint">Folder import includes subfolders, finds FITS exposures and skips exposures already imported.</p>
           </div>
           <button id="btnArcReindex" type="button" hidden title="Scan archive exposures, recover unique missing references and refresh observing-session metadata">Reindex folder</button>
         </aside>

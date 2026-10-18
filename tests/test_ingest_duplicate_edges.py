@@ -93,7 +93,7 @@ def test_late_positive_above_capacity_hydrates_only_verified_record(tmp_path, mo
             found = ingest._find_duplicate(db, archive, rows[-1]['content_sha256'],
                 rows[-1]['file_size'], dedup_batch=index)
         assert found['id'] == rows[-1]['id'] and found['object_name'] == rows[-1]['object_name']
-        assert full_rows == [rows[-1]['id']] and len(index.entries) == 2
+        assert full_rows == [rows[-1]['id']] and not index.entries
     finally:
         index.close()
         db.conn.close()

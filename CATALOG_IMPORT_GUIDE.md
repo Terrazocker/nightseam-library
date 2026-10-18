@@ -48,10 +48,16 @@ Files compressed by NightSeam must match their recorded original hash. Metadata,
 session membership and calibration attachments remain intact. Importing an
 original again after compression still finds the existing exposure.
 
-Rice conversion supports 8-, 16- and 32-bit integer images. Unsupported files,
-including floating point images, prevent session compression and leave the
-session unchanged. Existing Rice files are kept; other compressed formats are
-not converted. Imported Rice can be uncompressed, but an unknown historical
+Rice conversion supports 8-, 16- and 32-bit integer images. Session compression
+skips unsupported files, including floating point stacks, and files missing from
+disk, while converting the supported exposures. The result counts missing and
+unsupported exposures separately; expand **Skipped exposures** to see up to 50
+paths. Existing Rice files are kept; other compressed formats are not converted.
+Missing records remain in the catalog: use **Check archive health** to review
+them, or import the original again to restore it. Permission, integrity and
+conversion failures still abort and recover the operation. Library copies and
+restoration retain their existing completeness and verification requirements.
+Imported Rice can be uncompressed, but an unknown historical
 original-file hash cannot be verified.
 
 The dialog has separate **Preparing files** and **Writing and replacing files**
@@ -84,11 +90,17 @@ copied catalog's archive location to its new `images` folder before using it.
 2. Check the **Archive folder**. Use **Browse...** in the native window or type
    a path, then **Save** when changing it. This is the destination for copies.
 3. Use **Import exposures...**, the toolbar's **Import**, or drop FITS exposures
-   into the drop area. Supported names are `.fit`, `.fits`, `.fts`, tiled `.fz`
+   into the drop area. **Import folder...** searches the selected folder and all
+   its subfolders for supported exposures, ignoring other files. Existing
+   exposures are checked by complete contents and skipped even if renamed;
+   different contents with the same filename are imported separately.
+   Supported names are `.fit`, `.fits`, `.fts`, tiled `.fz`
    (including `.fits.fz`), and their `.gz` wrappers. Originals stay in their
    original location; imported copies preserve the complete original bytes.
 4. Watch **files processed / total** and **elapsed time**. Counts advance after
-   each batch of up to 24 files returns. Elapsed time keeps updating during
+   each batch returns: up to 96 files normally, or 24 with compression enabled.
+   Batches also stay within 512 MiB, except that a larger individual exposure
+   is sent alone (the per-file limit is 1 GiB). Elapsed time keeps updating during
    a batch. A failure counter appears when a returned file result fails.
 5. Review **Import results**, then open **Library** to inspect the objects and
    capture sessions. Final progress remains visible until another import or
@@ -303,13 +315,18 @@ fingerprint so imports recognize the updated contents. Cached hash matches are
 always verified against the actual archived bytes.
 
 Import prepares files concurrently while publishing them in selection order.
+Each file is written straight into the archive while it uploads, without a
+temporary copy, and earlier files in a batch publish while later ones arrive.
 Rice uploads use batches of up to 24 files, with preparation bounded by available
-CPU cores. Plain uploads also use batches of up to 24. Temporary preparation
+CPU cores. Plain uploads use batches of up to 96, bounded by 512 MiB. Temporary preparation
 does not hold the archive lock; publication and catalog commits remain serialized.
 The object matcher is reused across chunks until the catalog changes. On local
-NTFS/ReFS, unchanged nonmatching files use a process-local hash cache guarded by
-file identity and native change time, including checks that detect edits with
-restored modification times. Other filesystems fall back to reading current bytes.
+NTFS/ReFS with an active change journal, unchanged nonmatching files use a
+process-local hash cache guarded by file identity, native change time and the
+journal's per-file change number, which detects edits with restored modification
+times. After the first import in a session has read the same-size archive files
+once, later batches and imports skip rereading them. Other filesystems, and
+volumes without a change journal, fall back to reading current bytes.
 Actual duplicate matches are always rehashed before an upload is skipped. Each
 request pins up to 4,096 earlier same-size candidates against writes/renames and
 checks them once for the batch. Other archive mutations wait until these pins

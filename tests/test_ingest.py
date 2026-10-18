@@ -1203,15 +1203,24 @@ def test_ingest_endpoint_builds_catalog_off_the_event_loop(tmp_path, monkeypatch
 
         loop = {}
 
+        # One unsupported file part: preparation runs, nothing is staged.
+        body = (b'--b\r\nContent-Disposition: form-data; name="files"; filename="notes.txt"\r\n'
+                b'Content-Type: text/plain\r\n\r\nnot an exposure\r\n--b--\r\n')
+
+        async def receive():
+            return {"type": "http.request", "body": body, "more_body": False}
+
         async def invoke():
+            from starlette.requests import Request
             loop["thread"] = threading.get_ident()
-            return await endpoint(files=[], frame="", session="",
-                                  run_id="", session_anchor_id=None)
+            request = Request({"type": "http", "method": "POST", "path": "/api/images/ingest",
+                               "headers": [(b"content-type", b"multipart/form-data; boundary=b")]}, receive)
+            return await endpoint(request)
 
         result = asyncio.run(invoke())
 
-        # the endpoint finished successfully with nothing to ingest
-        assert result == {"results": []}
+        # the endpoint finished successfully, refusing the unsupported file
+        assert [item["ok"] for item in result["results"]] == [False]
         # all_objects received advanced=True, exactly once
         assert observed["calls"] == 1
         assert observed["kwargs"] == {"advanced": True}

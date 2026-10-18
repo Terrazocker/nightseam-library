@@ -17,11 +17,11 @@ from functools import wraps
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from .archive_health import ArchiveHealthManager
@@ -34,6 +34,7 @@ from .ingest import (ArchiveRenameRecoveryError, ReindexCancelled, DedupBatch, _
                      calibration_import_target, ingest_one, obj_slug,
                      reindex_library, rename_archive_folder, undo_archive_rename)
 from .paths import safe_join, safe_rel, static_dir
+from .upload_stream import MalformedUpload, UploadInterrupted, multipart_parts
 from .version import app_version
 from . import diagnostics
 
@@ -42,11 +43,12 @@ log = logging.getLogger(__name__)
 
 
 # per-request upload caps, checked against Content-Length before the body is
-# spooled (ingest: MAX_FILES_PER_REQUEST files, each capped at 1 GiB inside
-# app/ingest.py)
-MAX_FILES_PER_REQUEST = 24
+# spooled. The UI batches by both bytes and count; larger file-count batches
+# amortize archive verification without increasing the previous body/worker
+# budgets. Individual exposures remain capped at 1 GiB in app/ingest.py.
+MAX_FILES_PER_REQUEST = 96
 _MAX_REQUEST_BYTES = {
-    "/api/images/ingest": MAX_FILES_PER_REQUEST * (1 << 30),
+    "/api/images/ingest": 24 * (1 << 30),
 }
 
 
@@ -185,7 +187,7 @@ def create_app(db: Database) -> FastAPI:
     diagnostics.install_error_collector()
     health = ArchiveHealthManager(db)
     compression = CompressionManager(db)
-    ingest_workers = asyncio.Semaphore(max(1, min(MAX_FILES_PER_REQUEST, os.cpu_count() or 1)))
+    ingest_workers = asyncio.Semaphore(max(1, min(24, os.cpu_count() or 1)))
     ingest_admission = asyncio.Lock()
     resolver_lock = threading.Lock()
     resolver_cache = None
@@ -449,6 +451,24 @@ def create_app(db: Database) -> FastAPI:
     _SESSION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _-]{0,39}$")
     _RUN_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 
+    class OrderedWorkers:
+        """One file's ingest worker slot, granted in selection order.
+
+        Streamed files finish arriving slightly out of order. Out-of-order slot
+        holders could all wait to publish behind a predecessor that cannot get
+        a slot; granting slots by index keeps the earliest file runnable.
+        """
+        def __init__(self, ready, following):
+            self.ready, self.following = ready, following
+
+        async def acquire(self):
+            await self.ready.wait()
+            await ingest_workers.acquire()
+            self.following.set()
+
+        def release(self):
+            ingest_workers.release()
+
     def serialize_ingest(function):
         @wraps(function)
         async def admitted(*args, **kwargs):
@@ -458,44 +478,60 @@ def create_app(db: Database) -> FastAPI:
                 return await function(*args, **kwargs)
         return admitted
 
+    _INGEST_OPTIONS = frozenset(('frame', 'session', 'run_id', 'compress', 'compression_mode',
+                                 'session_anchor_id', 'file_count'))
+
+    def ingest_options(fields):
+        """Validate import options as FastAPI's former Form parameters did."""
+        def option(name, kind, default):
+            value = fields.get(name, '')
+            if value == '':
+                return default
+            try:
+                return TypeAdapter(kind).validate_python(value)
+            except ValidationError as exc:
+                raise HTTPException(422, f'Invalid {name}: {exc.errors()[0]["msg"]}') from None
+        options = {'frame': fields.get('frame', ''), 'session': fields.get('session', ''),
+            'run_id': fields.get('run_id', ''), 'compress': option('compress', bool, False),
+            'compression_mode': option('compression_mode', Literal['fast', 'safe'], 'safe'),
+            'session_anchor_id': option('session_anchor_id', int, None),
+            'file_count': option('file_count', int, None)}
+        count = options['file_count']
+        if count is not None and count > MAX_FILES_PER_REQUEST:
+            raise HTTPException(400, f"too many files in one request (max "
+                                     f"{MAX_FILES_PER_REQUEST}) - the client uploads in chunks")
+        if count is not None and count < 1:
+            raise HTTPException(422, 'Invalid file_count: must be at least 1')
+        return options
+
     @app.post("/api/images/ingest")
     @serialize_ingest
-    async def api_ingest_images(files: list[UploadFile] = File(...),
-                                frame: str = Form(""),
-                                session: str = Form(""),
-                                run_id: str = Form(""),
-                                compress: bool = Form(False),
-                                compression_mode: Literal['fast', 'safe'] = Form('safe'),
-                                session_anchor_id: int | None = Form(None)):
-        if len(files) > MAX_FILES_PER_REQUEST:
-            raise HTTPException(
-                400, f"too many files in one request (max "
-                     f"{MAX_FILES_PER_REQUEST}) - the client uploads in chunks")
-        archive = Path(db.image_dir())
-        target = None
-        if session_anchor_id is not None:
-            if session.strip():
-                raise HTTPException(400, "Use a selected session or a folder override, not both.")
-            try:
-                target = await _archive_io(calibration_import_target, db, archive,
-                                           session_anchor_id, frame.strip().lower())
-            except ValueError as exc:
-                raise HTTPException(400, str(exc)) from None
-        try:
-            from starlette.concurrency import run_in_threadpool
-            await run_in_threadpool(archive.mkdir, parents=True, exist_ok=True)
-        except OSError as exc:
-            raise HTTPException(
-                500, f"Cannot create archive folder {archive}: {exc}")
-        # Build once per catalog revision, outside the event loop. Image-only
-        # writes do not rebuild thousands of name/coordinate lookup entries.
-        catalog, resolver = await run_in_threadpool(build_ingest_catalog)
-        sess = session.strip()
-        if not _SESSION_NAME_RE.match(sess):
-            sess = None                  # not a sane folder name -> auto session
-        run = run_id.strip()
-        if not run or not _RUN_ID_RE.match(run):
-            run = uuid.uuid4().hex  # one private grouping key for this request
+    async def api_ingest_images(request: Request):
+        """Import multipart FITS parts while they arrive.
+
+        Option fields must precede the files. Each file streams into its own
+        archive stage; nothing is spooled to a temporary copy first. Without a
+        leading file_count, publication waits until the complete body has
+        arrived and passed request validation (file count, option order), so a
+        refused request publishes nothing. With file_count, files publish as
+        soon as they are ready; a later protocol error or disconnect stops
+        further publication, as an interrupted request always has.
+        """
+        fields = {}
+        options = archive = target = sess = run = catalog = resolver = dedup_batch = None
+        tasks, turns, admitted = [], [asyncio.Event()], [asyncio.Event()]
+        turns[0].set()
+        admitted[0].set()
+        body_done = asyncio.Event()
+        refused = False
+        database_failure_index = None
+        index_cancel = threading.Event()
+
+        class Unattempted(Exception):
+            pass
+
+        class Refused(Exception):
+            pass
 
         def record_import(r, current_archive):
             # Called under finalization's archive lock, so a concurrent reindex
@@ -512,61 +548,130 @@ def create_app(db: Database) -> FastAPI:
                 "n_files": 1, "total_exposure": float(r.get("exposure") or 0.0),
                 "first_obs": r.get("date_obs"), "image_dir": str(current_archive)})
 
-        turns = [asyncio.Event() for _ in range(len(files) + 1)]
-        turns[0].set()
-        database_failure_index = None
-        index_cancel = threading.Event()
-        dedup_batch = await _archive_io(DedupBatch.prepare, db, archive,
-            {upload.size for upload in files if upload.size is not None},
-            index_cancel, on_cancel=lambda index: index.close(), cancel_event=index_cancel)
-
-        class Unattempted(Exception):
-            pass
+        async def start_import():
+            nonlocal options, archive, target, sess, run, catalog, resolver, dedup_batch
+            current = ingest_options(fields)
+            archive = Path(db.image_dir())
+            frame = current['frame']
+            if current['session_anchor_id'] is not None:
+                if current['session'].strip():
+                    raise HTTPException(400, "Use a selected session or a folder override, not both.")
+                try:
+                    target = await _archive_io(calibration_import_target, db, archive,
+                                               current['session_anchor_id'], frame.strip().lower())
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc)) from None
+            try:
+                await run_in_threadpool(archive.mkdir, parents=True, exist_ok=True)
+            except OSError as exc:
+                raise HTTPException(
+                    500, f"Cannot create archive folder {archive}: {exc}")
+            # Build once per catalog revision, outside the event loop. Image-only
+            # writes do not rebuild thousands of name/coordinate lookup entries.
+            catalog, resolver = await run_in_threadpool(build_ingest_catalog)
+            sess = current['session'].strip()
+            if not _SESSION_NAME_RE.match(sess):
+                sess = None                  # not a sane folder name -> auto session
+            run = current['run_id'].strip()
+            if not run or not _RUN_ID_RE.match(run):
+                run = uuid.uuid4().hex  # one private grouping key for this request
+            # Upload sizes are unknown until each part ends.
+            dedup_batch = await _archive_io(DedupBatch.prepare, db, archive, None,
+                index_cancel, on_cancel=lambda index: index.close(), cancel_event=index_cancel)
+            options = current
 
         async def import_upload(index, upload):
             nonlocal database_failure_index
+            name = Path(upload.filename or "image.fit").name
             async def before_publish():
                 await turns[index].wait()
+                if options['file_count'] is None:
+                    await body_done.wait()
+                if refused:
+                    raise Refused
                 if database_failure_index is not None:
                     raise Unattempted
             try:
-                async with ingest_workers:
-                    result = await ingest_one(
-                        db, catalog, archive, upload, frame, sess,
-                        resolver=resolver, on_import=record_import,
-                        enforce_archive_root=True, session_target=target, compress=compress,
-                        compression_mode=compression_mode, before_publish=before_publish, dedup_batch=dedup_batch)
+                result = await ingest_one(
+                    db, catalog, archive, upload, options['frame'], sess,
+                    resolver=resolver, on_import=record_import,
+                    enforce_archive_root=True, session_target=target, compress=options['compress'],
+                    compression_mode=options['compression_mode'], before_publish=before_publish,
+                    dedup_batch=dedup_batch, workers=OrderedWorkers(admitted[index], admitted[index + 1]))
             except ValueError:
                 log.exception("Exposure validation failed for %s", upload.filename)
-                result = {"file": Path(upload.filename or "image.fit").name,
-                          "ok": False, "error": "Exposure has an invalid archive filename or metadata."}
+                result = {"file": name, "ok": False,
+                          "error": "Exposure has an invalid archive filename or metadata."}
             except sqlite3.Error:
                 log.exception("Database failure during exposure import")
                 database_failure_index = index
-                result = {"file": Path(upload.filename or "image.fit").name,
-                                "ok": False, "unconfirmed": True,
-                                "error": "Database error; this file's outcome is unconfirmed. Refresh the library before retrying."}
+                result = {"file": name, "ok": False, "unconfirmed": True,
+                          "error": "Database error; this file's outcome is unconfirmed. Refresh the library before retrying."}
             except Unattempted:
-                result = {"file": Path(upload.filename or "image.fit").name, "ok": False,
+                result = {"file": name, "ok": False,
                     "unattempted": True, "error": "Not imported because the database failed earlier in this request."}
+            except (Refused, UploadInterrupted):
+                result = {"file": name, "ok": False, "unattempted": True,
+                          "error": "Not imported because the upload request was interrupted or refused."}
             finally:
+                upload.abandon()
                 # Early validation failures still wait for their predecessor:
                 # publication order and database-failure boundaries stay exact.
                 if not asyncio.current_task().cancelling():
+                    await admitted[index].wait()
                     await turns[index].wait()
+                admitted[index + 1].set()
                 turns[index + 1].set()
             if database_failure_index is not None and index > database_failure_index:
-                result = {"file": Path(upload.filename or "image.fit").name, "ok": False,
+                result = {"file": name, "ok": False,
                     "unattempted": True, "error": "Not imported because the database failed earlier in this request."}
             return result
 
-        tasks = [asyncio.create_task(import_upload(index, upload)) for index, upload in enumerate(files)]
+        parts = multipart_parts(request)
+        try:
+            try:
+                async for kind, name, value in parts:
+                    if kind == 'field':
+                        if name in _INGEST_OPTIONS:
+                            if options is not None:
+                                raise HTTPException(400, "Import options must precede the files.")
+                            fields[name] = value
+                        continue
+                    if name != 'files':
+                        value.abandon()
+                        continue
+                    if options is None:
+                        await start_import()
+                    limit = options['file_count'] or MAX_FILES_PER_REQUEST
+                    if len(tasks) >= limit:
+                        raise HTTPException(
+                            400, f"too many files in one request (max {limit}) - the client uploads in chunks")
+                    turns.append(asyncio.Event())
+                    admitted.append(asyncio.Event())
+                    tasks.append(asyncio.create_task(import_upload(len(tasks), value)))
+            except MalformedUpload as exc:
+                raise HTTPException(400, str(exc)) from None
+            if options is None:
+                raise HTTPException(422, "No files were uploaded.")
+        except BaseException as exc:
+            # Refused, malformed or disconnected bodies publish nothing further.
+            refused = True
+            body_done.set()
+            await parts.aclose()
+            if isinstance(exc, asyncio.CancelledError):
+                for task in tasks:
+                    task.cancel()
+            # Workers drain before staging is released.
+            await asyncio.gather(*tasks, return_exceptions=True)
+            if dedup_batch is not None:
+                await _archive_io(dedup_batch.close)
+            raise
+        body_done.set()
         try:
             results = await asyncio.gather(*tasks)
         except BaseException:
             for task in tasks:
                 task.cancel()
-            # Workers drain before multipart sources or staging are released.
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
         finally:

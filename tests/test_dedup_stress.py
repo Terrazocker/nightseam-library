@@ -22,7 +22,7 @@ def test_stress_exercises_real_handles_boundary_fallback_and_cancellation(tmp_pa
     assert result['cancellation']['lease_released']
     for cycle in result['cycles']:
         assert cycle['pinned_files'] == min(count, 8)
-        assert cycle['archive_hashes'] == min(count, 8) + 2 * max(0, count - 8) + 1
+        assert cycle['archive_hashes'] == count + 2 * max(0, count - 8) + 1
         assert cycle['after']['handles'] <= cycle['before']['handles'] + 2
     for path in (tmp_path / 'owned-stress/archive').rglob('*.fits'):
         with fits.open(io.BytesIO(path.read_bytes())) as hdus:

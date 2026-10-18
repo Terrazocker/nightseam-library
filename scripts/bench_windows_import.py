@@ -247,8 +247,8 @@ def main():
     parser.add_argument('--batch-size', type=int, default=24)
     parser.add_argument('--output', type=Path, default=ROOT / 'logs/windows-import-benchmark.json')
     args = parser.parse_args()
-    if args.count < 3 or not 1 <= args.batch_size <= 24:
-        parser.error('count must be at least 3 and batch size must be 1..24')
+    if args.count < 3 or not 1 <= args.batch_size <= 96:
+        parser.error('count must be at least 3 and batch size must be 1..96')
     if os.name != 'nt':
         parser.error('the packaged benchmark requires Windows')
     run(args)

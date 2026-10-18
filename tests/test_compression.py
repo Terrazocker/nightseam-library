@@ -240,13 +240,69 @@ def test_native_session_roundtrip_dedup_integrity_and_membership(tmp_path):
 
 
 @pytest.mark.parametrize('extra', [{'dtype': np.float32}, {'FZI2F': True}, {'FZALGOR': 'GZIP_1'}])
-def test_unsupported_refuses_without_changing_anything(tmp_path, extra):
+def test_unsupported_skips_without_changing_anything(tmp_path, extra):
     db, archive, originals = library(tmp_path, **extra)
     before = db.images()
-    with pytest.raises(ValueError, match='Cannot safely Rice'):
-        run(db, 'compress')
+    result = run(db, 'compress')
+    assert result['status'] == 'completed' and result['converted'] == 0
+    assert result['processed'] == result['total'] == result['skipped_unsupported'] == result['skipped'] == 2
     assert db.images() == before
     assert all((archive / r['file']).read_bytes() == originals[r['id']] for r in before)
+    no_stages(db, archive)
+
+
+@pytest.mark.parametrize('missing_parent', [False, True])
+def test_mixed_session_compresses_eligible_and_preserves_missing_and_stacked(tmp_path, missing_parent):
+    db, archive, originals = library(tmp_path, count=2)
+    stacked = exposure(2, dtype=np.float32)
+    result = asyncio.run(ingest.ingest_one(db, db.all_objects(advanced=True), archive,
+        UploadFile(io.BytesIO(stacked), filename='stacked.fit')))
+    assert result['ok']
+    before = db.images()
+    missing, integer, unsupported = before
+    path = archive / missing['file']
+    if missing_parent:
+        # A missing directory must be filtered before Windows lineage pinning.
+        relative = 'deleted-session/lights/missing.fit'
+        db.conn.execute('UPDATE images SET file=? WHERE id=?', (relative, missing['id']))
+        db.conn.commit()
+        missing = db.image(missing['id'])
+    else:
+        path.unlink()
+    outcome = run(db, 'compress')
+    assert outcome['status'] == 'completed' and outcome['total'] == outcome['processed'] == 3
+    assert outcome['converted'] == 1 and outcome['skipped'] == 2
+    assert outcome['skipped_missing'] == outcome['skipped_unsupported'] == 1
+    assert {item['reason'] for item in outcome['skipped_files']} == {'missing', 'unsupported'}
+    assert db.image(missing['id']) == missing
+    assert db.image(unsupported['id']) == unsupported
+    assert (archive / unsupported['file']).read_bytes() == stacked
+    converted = db.image(integer['id'])
+    assert converted['file'].endswith('.fz') and converted['storage_compressed'] == 1
+    repeated = run(db, 'compress')
+    assert repeated['converted'] == 0 and repeated['skipped'] == 3
+    assert repeated['skipped_missing'] == repeated['skipped_unsupported'] == 1
+    no_stages(db, archive)
+
+
+def test_missing_copy_source_and_conversion_permission_errors_still_fail(tmp_path, monkeypatch):
+    db, archive, _ = library(tmp_path)
+    fingerprint = compression.fingerprint
+    def denied(root, relative, *args):
+        if relative == db.images()[0]['file']:
+            raise PermissionError('synthetic denied source')
+        return fingerprint(root, relative, *args)
+    with monkeypatch.context() as patch:
+        patch.setattr(compression, 'fingerprint', denied)
+        with pytest.raises(PermissionError, match='denied source'):
+            run(db, 'compress')
+    no_stages(db, archive)
+    (archive / db.images()[0]['file']).unlink()
+    destination = tmp_path / 'copy'
+    destination.mkdir()
+    with pytest.raises(FileNotFoundError):
+        run(db, 'copy', destination=destination)
+    assert not list(destination.iterdir())
     no_stages(db, archive)
 
 
