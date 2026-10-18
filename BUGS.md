@@ -1,5 +1,16 @@
 # Current NightSeam Catalog findings
 
+## Native lifecycle close observation — October 18, 2026 (fixed in harness)
+
+Run 39124675987 passed source/browser/native checks but required HWND destruction
+within 0.8 seconds while SQLite deliberately blocked publication. Pywebview hides
+an accepted close before its browser cleanup completes, and the harness also
+started IO before verifying WebView2 readiness. It now waits for the initial
+private catalog/bridge, checks a visible-to-hidden transition within the same
+deadline while the file remains pinned, then requires HWND/process/listener and
+staging cleanup after the writer releases. Application shutdown behavior and the
+SQLite hold limit are unchanged. See RELEASES.md for evidence and validation.
+
 ## Populated duplicate-query work and compression cancellation — October 17, 2026 (mitigated/fixed)
 
 Bounded OR pages still sorted the remaining matching rows on every fetch.

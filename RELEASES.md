@@ -1,5 +1,20 @@
 # Independent catalog release record
 
+## Native lifecycle startup and close observation — October 18, 2026
+
+The compact-spool Windows run passed 962 source tests, 24 browser checks and
+seven native-window checks, then timed out requiring HWND destruction within
+0.8 seconds during deliberately blocked publication. Its log also showed an
+uninitialized WebView2 BrowserProcessId during close. The lifecycle harness now
+observes initial private CDP navigation, native body chrome and a successful
+rooted capability RPC before any IO, using the prepared browser environment.
+WinForms hides an accepted close before potentially waiting for browser cleanup;
+the same 0.8-second bound now checks visibility loss while the file is still
+pinned. After releasing the writer it still requires committed bytes/history,
+HWND destruction, process exit, a closed listener and owned cleanup. Readiness,
+accepted-close and eventual-destruction results are retained explicitly.
+No application shutdown behavior or SQLite hold deadline was changed.
+
 ## Compact ordered health spool — October 18, 2026
 
 Untracked paths now use one WITHOUT ROWID tree keyed by raw pathname and global
