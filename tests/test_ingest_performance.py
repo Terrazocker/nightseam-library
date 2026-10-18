@@ -217,8 +217,11 @@ def test_bounded_negative_cache_and_conservative_reads_above_capacity(tmp_path, 
     monkeypatch.setattr(ingest, '_fingerprint_file', measured)
     for index in range(8):
         assert upload(db, archive, exposure(index))['ok']
-    assert len(db._ingest_fingerprints) == 3
-    assert len(reads) == (13 if durable_versions(tmp_path) or os.name != 'nt' else 28)
+    # Without a durable version (e.g. no change journal on a CI volume), handle-
+    # lifetime versions cannot be reused, so nothing is cached at all.
+    durable = durable_versions(tmp_path)
+    assert len(db._ingest_fingerprints) == (3 if durable else 0)
+    assert len(reads) == (13 if durable or os.name != 'nt' else 28)
 
 
 def test_known_compressed_duplicate_does_not_need_encoder(tmp_path, monkeypatch):
