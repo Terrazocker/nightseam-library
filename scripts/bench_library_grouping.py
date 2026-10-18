@@ -77,7 +77,7 @@ def run(reference, output, repeats):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--baseline-ref', default='78e6a559302c37ab53b49abbb1e9a98341bee245')
+    parser.add_argument('--baseline-ref', default='b27ac6956ed38c5dc05704cb89af03db683aef06')
     parser.add_argument('--output', type=Path, default=ROOT / 'logs/library-grouping-benchmark.json')
     parser.add_argument('--repeats', type=int, default=3)
     args = parser.parse_args()

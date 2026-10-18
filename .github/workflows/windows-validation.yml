@@ -34,7 +34,7 @@ jobs:
     outputs:
       code: ${{ steps.paths.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -50,13 +50,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Prepare source environment
@@ -76,7 +76,7 @@ jobs:
           .venv/bin/python scripts/check_js.py 2>&1 | tee logs/linux-js.log
       - name: Retain Linux validation evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-validation-${{ github.sha }}
           path: logs/linux-*
@@ -91,14 +91,14 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           architecture: x64
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Prepare pinned application environment
@@ -167,9 +167,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Check out the immediate pre-lazy-admission baseline
         if: ${{ !cancelled() && steps.package.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_scaling_checks }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
-          ref: 9c4f3128d2a3859c4c58c80fc3252d58bdbddbf9
+          ref: 60b30c340bc658381d728ec3a8ed0a113257fc58
           path: logs/scaling-baseline
           persist-credentials: false
       - name: Build the baseline with the same pinned Python environment
@@ -187,7 +187,7 @@ jobs:
       - name: Compare packaged baseline and candidate sequentially in ABBA order
         if: ${{ !cancelled() && steps.package.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_scaling_checks }}
         run: |
-          & .venv-build/Scripts/python.exe scripts/compare_import.py --baseline-exe logs/scaling-baseline/dist/NightSeam.exe --candidate-exe dist/NightSeam.exe --baseline-commit 9c4f3128d2a3859c4c58c80fc3252d58bdbddbf9 --candidate-commit $env:GITHUB_SHA 2>&1 | Tee-Object -FilePath logs/windows-import-comparison.log
+          & .venv-build/Scripts/python.exe scripts/compare_import.py --baseline-exe logs/scaling-baseline/dist/NightSeam.exe --candidate-exe dist/NightSeam.exe --baseline-commit 60b30c340bc658381d728ec3a8ed0a113257fc58 --candidate-commit $env:GITHUB_SHA 2>&1 | Tee-Object -FilePath logs/windows-import-comparison.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prepare a private kit for clean-VM and physical-desktop acceptance
         if: ${{ !cancelled() && steps.package.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.run_scaling_checks }}
@@ -221,7 +221,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain validation evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-validation-${{ github.sha }}
           path: |
@@ -248,13 +248,13 @@ jobs:
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/logs/playwright-linux
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Prepare pinned Linux package environment
@@ -302,7 +302,7 @@ jobs:
           .venv-browser/bin/python scripts/check_browser.py --desktop --channel chromium --exe "${executables[0]}" 2>&1 | tee logs/linux-package-browser.log
       - name: Retain Linux bundle and validation evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-package-${{ github.sha }}
           path: |
@@ -323,14 +323,14 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           architecture: x64
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Prepare the same pinned compiler environment for both builds
@@ -345,9 +345,9 @@ jobs:
           & ./build.ps1 -AllowDirty 2>&1 | Tee-Object -FilePath logs/large-candidate-build.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Check out the immediate pre-query-optimization baseline
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
-          ref: 89a7a82b4da1fe25cbb1ce07c75a2958b2d6f3ca
+          ref: 45d19fa9c96b6dc75069f31cbdc0f8dd7f1bbc91
           path: logs/large-baseline
           persist-credentials: false
       - name: Build the baseline with the same pinned environment
@@ -367,11 +367,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Compare native packaged imports sequentially in ABBA order
         run: |
-          & .venv-build/Scripts/python.exe scripts/bench_populated_import.py --baseline-exe logs/large-baseline/dist/NightSeam.exe --candidate-exe dist/NightSeam.exe --baseline-commit 89a7a82b4da1fe25cbb1ce07c75a2958b2d6f3ca --candidate-commit $env:GITHUB_SHA 2>&1 | Tee-Object -FilePath logs/large-import-comparison.log
+          & .venv-build/Scripts/python.exe scripts/bench_populated_import.py --baseline-exe logs/large-baseline/dist/NightSeam.exe --candidate-exe dist/NightSeam.exe --baseline-commit 45d19fa9c96b6dc75069f31cbdc0f8dd7f1bbc91 --candidate-commit $env:GITHUB_SHA 2>&1 | Tee-Object -FilePath logs/large-import-comparison.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain complete comparison evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: large-populated-${{ github.sha }}
           path: |

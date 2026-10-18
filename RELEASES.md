@@ -89,7 +89,7 @@ staged or published.
 
 ## Local Windows build refresh — October 18, 2026
 
-Fast-forwarded main from 4c4a3de to origin/main at a140c289 and rebuilt
+Fast-forwarded main from f9653be to origin/main at 2cc47d4f and rebuilt
 dist/NightSeam.exe with the pinned Windows build environment. The executable
 identifies as 0.1.0-ga140c289, built from the clean off-tag source snapshot.
 The previous executable was backed up and SHA-256 verified before replacement;
@@ -147,7 +147,7 @@ interleaved duplicates, normalization-distinct Unicode, prefix keys and 3.5 KiB
 paths forcing SQLite overflow pages. The disk-budget case fails on the previous
 schema. Existing cancellation, live-cursor and storage failure tests still pass.
 
-scripts/bench_health_spool.py loads the actual historical spool from 6969a99,
+scripts/bench_health_spool.py loads the actual historical spool from 42e0058,
 separately from the candidate, in fresh processes. For 100,000 synthetic files,
 matching pending-directory fanout and 5,883 repeated observations, allocated
 SQLite pages fell from 78.887 MiB to 59.133 MiB (25.0%); at 5,000 files they fell
@@ -184,7 +184,7 @@ The first Windows resource run passed 77 regressions with four platform skips,
 then caught backslash keys in the new measurement source-hash map. Evidence keys
 now use portable forward slashes before rerunning both resource modes.
 
-Against b828712, the real populated SQLite catalog probe with synthetic filesystem
+Against 3761e4e, the real populated SQLite catalog probe with synthetic filesystem
 work at 100,000 indexed rows reduced traced Python peak from 158.839 MiB to
 0.992 MiB and observed instrumented RSS growth from 252.062 MiB to 2.914 MiB.
 At 5,000 rows, candidate Python peak was 0.073 MiB and observed RSS growth
@@ -216,7 +216,7 @@ discovery/iteration cancellation, and connect/schema/insert/read/close/cleanup
 failures. Windows CI now runs these regressions and the isolated-process resource
 gate alongside the existing archive stress checks.
 
-Against commit 9fc2b60, the local synthetic 100,000-file plus matching-directory
+Against commit b073354, the local synthetic 100,000-file plus matching-directory
 fanout probe reduced traced Python peak from 43.125 MiB to 0.064 MiB and observed
 instrumented RSS growth from 63.293 MiB to 1.395 MiB. Candidate Python peaks were
 0.058/0.064 MiB at 5,000/100,000 files. This trades memory for temporary disk and
@@ -245,7 +245,7 @@ JSON rendering is deliberately held and verifies Unicode, fingerprint exclusion
 and equality with JSON export. The final encoding-preservation rerun is retained
 under logs/library-final-focused.log.
 
-The repeatable synthetic benchmark against commit 78e6a55 used a 12,000-row
+The repeatable synthetic benchmark against commit b27ac69 used a 12,000-row
 catalog and three alternating-order samples per implementation, requiring exact
 output equality. Median grouping time for 1,000 current objects was 164.2 ms
 before and 24.4 ms after; 64 obsolete IDs took 3.476 s before and 56.1 ms after.
@@ -350,7 +350,7 @@ cancellation, retaining worker draining, rollback and original identity.
 The 6,000-image mixed plain/Rice source HTTP workload passed byte, identity,
 session/class/location, malformed-input, restored-mtime edit, missing-original,
 native restoration, 12 image/history-unit and cleanup audits. Compared with
-89a7a82 using the same measurement controllers, SELECTs fell 58,064→493 (99.2%)
+45d19fa using the same measurement controllers, SELECTs fell 58,064→493 (99.2%)
 and Database.image lookups 57,609→10; visits stayed 57,609 and ingest hashes/bytes
 stayed 6,012/57,110,400. Both retained 14 BEGIN/COMMIT pairs. A separate 50,000-row
 metadata check returned the same ordered rows with 46,439,000→1,236,000 approximate
@@ -374,7 +374,7 @@ Windows 878/2 skips, browser 24/24, native 7/7), but the overall lifecycle gate
 failed and is not counted as accepted native lifecycle validation.
 Recovery-preflight follow-up passed **126 focused HTTP/API/legacy-recovery
 tests** with the expanded static-response regression. The failing hosted run is
-[retained here](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39042004194);
+retained here (Actions run 39042004194 in the original private repository);
 accepted final validation is recorded on the draft PR.
 
 Import preparation applies its 4,096-row cap in SQL. Duplicate lookup reads
@@ -408,7 +408,7 @@ alongside the fresh executable, browser/native UI and resource checks.
 
 ## Shared directory ancestors — October 17, 2026
 
-The [baseline resource run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39037931678)
+The baseline resource run (Actions run 39037931678 in the original private repository)
 passed all cleanup/cancellation/byte checks but measured 53,248 additional handles
 for 4,096 one-file-per-parent pins, rising to 86,016 with eight extra ancestors.
 Fifty deep-layout requests passed the warmed two-MiB heap gate (82,185 bytes of
@@ -425,7 +425,7 @@ locally, with three platform skips; the full local suite passed **865 tests,
 8 skipped**. Native sharing results are now recorded below.
 The Windows gate now requires the two new real directory-lifetime contracts.
 
-The [shared-ancestor resource run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39038863156)
+The shared-ancestor resource run (Actions run 39038863156 in the original private repository)
 passed all 35 focused native regressions, six full-cap cycles and fifty smaller
 deep-layout cycles. Request-held handles fell **53,248 → 12,298** for fan-out and
 **86,016 → 12,306 (85.7% fewer)** with eight extra shared ancestors. Unique directory
@@ -469,14 +469,14 @@ its executor scope before sampling, with a separate observer-handle regression;
 aggregate/per-request cleanup limits remain intact. Workflow lint and JavaScript/encoding/core
 checks pass. Preparing the kit does not execute physical or clean-VM acceptance.
 
-The corrected revision 9e38f14 passed Linux **857 tests, 6 skipped** and Windows
+The corrected revision 2662f12 passed Linux **857 tests, 6 skipped** and Windows
 **861 tests, 2 skipped**, including the five Windows resource-accounting checks.
 A parallel PR browser run passed 23/24 and native 7/7, exposing an immediate
 button count before the archive-health report's asynchronous rendering finished.
 The check now waits for the second session button before retaining the exact
 count/deletion assertions; no click or request is retried.
 
-The complete [measurement run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39033962051)
+The complete measurement run (Actions run 39033962051 in the original private repository)
 passed all nine Windows boundary cycles and three cancellation checks. Handles
 returned to the initial baseline or lower; steady cycles retained 0.024–0.030 MiB
 of Python heap after cleanup. Held heap growth was 15.836–18.599 MiB, with
@@ -537,10 +537,10 @@ edit, Rice restoration and cleanup audits passed. The earlier run took 85.445
 seconds, but its AMD runner and the new Intel runner differ; these timings do not
 establish a controlled speedup. Both used Windows Server 2022/two logical CPUs
 without cold-cache control.
-[Successful measurement run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39029236559).
+Successful measurement run (Actions run 39029236559 in the original private repository).
 
-The tested implementation is 2b9549666c5fdba0fb8624957d251154ea67d416.
-[PR validation](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39029221957)
+The tested implementation is c2606c4e807d531137dde8ae579baa4d046e1ddd.
+PR validation (Actions run 39029221957 in the original private repository)
 passed Linux **838 tests, 6 skipped**, Windows **842 tests, 2 skipped in 253.82
 seconds**, all six required Windows contracts, packaged browser **24/24**, and
 restricted native WinForms/WebView2 **7/7**. The separate measurement run's Linux
@@ -577,8 +577,8 @@ Local Linux source validation: **819 passed, 5 skipped in 186.08 seconds**;
 hosted Linux: **819 passed, 5 skipped in 151.01 seconds**. Hosted Windows:
 **822 passed, 2 skipped in 211.50 seconds**, all four required native contracts
 executed; restricted native window smoke **7/7**. JavaScript, encoding/core,
-dependency checks and actionlint passed. Measurement/source commit: efa2c929.
-[Run and retained evidence](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39014398000).
+dependency checks and actionlint passed. Measurement/source commit: de587b23.
+Run and retained evidence (Actions run 39014398000 in the original private repository).
 
 The initial packaged browser gate passed 23/24, including the new support report,
 and found progress overlapping the toolbar at 900px. The header now reserves the
@@ -586,7 +586,7 @@ indicator's intrinsic width and wraps actions. A focused Chromium check passed
 eleven widths from 480–1586px with count/clock/spinner and all actions contained;
 the permanent overlap gate now includes both sides of the 620px breakpoint.
 The complete packaged rerun is retained in
-[PR #1's validation checks](https://github.com/Terrazocker/nightseam-catalog/pull/1/checks).
+PR #1's validation checks (in the original private repository).
 
 The original frozen popularity snapshot remains unavailable. Clean-VM/offline,
 physical DPI/monitor/Snap and native Save As acceptance remain manual; the
@@ -621,8 +621,8 @@ any failed check still fails the overall job.
 Final Windows source validation: **814 passed, 2 skipped in 207.12 seconds**;
 all four required Windows contracts executed. Linux: **811 passed, 5 skipped in
 160.87 seconds**. JavaScript, encoding/core and dependency checks passed.
-Tested Windows commit: 9775ebae8206c4563ca4fa893faf88a8c9d6803c.
-https://github.com/Terrazocker/nightseam-catalog/actions/runs/39009833605
+Tested Windows commit: f851f14beb49a33746d1287a4a9828955291099b.
+Actions run 39009833605 (original private repository)
 Evidence: logs/windows-import-success.log and
 logs/windows-import-success/logs/windows-import-benchmark.json;
 logs/import-benchmark-linux.log/xml and logs/import-benchmark-js.log.
@@ -654,8 +654,8 @@ The final Windows run passed **807 tests, 2 skipped in 206.82 seconds**, all fou
 required Windows contracts, a fresh executable build and **23/23 packaged browser
 checks**. Linux passed **804 tests, 5 skipped in 122.72 seconds**. JavaScript,
 encoding/core and dependency checks passed. Tested Windows commit:
-4f087058bf2b10a4f2860b219747f97631da71d7.
-https://github.com/Terrazocker/nightseam-catalog/actions/runs/38953312051
+5a4a11bba8bbfe10e85f2a27fdc5fe77fe43f980.
+Actions run 38953312051 (original private repository)
 Local evidence: logs/native-window-success.log,
 logs/native-artifact-success/tests/browser/artifacts/native-window.json and
 native-webview.png, logs/native-smoke-final-linux.log/xml.
@@ -685,9 +685,9 @@ layout and map checks. The harness used private executable/data/archive/temp
 stores. Final Linux source validation passed **800 tests, 5 skipped in 122.10
 seconds**; JavaScript, encoding and core guards passed.
 
-Tested source commit: 78b13b19bdb01836646799655b4a2e98cbcde807.
+Tested source commit: 7d022a7459a5b2259c62a982e6f1f6c4d15b66de.
 Successful Windows run with retained JUnit/log/browser artifacts:
-https://github.com/Terrazocker/nightseam-catalog/actions/runs/38946414023
+Actions run 38946414023 (original private repository)
 The Windows POSIX-only skip is covered on Linux. The sole check still unverified
 across both platforms is the original frozen popularity snapshot's provenance:
 the ignored raw snapshot and its metadata are unavailable here. No fresh data
@@ -1131,7 +1131,7 @@ Housekeeping completed with zero failures and preserved the research evidence.
 
 ## Workspace exploration and source validation - October 15, 2026
 
-Inspected an initially clean main at d941c9ffa8f7c1269a45ee50ef42704d39eeb77d,
+Inspected an initially clean main at 5bc4e32a1f90f05ffa1b95f0161236939cae9c9d,
 matching the local origin/main reference. Origin is configured for the independent
 GitHub catalog repository; no fetch or publication was performed. VERSION remains
 0.1.0. Current code implements Library, Import Exposures, Sky Map and Archive
@@ -1390,7 +1390,7 @@ names. All 46 dependency pins and source release checks pass. Source release
 validation uses --no-stage because this local merge does not restage an existing
 public release. Evidence: logs/merge-main-20261013/.
 
-The merged implementation was compiled from clean source 9827be22 as a local
+The merged implementation was compiled from clean source c530e4ba as a local
 **NightSeam 0.1.0-g9827be22** development executable. The prior executable was
 backed up and verified, three recovery executables were retained and build scratch
 was removed. **14/14 Windows packaged browser checks passed**, including solar
@@ -1531,7 +1531,7 @@ report alongside the earlier successful packaged verification below.
 
 ## Packaged verification of partial-review implementation - October 11, 2026
 
-Built clean source commit cad47686 as **NightSeam 0.1.0-gcad47686**, using the
+Built clean source commit 430ca89a as **NightSeam 0.1.0-gcad47686**, using the
 existing locked Windows x64 CPython 3.12 build environment. Dependency preflight,
 source guards and compilation passed; no dependencies were installed. The
 previous executable was backed up and verified before replacement. Automatic
@@ -1540,8 +1540,8 @@ executables.
 
 The packaged private-data browser gate passed **10/10**, including the new
 partial-import response/chunk-stop regression. The local artifact guard reported
-**zero errors**. Evidence: logs/partial-review-fixes-20261011/build-cad4768.log,
-browser-cad4768.log and release-cad4768.log. User data and external archives were
+**zero errors**. Evidence: logs/partial-review-fixes-20261011/build-430ca89.log,
+browser-430ca89.log and release-430ca89.log. User data and external archives were
 preserved; VERSION, tags and public release artifacts were unchanged.
 
 This final documentation revision is rebuilt for handoff, with build/browser/
@@ -1594,7 +1594,7 @@ after compiling this implementation.
 
 ## Packaged verification of audit fixes - October 11, 2026
 
-Built the verified clean source commit 9ecf9435 as a local development executable
+Built the verified clean source commit 47594ae5 as a local development executable
 reporting **NightSeam 0.1.0-g9ecf9435**. The first Windows PowerShell subprocess
 could not load Get-FileHash and stopped during backup verification before
 compilation; the previous executable remained intact. Retrying build.ps1 via
@@ -1611,9 +1611,9 @@ Successful build housekeeping removed **73.17 MiB**, with no cleanup failures,
 and retained three recovery executables. Application data, configured external
 archives and existing release artifacts were preserved.
 
-These outcomes are in logs/fix-review-20261011/build-9ecf943-pwsh.log,
-browser-9ecf943.log and release-9ecf943.log; the failed attempt is preserved as
-build-9ecf943.log. The final documentation-only revision is rebuilt for handoff;
+These outcomes are in logs/fix-review-20261011/build-47594ae-pwsh.log,
+browser-47594ae.log and release-47594ae.log; the failed attempt is preserved as
+build-47594ae.log. The final documentation-only revision is rebuilt for handoff;
 its artifact identity and repeated packaged gate evidence are kept in final-*.log
 in that same ignored evidence directory. This is local development validation:
 VERSION, tags and public release artifacts were not changed.
@@ -1733,7 +1733,7 @@ No version, tag or release artifact was created.
 
 ## Rename recovery and hardening batch - October 10, 2026
 
-Follow-up hardening on the retired-planner tree (0ca1b2c era work):
+Follow-up hardening on the retired-planner tree (bbc75f5 era work):
 
 - F-22: archive folder renames now JOURNAL every completed move and UNDO on a
   mid-merge failure; a database failure after the move undoes the disk move in

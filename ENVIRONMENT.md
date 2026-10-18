@@ -100,7 +100,7 @@ native WinForms/WebView2 window using private data. Weekly and optional manual
 runs add larger benchmarks; see DEVELOPMENT.md. These permanent triggers become
 active when the branch's workflow is merged into main.
 Browser dependencies are installed in a separate .venv-browser environment.
-Run 39009833605 validated commit 9775ebae: 814 source tests passed (two skips),
+Run 39009833605 validated commit f851f14b: 814 source tests passed (two skips),
 all four required Windows contracts executed, and the fresh packaged browser
 gate passed 23/23 and restricted-runtime native smoke passed 7/7. Linux passed 811 tests
 (five skips), covering the POSIX-only Windows skip. Only the frozen
@@ -181,4 +181,4 @@ tests. File operations check resolved roots and refuse links before recursive
 movement/removal. Explicit UTF-8 without BOM is required for shipped text.
 
 Git local maintenance.auto=false and gc.auto=0 prevent background maintenance
-problems. No remote repository was configured during the split.
+problems. The repository is published on GitHub; see RELEASE_WORKFLOW.md.

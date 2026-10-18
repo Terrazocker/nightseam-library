@@ -44,10 +44,10 @@ in the packaged run, and both runs closed their owned processes/listeners/scratc
 The measurement run also passed 842 Windows source tests (two skips), all six
 required Windows contracts, browser 24/24 and restricted native window 7/7.
 
-Optimized commit: 2b9549666c5fdba0fb8624957d251154ea67d416.
+Optimized commit: c2606c4e807d531137dde8ae579baa4d046e1ddd.
 Executable SHA-256: 6c2a7133908c0f2c157f20f38b293ea5857f45a68d5854fdb37c5304261961fe.
-[Successful measurement run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39029236559).
-Artifact: `windows-validation-2b9549666c5fdba0fb8624957d251154ea67d416`.
+Successful measurement run (Actions run 39029236559 in the original private repository).
+Artifact: `windows-validation-c2606c4e807d531137dde8ae579baa4d046e1ddd`.
 Local JSON/logs: `logs/lazy-dedup-measurements/logs/`.
 
 ## Same-machine follow-up
@@ -110,12 +110,12 @@ also passed Safe Rice ingest and byte-exact native restoration. Both runs passed
 owned-process/listener/scratch cleanup. Normal application instances have no
 profiling endpoints or wrappers.
 
-Source commit: efa2c9297394e1ad0af2a31766371649a34669bf.
+Source commit: de587b231f43891504478f5c498f3ab79a6e80b6.
 Packaged executable SHA-256: d0c6961503fa4d8416e1c3e295958c7db22ac8025b5553dc8409c92717c5d849.
-[Measurement run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39014398000).
+Measurement run (Actions run 39014398000 in the original private repository).
 Its source, benchmark, profile and native gates passed; its initial browser gate
 found the toolbar overlap corrected in the following change. JSON and logs remain
-in artifact `windows-validation-efa2c9297394e1ad0af2a31766371649a34669bf` and locally
+in artifact `windows-validation-de587b231f43891504478f5c498f3ab79a6e80b6` and locally
 under `logs/improvements-remote-windows/logs/`.
 
 Repeat with `python scripts/profile_import.py`; weekly/manual CI can run the same

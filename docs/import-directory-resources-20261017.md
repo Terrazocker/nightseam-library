@@ -13,12 +13,12 @@ The deeper case adds eight common ancestor directories. The third case uses
 were 124, 156 and 155 characters respectively; these checks do not establish
 maximum-path-length compatibility. Paths and file sizes match between runs.
 
-Baseline branch commit: `777838f21efc5bae7bbd2a0f65c6c706ba54fdb6`;
+Baseline branch commit: `cdbbac3440cca0846adf3ceedeef24f8ff3eaad8`;
 tested PR merge: `b395721ea30634111500f94a87e1f73c29f2e9fa`.
-[Baseline run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39037931678).
-Shared-ancestor branch commit: `826ab3ac650c8015f0f33b198f1d3b353bc1ec12`;
+Baseline run (Actions run 39037931678 in the original private repository).
+Shared-ancestor branch commit: `46c9a2aad67172fac51d9287b4c6ece9e92b054b`;
 tested PR merge: `3c2fd73ebe2700ef1d7571ac23aa786597c0291b`.
-[Shared-ancestor run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39038863156).
+Shared-ancestor run (Actions run 39038863156 in the original private repository).
 
 Both used Windows Server 2022/two logical CPUs, but the baseline CPU was AMD64
 Family 25 Model 1 Stepping 1 and the candidate Family 26 Model 2 Stepping 1.

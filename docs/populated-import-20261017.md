@@ -18,7 +18,7 @@ All input bytes, 6,012 final archive hashes, seed identity/class/session/locatio
 12 new image/history units and cleanup are audited. The deliberate edit may
 refresh its cached fingerprint; it does not accept a new integrity baseline.
 
-The baseline application is commit `89a7a82b4da1fe25cbb1ce07c75a2958b2d6f3ca`.
+The baseline application is commit `45d19fa9c96b6dc75069f31cbdc0f8dd7f1bbc91`.
 It ran in an owned detached worktree with the same measurement controllers copied
 in; those controllers add no production application hooks. That worktree and
 all child stores were removed afterwards. Candidate measurements used this

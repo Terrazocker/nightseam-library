@@ -2,9 +2,9 @@
 
 `scripts/bench_populated_import.py` compares two Windows executables sequentially
 in ABBA order on one runner. Both executables are compiled with the same pinned
-environment. The baseline is `89a7a82b4da1fe25cbb1ce07c75a2958b2d6f3ca`, immediately
+environment. The baseline is `45d19fa9c96b6dc75069f31cbdc0f8dd7f1bbc91`, immediately
 before the ordered-query/narrow-hydration change; the candidate is the selected
-workflow commit. The application code in the initial candidate matches `5f19a5a`.
+workflow commit. The application code in the initial candidate matches `e27b47f`.
 This experiment adds developer tooling and failure coverage without changing
 application import behavior.
 

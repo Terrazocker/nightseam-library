@@ -1,10 +1,12 @@
 # NightSeam Catalog
 
+[![Catalog validation](https://github.com/Terrazocker/nightseam-library/actions/workflows/windows-validation.yml/badge.svg)](https://github.com/Terrazocker/nightseam-library/actions/workflows/windows-validation.yml)
+
 Version **0.1.0**. An independent catalog application with a native Windows
 window and a Linux browser build, for importing exposures,
 organizing capture sessions, attaching calibration frames and browsing an archive
-sky map. This project was extracted from the current `codex/direction-b-ui`
-working tree of NightSeam on October 1, 2026.
+sky map. It began as the catalog part of NightSeam and has been developed as an
+independent application since October 1, 2026.
 
 ## Run and build
 
@@ -38,7 +40,7 @@ unresolved. Reindex refreshes existing membership without moving exposure files.
 
 Source data lives in `data/`; packaged data lives in `dist/data/` beside the
 executable. These are separate libraries and remain ignored by Git. The split
-preserves both, including configured external archive paths such as `D:/seestar`.
+preserves both, including archive folders configured on external drives.
 See [CATALOG_IMPORT_GUIDE.md](CATALOG_IMPORT_GUIDE.md) for the current workflow.
 
 ## Development
@@ -54,7 +56,10 @@ Read [AGENTS.md](AGENTS.md), [DESIGN.md](DESIGN.md) and
 builds, tests and version history. No sibling-repository imports, symlinks or
 release coupling are used. `VERSION` defines the independent version.
 
-MIT; see LICENSE and NOTICE for third-party data credits. Previous combined
-project history and work patches are recoverable from the ignored
-`logs/repository-split/` snapshots. Historical review material retains its
-original combined-project version numbers.
+GitHub Actions runs the Linux and Windows test suites, both packaged builds and
+the packaged browser gates on every pull request and push to `main`; see
+[`.github/workflows`](.github/workflows) and
+[RELEASE_WORKFLOW.md](RELEASE_WORKFLOW.md).
+
+MIT; see LICENSE, and NOTICE for third-party data credits. Historical review
+material retains the version numbers of the earlier combined NightSeam project.

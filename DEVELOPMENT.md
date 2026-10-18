@@ -1,7 +1,7 @@
 # NightSeam Catalog development
 
 This independently owned snapshot begins at version 0.1.0 on October 1, 2026.
-The website is developed in the sibling Nightseam-programm repository; neither
+The website is developed in a separate repository; neither
 project reads source, databases, build outputs or versions from the other.
 
 ## Runtime
@@ -281,7 +281,7 @@ interval. Duplicate files retain their previous association and location.
 Source runs write to root data/; packaged runs write beside the executable.
 The migration moved both root data/ and dist/data/ without changing external
 image_dir settings or archived exposure bytes. Stale singleton instance.json
-files are quarantined in logs/repository-split and regenerated on launch.
+files were quarantined then; the application regenerates instance.json on launch.
 
 ## Independent build
 
@@ -481,7 +481,7 @@ not full HTTP publication or realistic exposure-throughput measurement. Use
 --baseline-commit BEFORE_SHA --candidate-commit AFTER_SHA` runs sequential AB/BA
 pairs using the current packaged HTTP benchmark and its byte/dedup/edit/Rice
 audits. Each run owns fresh stores and must confirm cleanup. CI builds pinned
-baseline `9c4f3128d2a3859c4c58c80fc3252d58bdbddbf9` (immediately before lazy
+baseline `60b30c340bc658381d728ec3a8ed0a113257fc58` (immediately before lazy
 admission) with the candidate's same pinned Python environment. Reports retain
 binary hashes, every sample and median/range, with no timing pass threshold.
 The machine is shared across samples; OS scheduling and warm caches remain

@@ -1,10 +1,9 @@
 # NightSeam Catalog agent instructions
 
-This is the canonical independent NightSeam Catalog application repository.
-The initial branch is `codex/direction-b-ui`, version `0.1.0`.
-The sibling `Nightseam-programm` is now website-only. Do not import, build,
-write, tag or deploy through it. The deprecated `Object-Astro`
-archive remains read-only. No remote repository is configured by this split.
+This is the canonical NightSeam Catalog application repository, published at
+https://github.com/Terrazocker/nightseam-library (default branch `main`; `VERSION` owns the version).
+The NightSeam website lives in a separate repository. Do not import, build,
+write, tag or deploy through it.
 
 ## Architecture and invariants
 

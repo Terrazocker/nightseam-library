@@ -48,7 +48,7 @@ semaphore accounting rather than POSIX descriptor counts.
 ## Windows boundary stress
 
 All nine cycles and all three cancellations passed in the complete
-[Windows measurement run](https://github.com/Terrazocker/nightseam-catalog/actions/runs/39033962051).
+Windows measurement run (Actions run 39033962051 in the original private repository).
 Every case retained 128 distinct parent pins. File admission stayed at 4,096
 when the archive contained 4,097 candidates; repeated overflow/positive probes
 retained fresh byte reads. Native writer exclusion was verified.
@@ -97,12 +97,12 @@ All four samples passed the complete byte, duplicate/edit, Rice and cleanup
 audits. These are two observations per variant with uncontrolled scheduling
 and warm caches; they do not promise the same improvement on other machines.
 
-Candidate commit: `9e38f14d8e030b06c24b8eb71bccb51b15946a3a`.
+Candidate commit: `2662f12dabf90efd5056363b2c47a8ed66a41426`.
 Baseline executable SHA-256: `d4824303299cabbf70174eaf6541acaff4b3a6e6db0eb323101c95c0d3f72186`.
 Candidate executable SHA-256: `eeb9bd43369607c86c1c44dd70622c3ba1e8e3bedc4062a6231efcf8c303a9ce`.
 
 Manual CI with `run_scaling_checks=true` builds the candidate and immediate
-pre-lazy-admission baseline `9c4f3128d2a3859c4c58c80fc3252d58bdbddbf9` on
+pre-lazy-admission baseline `60b30c340bc658381d728ec3a8ed0a113257fc58` on
 one Windows runner with the same pinned Python environment. The benchmark driver
 and dependency lock match between these revisions.
 
@@ -124,7 +124,7 @@ The repeated source profile still measured 6,034 archive hashes and
 68.863 instrumented seconds, separately from packaged timing. Linux passed
 857 source tests (6 skips), Windows 861 (2 skips), all six required Windows
 contracts passed, browser 24/24 and restricted native window 7/7 passed.
-Artifacts are `windows-validation-9e38f14d8e030b06c24b8eb71bccb51b15946a3a`
+Artifacts are `windows-validation-2662f12dabf90efd5056363b2c47a8ed66a41426`
 and locally `logs/scaling-windows-measurements/`. Comparison JSON and all four
 per-sample reports/logs are retained under its `logs/` directory.
 

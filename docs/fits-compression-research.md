@@ -7,7 +7,7 @@ synthetic images; it did not read or convert user exposures or configured archiv
 
 Implementation follow-up: compressed metadata reading was subsequently added in
 app/fits_metadata.py for gzip wrappers and tiled FITS, preserving uploaded bytes.
-The implementation-state discussion below describes the researched d941c9f
+The implementation-state discussion below describes the researched 5bc4e32
 baseline; DEVELOPMENT.md and CATALOG_IMPORT_GUIDE.md describe current behavior.
 Implementation follow-up: manual session Rice compression/restoration and
 opt-in Rice compression during ingest were subsequently implemented. They use
@@ -282,7 +282,7 @@ Compression is not redundancy or a substitute for another verified copy.
 
 ## NightSeam's current implementation
 
-These findings are from repository inspection at d941c9f:
+These findings are from repository inspection at 5bc4e32:
 
 - Upload accepts .fit/.fits and requires leading SIMPLE bytes
   ([ingest](<../app/ingest.py#L401>), [header parser](<../app/fits.py#L45>)). Pickers and drag/drop share the suffix limit.

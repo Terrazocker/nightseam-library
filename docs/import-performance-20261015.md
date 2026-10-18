@@ -40,10 +40,10 @@ The older workstation results below predate the safety correction and use differ
 hardware: no controlled speedup/regression ratio is inferred. Larger archives and
 the original workstation remain unmeasured after that correction.
 
-Tested commit: 9775ebae8206c4563ca4fa893faf88a8c9d6803c.
+Tested commit: f851f14beb49a33746d1287a4a9828955291099b.
 Executable SHA-256: 95d1440b0941c9dedc4b0ce0417cb89b6c1f0c9fe5563928917fd5f37bea87b1.
-Run: https://github.com/Terrazocker/nightseam-catalog/actions/runs/39009833605
-Retained artifact: windows-validation-9775ebae8206c4563ca4fa893faf88a8c9d6803c.
+Run: Actions run 39009833605 (original private repository)
+Retained artifact: windows-validation-f851f14beb49a33746d1287a4a9828955291099b.
 Local report: logs/windows-import-success/logs/windows-import-benchmark.json.
 Full log: logs/windows-import-success.log.
 

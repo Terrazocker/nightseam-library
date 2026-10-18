@@ -1,12 +1,12 @@
 # Independent catalog repository and release workflow
 
-The default local development branch is main. codex/direction-b-ui and v0.1.0
-preserve the extracted release baseline. VERSION owns catalog numbering. The
+The default development branch is main. The v0.1.0 commit preserves the
+extracted release baseline. VERSION owns catalog numbering. The
 website's release history, source and deployment are independent.
 
 ## Existing 0.1.0 release
 
-v0.1.0 remains at 97d840dabe260f2cf3dd85720f37c98c2610cf76. The existing executable
+v0.1.0 remains at ffed475b9cb06faa62b873ec7cce1dad6f6d9787. The existing executable
 and ZIP were compiled/staged at that clean tag. Documentation commits afterward
 are development snapshots; do not move the tag or label a later dirty/off-tag
 build a clean 0.1.0 release. Source validation can use check_release.py with
@@ -14,7 +14,8 @@ build a clean 0.1.0 release. Source validation can use check_release.py with
 
 ## Prepare the next release
 
-1. Work on a codex/ feature branch; review and integrate into main.
+1. Work on a feature branch; open a pull request and merge into main once CI
+   passes.
 2. Update VERSION deliberately for the next release, curate release notes and
    record actual validation in RELEASES.md.
 3. Run relevant tests while editing, the full suite at completion, check_js.py
@@ -68,10 +69,12 @@ the current Linux target.
 
 ## Remote and publication
 
-The October 5, 2026 decision kept the catalog local initially. On October 11,
-the user authorized origin setup and source publication to
-https://github.com/Terrazocker/nightseam-catalog.git. main remains the default
-development branch. Feature work uses codex/ branches.
+The source is public at https://github.com/Terrazocker/nightseam-library since October 18, 2026.
+main is the default development branch; feature work uses short-lived branches
+merged by pull request. CI (`.github/workflows/windows-validation.yml`) runs the
+Linux and Windows suites, both packaged builds and the browser gates on every
+pull request and push to main, plus a weekly scheduled run with the packaged
+import benchmark. Optional benchmarks are started manually from the Actions tab.
 A GitHub repository and executable release publication are distinct choices.
 Upload only verified platform archives and their checksums/manifests when authorized.
 Never commit source data/, dist/data/, logs/, executable backups or credentials.
