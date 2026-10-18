@@ -1,5 +1,50 @@
 # Current NightSeam Catalog findings
 
+## Every import request rereads the same-size archive on Windows — October 18, 2026 (mitigated)
+
+Proving an upload is not a duplicate requires current bytes of every same-size
+archived exposure. On Windows, a measured digest was reusable only while the
+same file handle stayed open, so each request reread the whole same-size
+population: all frames from one camera share a size. The packaged catalog has
+1,059 exposures of 4,152,960 bytes, about 4.2 GB reread per request. A private
+256-file profile (96 per request) read 2.25 GB of archive for 1.06 GB of uploads.
+pinned_version now exposes a durable version that also covers the NTFS/ReFS
+change-journal id and the file's USN, which every closed writer advances, so
+the process-local cache reuses actual earlier reads across requests. The same
+profile then read 1.06 GB (one read per newly published file). Remaining: the
+first import after each application start still reads the same-size population
+once. Volumes without an active change journal (or not NTFS/ReFS) keep full
+rereads. Positive matches and restored-mtime edits are still verified against
+current bytes.
+
+## Session compression blocked by stacked or deleted exposures — October 18, 2026 (fixed)
+
+A floating point stack previously refused the entire session conversion. Deleting
+its disk file left its catalog record selected, and the next attempt failed with
+FileNotFoundError. Session compression now reports and skips existing missing
+sources before directory pinning, and keeps unsupported files unchanged while
+compressing eligible integer FITS. Skipped records, identities and integrity
+baselines are preserved. Results distinguish missing and unsupported counts and
+show up to 50 skipped paths. A changed archive root, linked path, permission
+refusal, integrity mismatch or conversion failure still aborts safely. Complete
+library copies and uncompression do not silently skip missing sources.
+
+## Import startup rereads unrelated exposures — October 18, 2026 (mitigated)
+
+Windows request preparation eagerly read up to 4,096 same-size archived
+exposures before processing any upload, including an exact duplicate. Preparation
+now captures only the archive identity. Exact recorded hashes and conversion
+aliases are checked against current bytes first; unsuccessful hints still fall
+through to complete same-size verification. Negative candidates acquire bounded
+file/directory pins when needed. A private 128-file probe reduced a last-file
+duplicate from 129 archive reads to one. Ordinary UI batches now allow 96 files,
+bounded by 512 MiB, to amortize negative checks across more new exposures;
+compression retains its 24-file count limit. Large single exposures travel alone.
+Conservative Windows checks across closed handle lifetimes, full same-size
+fallbacks and the existing pin bounds remain; large-archive import scaling is
+not completely solved. Folder selection recursively finds supported FITS and
+uses these same byte-verified import rules.
+
 ## Binary integrity baseline aborts health scans — October 18, 2026 (fixed)
 
 SQLite TEXT affinity permits a BLOB in image_integrity.sha256. A nonempty BLOB

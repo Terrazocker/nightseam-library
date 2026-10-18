@@ -50,8 +50,9 @@ export function applyArchiveUI() {
 
 /* ---------------- import pane ---------------- */
 
-const BATCH = 24;
+const BATCH = 96;
 const COMPRESSED_BATCH = 24;
+const MAX_BATCH_BYTES = 512 * 1024 * 1024;
 let _archiveOperation = null;
 let _reindexErrorNotice = null;
 
@@ -64,7 +65,7 @@ function elapsedLabel(ms) {
 }
 
 function lockArchiveActions() {
-  const selectors = "#btnTopIngest, #btnIngest, #btnTopReindex, #btnArcReindex, #btnTopExport, #btnTopCopy, #btnTopHealth, #btnClearResults, #btnArcSave, #btnArcBrowse, #arcDir, #siteLat, #siteLon, #btnSiteSave, #compressOnIngest, #ingestSafeMode, #libEditSave, [data-edit], [data-frame-override], [data-library-add], [data-rice-mode], [data-imp]";
+  const selectors = "#btnTopIngest, #btnIngest, #btnIngestFolder, #fitFolder, #btnTopReindex, #btnArcReindex, #btnTopExport, #btnTopCopy, #btnTopHealth, #btnClearResults, #btnArcSave, #btnArcBrowse, #arcDir, #siteLat, #siteLon, #btnSiteSave, #compressOnIngest, #ingestSafeMode, #libEditSave, [data-edit], [data-frame-override], [data-library-add], [data-rice-mode], [data-imp]";
   const controls = [...document.querySelectorAll(selectors)];
   const previous = controls.map(control => control.disabled);
   controls.forEach(control => { control.disabled = true; });
@@ -161,7 +162,22 @@ function startImportActivity(total) {
   return activity;
 }
 
-async function ingestFiles(files, frame, session, sessionAnchorId) {
+const importChunks = function* (files, maxFiles) {
+  let chunk = [], bytes = 0;
+  for (const file of files) {
+    if (chunk.length && (chunk.length >= maxFiles || bytes + file.size > MAX_BATCH_BYTES)) {
+      yield chunk;
+      chunk = [];
+      bytes = 0;
+    }
+    // A large exposure travels alone; the server enforces its per-file limit.
+    chunk.push(file);
+    bytes += file.size;
+  }
+  if (chunk.length) yield chunk;
+};
+
+async function ingestFiles(files, frame, session, sessionAnchorId, source = "files") {
   if (_archiveOperation) {
     toast("Wait for the current archive operation to finish.", "info", 4000);
     return;
@@ -169,7 +185,9 @@ async function ingestFiles(files, frame, session, sessionAnchorId) {
   const list = Array.from(files || []).filter(
     f => /\.(fit|fits|fts|fz)(\.gz)?$/i.test(f.name));
   if (!list.length) {
-    toast("No supported exposures selected (FITS, .fz or FITS.gz).", "err", 4000);
+    toast(source === "folder"
+      ? "No supported FITS exposures found in this folder or its subfolders."
+      : "No supported exposures selected (FITS, .fz or FITS.gz).", "err", 4000);
     return;
   }
   const fromFrameSelector = frame == null && session == null;
@@ -186,8 +204,9 @@ async function ingestFiles(files, frame, session, sessionAnchorId) {
   const unlock = lockArchiveActions();
   const activity = startImportActivity(list.length);
   try {
-    for (let i = 0; i < list.length; i += batchSize) {
-      const chunk = list.slice(i, i + batchSize);
+    let submitted = 0;
+    for (const chunk of importChunks(list, batchSize)) {
+      submitted += chunk.length;
       const fd = new FormData();
       for (const f of chunk) fd.append("files", f);
       if (selectedFrame) fd.append("frame", selectedFrame);
@@ -217,7 +236,7 @@ async function ingestFiles(files, frame, session, sessionAnchorId) {
       activity.unconfirmed += res.results.filter(result => result.unconfirmed).length;
       activity.update();
       if (res.results.some(result => result.unconfirmed || result.unattempted)) {
-        for (const file of list.slice(i + chunk.length)) results.push({
+        for (const file of list.slice(submitted)) results.push({
           file: file.name, ok: false, unattempted: true,
           error: "Not imported because the earlier request could not finish." });
         break;
@@ -815,6 +834,22 @@ export function bindArchive() {
   $("#fitFiles").addEventListener("change", e => {
     ingestFiles(e.target.files);
     e.target.value = "";
+  });
+  $("#btnIngestFolder").addEventListener("click", () => {
+    if (_archiveOperation) {
+      toast("Wait for the current archive operation to finish.", "info", 4000);
+      return;
+    }
+    _impSession = null;
+    syncFrameSelector();
+    $(".calibration-target")?.remove();
+    $("#fitFolder").click();
+  });
+  $("#fitFolder").addEventListener("change", e => {
+    // Snapshot before resetting so the same directory can be selected again.
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    ingestFiles(files, undefined, undefined, undefined, "folder");
   });
   let calFrame = "dark";   // set by the per-session +darks/+flats/+bias buttons
   const pickCalibration = (frame, anchorId, description) => {

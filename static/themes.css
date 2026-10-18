@@ -885,7 +885,8 @@ body.catalog-only #btnLibraryIngest {
   font-weight: 650;
   cursor: pointer;
 }
-body.catalog-only #btnIngest { width: 16.8571rem; }
+body.catalog-only .import-picker-actions { display: flex; flex-wrap: wrap; justify-content: center; align-items: stretch; gap: .6rem; max-width: 100%; }
+body.catalog-only #btnIngest { width: 16.8571rem; max-width: 100%; }
 body.catalog-only #dropZone > .hint {
   margin: .8571rem 0 0;
   color: var(--dim);

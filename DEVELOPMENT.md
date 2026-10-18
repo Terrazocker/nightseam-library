@@ -21,17 +21,32 @@ app/ingest.py parses exposure headers, matches objects, stages/copies files,
 hashes complete bytes for global duplicate identity and reindexes archive trees.
 app/imglib.py derives objects and capture sessions for the interface.
 app/paths.py contains safe path and writable/resource-directory boundaries.
+Session compression leaves unsupported exposures unchanged and filters existing
+missing sources before Windows directory pinning. Counts and at most 50 paths
+are reported; catalog rows and baselines stay intact. Integrity, permission and
+publication failures retain the complete rollback contract. Library copy and
+uncompression still require their selected sources to be present.
 Dedup comparisons measure same-size originals even if their database digest
 differs: external restores can preserve size and mtime. A bounded process-local
-negative-match memo avoids repeated full reads on POSIX behind identity and ctime.
-app/file_version.py pins Windows writers/renames and includes an opaque handle
-lifetime in NTFS/ReFS versions: timestamps can collide after rapid same-size
-writes with restored mtime, so independently opened handles always rehash.
+negative-match memo avoids repeated full reads behind durable file versions:
+identity and ctime on POSIX. app/file_version.py pins Windows writers/renames and
+includes an opaque handle lifetime in NTFS/ReFS versions: timestamps can collide
+after rapid same-size writes with restored mtime. Its durable() version adds the
+volume's change-journal id and the file's USN, which every closed writer
+advances, so independent handles reuse a measured digest only while that is
+unchanged. Without an active change journal they always rehash.
 Unsupported filesystems/open writers disable memoization. Only measured bytes
 populate the cache, and positive duplicate
-matches always rehash. A request-scoped DedupBatch pins up to 4,096 earlier
+matches always rehash. Import offers individual files or a recursive directory
+selection through a browser/WebView2 directory input. Both use the same upload
+and full-byte deduplication path; source relative paths never become destination
+paths. The UI sends at most 96 files per ordinary request, or 24 with compression,
+and at most 512 MiB per batch unless a larger single file needs its own request.
+The server retains its 1 GiB per-file, 24 GiB body and 24-worker ceilings.
+A request-scoped DedupBatch pins up to 4,096 earlier
 same-size files and their directory lineage, validating their negative hashes
-once per batch. Newly published files enter that index lazily when a later upload
+once per batch. Preparation captures only root identity; existing and newly
+published files enter that index lazily when an upload
 first encounters them as candidates: their current archive bytes are hashed under
 live file/directory pins, with lexical path and root identity validation. No upload
 or database digest alone admits a candidate. The index retains its root identity
@@ -47,8 +62,10 @@ pin, whole-byte hash and stable-version checks succeed. Failed admission closes
 the provisional suffix. File/child handles close before their owning ancestors;
 all keys clear before unrelated archive operations resume. An unrelated operation's
 thread-local pins never substitute for the batch's own directory lifetime.
-Preparation limits its ordered candidate SELECT to 4,096 rows in SQLite rather
-than materializing an entire matching library. Batched duplicate lookup reads
+Lookup first checks recorded exact hashes and conversion aliases against current
+archive bytes, avoiding unrelated same-size reads when a match is verified.
+A stale or missing hint still falls through to the complete same-size search.
+Batched duplicate lookup reads
 256-row keyset pages with a fixed upper image ID, releases its cursor/DB lock
 before filesystem work and checks cancellation between candidates/pages. It
 still traverses every matching candidate, including legacy unknown sizes and
@@ -485,8 +502,10 @@ operations. Frozen builds explicitly retain the selected distribution metadata.
 
 `python scripts/profile_import.py` creates a private source server beneath
 `logs/browser/` and uses the benchmark's real HTTP uploads and integrity audits.
-Its default 512 equal-size FITS files and 24-file requests match the packaged
-workload. `--count`, `--batch-size` and `--output` allow smaller investigations.
+Its default 512 equal-size FITS files and 24-file requests retain the historical
+workload. Use `--batch-size 96` for the current ordinary-import count limit;
+the browser also splits by its byte budget. `--count`, `--batch-size` and
+`--output` allow smaller investigations.
 The private bootstrap installs selected synchronous function wrappers across
 worker threads, actual hash-byte counters and SQLite transaction counts. Normal
 application instances have no profiling endpoints or wrappers. Fixtures, startup,

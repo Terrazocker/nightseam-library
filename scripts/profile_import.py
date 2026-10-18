@@ -159,7 +159,7 @@ class HashProxy:
 
 
 def instrument(measurements):
-    from app import compression, database, fits_metadata, imglib, ingest
+    from app import archive_trash, compression, database, fits_metadata, imglib, ingest, paths
     # Replace module bindings, not the process-global hashlib/sqlite3 modules.
     ingest.hashlib = HashProxy(measurements)
     class Connection(sqlite3.Connection):
@@ -209,6 +209,29 @@ def instrument(measurements):
         with measurements.phase('batch_prepare'):
             return prepare(*args, **kwargs)
     ingest.DedupBatch.prepare = classmethod(batch_prepare)
+    # Admission includes Windows pin creation and lineage/path validation,
+    # which otherwise appears as unattributed duplicate-lookup time. Measure
+    # entry/exit separately: retained pins can close on a different worker.
+    pin = ingest.pinned_version
+    @contextmanager
+    def measured_pin(*args, **kwargs):
+        context = pin(*args, **kwargs)
+        with measurements.phase('file_pin_open'):
+            version = context.__enter__()
+        try:
+            yield measurements.wrap('file_pin_version', version) if version else None
+        except BaseException:
+            with measurements.phase('file_pin_close'):
+                suppressed = context.__exit__(*sys.exc_info())
+            if not suppressed:
+                raise
+        else:
+            with measurements.phase('file_pin_close'):
+                context.__exit__(None, None, None)
+    ingest.pinned_version = measured_pin
+    ingest.DedupBatch.fingerprint = measurements.wrap('batch_candidate', ingest.DedupBatch.fingerprint)
+    paths.safe_join = measurements.wrap('safe_archive_join', paths.safe_join)
+    archive_trash._contained = measurements.wrap('archive_containment', archive_trash._contained)
     negative = ingest.DedupBatch.negative
     def batch_negative(self, *args, **kwargs):
         result = negative(self, *args, **kwargs)
@@ -363,8 +386,8 @@ def main():
             parser.error('a private child port is required')
         child(args.child, args.port, args.seed_count)
     else:
-        if args.count < 3 or not 1 <= args.batch_size <= 24:
-            parser.error('count must be at least 3 and batch size must be 1..24')
+        if args.count < 3 or not 1 <= args.batch_size <= 96:
+            parser.error('count must be at least 3 and batch size must be 1..96')
         run(args)
 
 

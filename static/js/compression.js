@@ -41,10 +41,21 @@ function render(value) {
   $("#compressionWriteProgress").value = job.published || 0;
   $("#compressionWriteLabel").textContent = `${job.mode === "copy" ? "Writing destination files" : "Writing and replacing files"} · ${job.published || 0} / ${job.publication_total || 0}`;
   const counts = `${job.processed || 0} / ${job.total || 0} files · ${job.elapsed_seconds || 0}s elapsed`;
+  const skipped = [];
+  if (job.skipped_missing) skipped.push(`${job.skipped_missing} missing`);
+  if (job.skipped_unsupported) skipped.push(`${job.skipped_unsupported} unsupported`);
+  const details = $("#compressionSkipped"), files = $("#compressionSkippedFiles");
+  details.hidden = !skipped.length;
+  files.replaceChildren();
+  for (const entry of job.skipped_files || []) {
+    const item = document.createElement("li");
+    item.textContent = `${entry.file} — ${entry.reason === "missing" ? "not found on disk" : "unsupported for lossless Rice"}`;
+    files.appendChild(item);
+  }
   if (running) status(`${phases[job.phase] || job.phase} · ${counts}${job.status === "cancelling" ? " · Cancelling and restoring originals…" : ""}`);
   else if (job.status === "completed") {
     const savings = job.bytes_before ? ` · ${bytes(job.bytes_before)} → ${bytes(job.bytes_after)}` : "";
-    status(`Complete · ${counts} · ${job.converted} converted · ${job.skipped} unchanged${savings}${job.destination ? `. Saved to ${job.destination}` : ""}`);
+    status(`Complete · ${counts} · ${job.converted} converted · ${job.skipped} skipped${skipped.length ? ` (${skipped.join(" · ")})` : ""}${savings}${job.destination ? `. Saved to ${job.destination}` : ""}`);
   } else if (job.status === "cancelled") status("Cancelled. Session originals are retained; incomplete copies were removed.");
   else status(`Failed: ${job.error || "Unknown conversion error"}`);
 }
@@ -112,7 +123,7 @@ async function open(request) {
   $("#compressionHelp").textContent = request.mode === "uncompress"
     ? "Restores this session’s Rice files to ordinary FITS. Files compressed by NightSeam must match their recorded original SHA-256 before replacement."
     : request.mode === "copy" ? "Copy your whole library to another disk as usable individual files. Supported integer FITS use lossless Rice compression."
-    : "Compresses the whole selected session, including attached calibration exposures. Choose Fast to skip restoration checks or Safe to restore and compare every file. Originals stay available until all replacements and the catalog switch succeed. Floating point and unsupported files prevent conversion.";
+    : "Compresses supported exposures in the selected session, including attached calibration exposures. Choose Fast to skip restoration checks or Safe to restore and compare every file. Floating point, unsupported and missing files are skipped and reported. Originals stay available until all replacements and the catalog switch succeed.";
   $("#compressionStart").disabled = true;
   status("Checking for an existing conversion…");
   try {
@@ -137,6 +148,8 @@ async function open(request) {
       $("#compressionWriteProgress").value = 0;
       $("#compressionPrepareLabel").textContent = "Preparing files · 0 / 0";
       $("#compressionWriteLabel").textContent = "Writing and replacing files · 0 / 0";
+      $("#compressionSkipped").hidden = true;
+      $("#compressionSkippedFiles").replaceChildren();
       status("Ready.");
     }
   } catch (error) { if (requestId === openRequest) status(`Could not check conversion status: ${error.message}. Close and try again.`); }

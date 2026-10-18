@@ -1,5 +1,87 @@
 # Independent catalog release record
 
+## Cross-request dedup reuse on change-journal volumes — October 18, 2026
+
+Windows imports no longer reread every same-size archived exposure for each
+request. pinned_version's durable version covers file id, size, timestamps,
+change-journal id and file USN, and only actual earlier reads populate the
+process-local negative cache. Positive matches still rehash current bytes.
+Volumes without an active journal keep full rereads.
+
+Validation: 977 source tests passed with 4 skips in 309.21 seconds. Focused
+dedup, batch admission, directory pin, duplicate edge, stress and compression
+tests passed 96 cases. A durable-version probe stayed equal across separate
+handles and changed after a same-size edit with restored mtime. In the instrumented
+private 256-file profile (96 per request), archive reads fell from 2,245,193,280
+bytes (541 hashes) to 1,058,270,400 (255) and import time from 16.04 to 13.95
+seconds. A 512-file, 24-per-request run read 2,120,690,880 bytes (511 hashes) in
+41.62 seconds. All runs passed hash, duplicate identity and restored-mtime edit
+audits. These are single warm-cache observations, not throughput guarantees.
+A clean release build was refused for the uncommitted tree; the -AllowDirty
+development build identifies as 0.1.0-ga140c289-dirty (SHA-256 a97d9192...e939).
+Its predecessor (71ee54ba...29d) was backed up with a matching hash; three
+backups were retained and build scratch removed. All 27 packaged browser checks
+passed against it. Evidence is under logs/import-slow-20261018/. No release was
+staged or published.
+
+## Recursive folder import, reduced import stalls and resilient session compression — October 18, 2026
+
+Import folder selects supported FITS recursively through the browser/WebView2
+directory input and uses the existing full-byte identity rules. Existing
+exposures keep their record/class/location even when the source filename changes;
+different bytes under the same filename remain distinct. Empty folders report
+no supported exposures, and picker reset permits selecting the same tree again.
+Ordinary imports use up to 96 files per request, with a 512 MiB byte budget;
+compression keeps 24 files and the same byte budget. Larger individual files
+travel alone. Server body, per-file and concurrent-worker budgets remain intact.
+Dedup preparation no longer eagerly hashes the same-size archive population.
+Exact recorded hashes are freshly verified first; stale hints still fall through
+to complete candidate checks and bounded lazy negative pinning. In a private
+128-file probe, a last-file duplicate needed one archive read instead of 129.
+
+Session compression now skips missing sources before directory pinning and
+leaves unsupported floating-point stacks unchanged while converting eligible
+integer exposures. Missing records and baselines stay intact. Results count and
+list skipped reasons/paths (at most 50 paths). Integrity, permission, source-change
+and conversion failures still abort with recovery. Missing sources still prevent
+complete library copies and uncompression.
+
+Validation: 976 source tests passed with 4 skips in 372.42 seconds. Focused import
+safety/resource tests passed 66 cases, compression passed 35, and benchmark/profile
+tool tests passed 16 after allowing the new count limit. All 27 packaged browser
+checks passed, including real recursive directory selection, duplicate identity,
+same-name/different-byte inputs, byte-bounded batches and mixed missing/stacked
+session compression. JavaScript/encoding/core and executable release checks
+passed. The rebuilt executable identifies as 0.1.0-ga140c289-dirty; its predecessor
+was backed up and verified before replacement.
+
+A private populated source profile with 2,000 seeded images passed all byte,
+metadata, malformed-input, restored-mtime and missing-original restoration audits;
+2,012 archived files were verified and process/scratch cleanup succeeded. The
+packaged 96-exposure workload (398,407,680 bytes) measured 9.105 seconds before
+with four 24-file requests and 5.869 seconds after with one 96-file request.
+Both runs passed source/archive hashes, duplicate identity, restored-mtime edit,
+native Rice restoration and cleanup audits. These are single warm-cache local
+observations with other validation running, not a controlled throughput guarantee.
+Evidence is retained under logs/import-folder-20261018/. No public release was
+staged or published.
+
+## Local Windows build refresh — October 18, 2026
+
+Fast-forwarded main from 4c4a3de to origin/main at a140c289 and rebuilt
+dist/NightSeam.exe with the pinned Windows build environment. The executable
+identifies as 0.1.0-ga140c289, built from the clean off-tag source snapshot.
+The previous executable was backed up and SHA-256 verified before replacement;
+the builder retained three recovery executables and removed build scratch.
+
+The full Windows suite passed 970 tests with 4 skips in 452.77 seconds.
+All 24 packaged browser checks passed using the harness's private executable,
+data copy and explicitly configured private archive. Source and executable
+release checks passed with zero errors before this validation-record-only edit;
+JavaScript, encoding and core checks passed. The initial sandboxed build stopped
+at the Windows process query before replacement; the rerun with Windows process
+access succeeded. No release package was staged or published.
+
 ## Binary integrity baseline handling — October 18, 2026
 
 Quick and Deep health checks now treat a non-text integrity hash as no_baseline

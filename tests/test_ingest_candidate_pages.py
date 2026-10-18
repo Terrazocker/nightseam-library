@@ -9,7 +9,7 @@ from app import ingest
 from test_compression import exposure, library
 
 
-def test_preparation_limits_rows_in_sql_before_failed_admissions(tmp_path, monkeypatch):
+def test_preparation_does_not_query_or_hash_same_size_candidates(tmp_path, monkeypatch):
     db, archive, _ = library(tmp_path, count=7)
     monkeypatch.setattr(ingest, '_WINDOWS_BATCH_PINS', True)
     monkeypatch.setattr(ingest, '_BATCH_PIN_LIMIT', 2)
@@ -20,9 +20,9 @@ def test_preparation_limits_rows_in_sql_before_failed_admissions(tmp_path, monke
     index = None
     try:
         index = ingest.DedupBatch.prepare(db, archive, {len(exposure())})
-        assert visited == [row['id'] for row in db.images()[:2]]
+        assert not visited and not index.entries and not index.leased
         reads = [sql for sql in statements if sql.startswith('SELECT id,file')]
-        assert len(reads) == 1 and reads[0].endswith('LIMIT 2')
+        assert not reads
     finally:
         db.conn.set_trace_callback(None)
         if index is not None:
@@ -61,7 +61,7 @@ def test_paged_lookup_finds_late_restored_mtime_duplicate_above_pin_cap(tmp_path
         assert result['imagetyp'] == rows[-1]['imagetyp']
         assert target in reads and len(index.entries) == 1
         pages = [sql for sql in statements if sql.startswith('SELECT id,file')]
-        assert len(pages) == 4 and all(sql.endswith('LIMIT 2') for sql in pages)
+        assert len(pages) == 5 and all(sql.endswith('LIMIT 2') for sql in pages)
     finally:
         db.conn.set_trace_callback(None)
         index.close()

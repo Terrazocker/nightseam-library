@@ -66,7 +66,8 @@ class DedupBatch:
     admitting newly published files lazily when they become candidates.
     Open writers, unsupported versions and candidates above the handle bound
     retain the conservative individual checks. Positive matches always rehash.
-    No database hash alone admits an entry.
+    No database hash alone admits an entry; an earlier actual read in this
+    process may, while its durable change-journal version is unchanged.
     """
     def __init__(self):
         self.stack = ExitStack()
@@ -128,9 +129,23 @@ class DedupBatch:
                     version = context.enter_context(pinned_version(path))
                     before = version() if version else None
                     if before is not None:
-                        measured = _dedup_fingerprint(db, path, incoming, cancel)
+                        # The outer handle already excludes writers and remains
+                        # alive for this request. Read current bytes under that
+                        # same lifetime instead of opening another version pin,
+                        # unless an earlier actual read has the same durable
+                        # (change-journal) version.
+                        durable = _durable_version(version)
+                        measured = _cached_negative(db, path, durable, incoming)
+                        read = measured is None
+                        if read:
+                            measured = (_fingerprint_file(path, cancel) if cancel is not None else
+                                        _fingerprint_file(path))
                         _check_reindex_cancelled(cancel)
-                        if measured is not None and version() == before:
+                        unchanged = version() == before
+                        if read:
+                            _remember_fingerprint(db, path, durable, measured,
+                                                  unchanged and _durable_version(version) == durable)
+                        if measured is not None and unchanged:
                             if not self.leased:
                                 db.archive_lock.reserve(self)
                                 self.leased = True
@@ -149,6 +164,12 @@ class DedupBatch:
 
     @classmethod
     def prepare(cls, db, archive, sizes, cancel=None):
+        """Capture the request root without reading unrelated archive bytes.
+
+        Candidates acquire their file/lineage pins only when a negative lookup
+        actually needs them. Exact duplicates can therefore finish after one
+        current-byte verification, independent of the same-size population.
+        """
         index = cls()
         if not _WINDOWS_BATCH_PINS or not sizes or not hasattr(db.archive_lock, 'reserve'):
             return index
@@ -158,15 +179,6 @@ class DedupBatch:
                 info = root.stat()
                 index.db, index.root = db, root
                 index.identity = info.st_dev, info.st_ino
-                records = _candidate_rows(db,
-                    [('file_size=?', (size,)) for size in sizes] + [('file_size IS NULL', ())],
-                    limit=_BATCH_PIN_LIMIT, fingerprints=False)
-                for record in records:
-                    _check_reindex_cancelled(cancel)
-                    path = paths.safe_join(root, record['file'])
-                    if path is None:
-                        continue
-                    index.fingerprint(db, record, path, '', cancel, admit_only=True)
             return index
         except BaseException:
             index.close()
@@ -386,6 +398,23 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
             image = _verified_image(db, rec)
             if image is not None:
                 return image
+    # Recorded hashes only select the cheap first tier: actual archived bytes
+    # must still match. A failed/missing/stale hint falls through to the complete
+    # same-size search, including externally changed files with restored mtime.
+    for rec in _image_candidates(db, [('content_sha256=?', (digest,))], cancel_event):
+        _check_reindex_cancelled(cancel_event)
+        if rec['id'] == exclude_id:
+            continue
+        path = paths.safe_join(archive, rec['file'])
+        measured = (_fingerprint_file(path, cancel_event) if cancel_event is not None else
+                    _fingerprint_file(path)) if path is not None else None
+        _check_reindex_cancelled(cancel_event)
+        if measured and measured[:2] == (digest, size):
+            if (rec.get('content_sha256'), rec.get('file_size'), rec.get('file_mtime_ns')) != measured:
+                db.set_image_fingerprint(rec['id'], *measured)
+            image = _verified_image(db, rec)
+            if image is not None:
+                return image
     if dedup_batch is not None:
         candidates = _batch_candidates(db, digest, size, cancel_event)
     else:
@@ -427,29 +456,51 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
 def _dedup_fingerprint(db, path, incoming, cancel_event=None):
     """Avoid rereading unchanged negative candidates; positives are rehashed.
 
-    Only actual byte reads populate this bounded, process-local cache. Stored
-    DB hashes and size/mtime alone never authorize skipping an upload.
+    Only actual byte reads populate this bounded, process-local cache, keyed by
+    durable file versions (POSIX fstat/ctime, or Windows file id, timestamps and
+    change-journal USN). Stored DB hashes and size/mtime alone never authorize
+    skipping an upload.
     Callers serialize it with archive_lock.
     """
+    with pinned_version(path) as version:
+        before = version() if version else None
+        durable = _durable_version(version) if before is not None else None
+        cached = _cached_negative(db, path, durable, incoming)
+        if cached is not None:
+            return cached
+        measured = _fingerprint_file(path, cancel_event) if cancel_event is not None else _fingerprint_file(path)
+        _remember_fingerprint(db, path, durable, measured,
+                              before is not None and version() == before and _durable_version(version) == durable)
+        return measured
+
+
+def _durable_version(version):
+    durable = getattr(version, 'durable', None)
+    return durable() if durable is not None else None
+
+
+def _cached_negative(db, path, durable, incoming):
+    """Reuse an earlier actual read only for a different digest at the same durable version."""
+    cache = getattr(db, '_ingest_fingerprints', None)
+    cached = cache.get(path) if durable is not None and cache else None
+    if cached and cached[0] == durable and cached[1][0] != incoming:
+        cache.move_to_end(path)
+        return cached[1]
+    return None
+
+
+def _remember_fingerprint(db, path, durable, measured, unchanged):
     cache = getattr(db, '_ingest_fingerprints', None)
     if cache is None:
         cache = db._ingest_fingerprints = OrderedDict()
-    with pinned_version(path) as version:
-        before = version() if version else None
-        cached = cache.get(path)
-        if before is not None and cached and cached[0] == before and cached[1][0] != incoming:
+    if durable is not None and measured and unchanged:
+        # Freeze admission at the bound rather than evicting on a full
+        # ascending scan, which would make every subsequent scan thrash.
+        if path in cache or len(cache) < _FINGERPRINT_CACHE_LIMIT:
+            cache[path] = durable, measured
             cache.move_to_end(path)
-            return cached[1]
-        measured = _fingerprint_file(path, cancel_event) if cancel_event is not None else _fingerprint_file(path)
-        if before is not None and measured and version() == before:
-            # Freeze admission at the bound rather than evicting on a full
-            # ascending scan, which would make every subsequent scan thrash.
-            if path in cache or len(cache) < _FINGERPRINT_CACHE_LIMIT:
-                cache[path] = before, measured
-                cache.move_to_end(path)
-        else:
-            cache.pop(path, None)
-        return measured
+    else:
+        cache.pop(path, None)
 
 
 def _known_duplicate(db, archive, digest, size, enforce_root, session_target, frame, dedup_batch=None,

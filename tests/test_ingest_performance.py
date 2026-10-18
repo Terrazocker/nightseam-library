@@ -8,9 +8,116 @@ import pytest
 
 from fastapi.testclient import TestClient
 
-from app import compression, ingest, server
+from app import compression, file_version, ingest, server
 from test_compression import exposure, library, no_stages
 from test_ingest_compression import upload
+from scripts import stress_dedup as stress
+
+
+def durable_versions(directory):
+    """Whether this volume can reuse actual reads across handle lifetimes."""
+    probe = directory / 'durable-probe.bin'
+    probe.write_bytes(b'probe')
+    try:
+        with file_version.pinned_version(probe) as version:
+            return version is not None and version.durable() is not None
+    finally:
+        probe.unlink()
+
+
+def test_exact_duplicate_reads_only_its_original_in_populated_archive(tmp_path, monkeypatch):
+    db = stress.Database(tmp_path / 'catalog.db')
+    archive = tmp_path / 'archive'
+    records = stress.seed(db, archive, 128, 32)
+    monkeypatch.setattr(ingest, '_WINDOWS_BATCH_PINS', True)
+    original, reads = ingest._fingerprint_file, []
+    def measured(path, *args):
+        reads.append(path)
+        assert not db.lock._is_owned()
+        return original(path, *args)
+    monkeypatch.setattr(ingest, '_fingerprint_file', measured)
+    index = ingest.DedupBatch.prepare(db, archive, {records[-1]['file_size']})
+    try:
+        assert not reads and not index.entries and not index.leased
+        with db.archive_lock.for_batch(index):
+            found = ingest._find_duplicate(db, archive, records[-1]['content_sha256'],
+                records[-1]['file_size'], dedup_batch=index)
+        assert found['id'] == records[-1]['id']
+        assert reads == [archive / records[-1]['file']]
+        assert not index.entries and not index.leased
+    finally:
+        index.close()
+
+
+def test_stale_exact_hint_cannot_hide_restored_mtime_duplicate(tmp_path, monkeypatch):
+    db, archive, _ = library(tmp_path, count=2)
+    records = db.images()
+    incoming = exposure(20)
+    digest = hashlib.sha256(incoming).hexdigest()
+    # The earlier row claims the incoming hash but contains other bytes. The
+    # later row was externally changed while retaining its recorded timestamp.
+    db.set_image_fingerprint(records[0]['id'], digest, len(incoming), 1)
+    target = archive / records[1]['file']
+    before = target.stat()
+    target.write_bytes(incoming)
+    os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+    monkeypatch.setattr(ingest, '_WINDOWS_BATCH_PINS', True)
+    index = ingest.DedupBatch.prepare(db, archive, {len(incoming)})
+    try:
+        with db.archive_lock.for_batch(index):
+            found = ingest._find_duplicate(db, archive, digest, len(incoming), dedup_batch=index)
+        assert found['id'] == records[1]['id']
+        assert found['imagetyp'] == records[1]['imagetyp']
+        assert found['file'] == records[1]['file']
+    finally:
+        index.close()
+
+
+def test_admission_hashes_under_one_pin_and_rechecks_new_request_bytes(tmp_path, monkeypatch):
+    db = stress.Database(tmp_path / 'catalog.db')
+    archive = tmp_path / 'archive'
+    record, = stress.seed(db, archive, 1, 1)
+    path = archive / record['file']
+    monkeypatch.setattr(ingest, '_WINDOWS_BATCH_PINS', True)
+    version, fingerprint = ingest.pinned_version, ingest._fingerprint_file
+    opens, reads = [], []
+    @contextmanager
+    def observed_version(candidate):
+        opens.append(candidate)
+        with version(candidate) as current:
+            yield current
+    def observed_hash(candidate, *args):
+        reads.append(candidate)
+        return fingerprint(candidate, *args)
+    monkeypatch.setattr(ingest, 'pinned_version', observed_version)
+    monkeypatch.setattr(ingest, '_fingerprint_file', observed_hash)
+    index = ingest.DedupBatch.prepare(db, archive, {record['file_size']})
+    try:
+        with db.archive_lock.for_batch(index):
+            assert ingest._find_duplicate(db, archive, 'absent', record['file_size'], dedup_batch=index) is None
+            assert opens == reads == [path]
+            # Only the actual read under this pin may seed the process cache.
+            cached = getattr(db, '_ingest_fingerprints', {})
+            assert list(cached) == ([path] if durable_versions(tmp_path) else [])
+            assert ingest._find_duplicate(db, archive, 'another-negative', record['file_size'], dedup_batch=index) is None
+            assert opens == reads == [path]  # The continuously held proof is reused.
+    finally:
+        index.close()
+    before = path.stat()
+    changed = bytearray(path.read_bytes())
+    changed[2888] ^= 1
+    path.write_bytes(changed)
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    digest = hashlib.sha256(changed).hexdigest()
+    index = ingest.DedupBatch.prepare(db, archive, {len(changed)})
+    try:
+        with db.archive_lock.for_batch(index):
+            found = ingest._find_duplicate(db, archive, digest, len(changed), dedup_batch=index)
+            assert found['id'] == record['id'] and opens == reads == [path, path]
+            again = ingest._find_duplicate(db, archive, digest, len(changed), dedup_batch=index)
+            assert again['id'] == record['id'] and reads == [path, path, path]
+    finally:
+        index.close()
 
 
 def test_negative_candidates_use_safe_versions_and_edits_invalidate(tmp_path, monkeypatch):
@@ -23,9 +130,9 @@ def test_negative_candidates_use_safe_versions_and_edits_invalidate(tmp_path, mo
     monkeypatch.setattr(ingest, '_fingerprint_file', measured)
     results = [upload(db, archive, exposure(index), name=f'{index}.fit') for index in range(12)]
     assert all(result['ok'] for result in results)
-    # Windows rehashes between unpinned requests; timestamps alone can collide.
-    # The HTTP batch index below still hashes each continuously pinned file once.
-    assert len(reads) == (66 if os.name == 'nt' else 11)
+    # Without a durable version (no change journal), Windows rehashes between
+    # unpinned requests; timestamps alone can collide.
+    assert len(reads) == (11 if durable_versions(tmp_path) or os.name != 'nt' else 66)
     path = archive / results[0]['stored']
     info = path.stat()
     actual = exposure(40)
@@ -111,7 +218,7 @@ def test_bounded_negative_cache_and_conservative_reads_above_capacity(tmp_path, 
     for index in range(8):
         assert upload(db, archive, exposure(index))['ok']
     assert len(db._ingest_fingerprints) == 3
-    assert len(reads) == (28 if os.name == 'nt' else 13)
+    assert len(reads) == (13 if durable_versions(tmp_path) or os.name != 'nt' else 28)
 
 
 def test_known_compressed_duplicate_does_not_need_encoder(tmp_path, monkeypatch):
@@ -131,18 +238,25 @@ def test_known_compressed_duplicate_does_not_need_encoder(tmp_path, monkeypatch)
 def test_http_batch_checks_earlier_files_once_and_detects_next_request_edits(tmp_path, monkeypatch):
     db, archive, _ = library(tmp_path, count=64)
     previous = {archive / record['file'] for record in db.images()}
-    fingerprint = ingest._dedup_fingerprint
+    fingerprint = ingest._fingerprint_file
     checks = []
-    def measured(db, path, digest, cancel=None):
+    def measured(path, cancel=None):
         if path in previous:
             checks.append(path)
-        return fingerprint(db, path, digest, cancel)
-    monkeypatch.setattr(ingest, '_dedup_fingerprint', measured)
+        return fingerprint(path, cancel)
+    monkeypatch.setattr(ingest, '_fingerprint_file', measured)
+    db._ingest_fingerprints.clear()
     with TestClient(server.create_app(db)) as client:
         result = client.post('/api/images/ingest', files=[
             ('files', (f'new-{index}.fit', exposure(index + 100))) for index in range(24)]).json()['results']
         assert all(item['ok'] for item in result)
         assert len(checks) == 64  # not 64 * 24 per-file metadata inspections
+        # A later request reuses those actual reads while change-journal
+        # versions are unchanged, instead of rereading the same-size archive.
+        result = client.post('/api/images/ingest', files=[
+            ('files', (f'later-{index}.fit', exposure(index + 200))) for index in range(4)]).json()['results']
+        assert all(item['ok'] for item in result)
+        assert len(checks) == (64 if durable_versions(tmp_path) else 128)
         record = db.images()[0]
         path = archive / record['file']
         before = path.stat()
@@ -171,6 +285,9 @@ def test_batch_pins_refuse_writes_and_renames_until_closed(tmp_path):
     path = archive / record['file']
     index = ingest.DedupBatch.prepare(db, archive, {path.stat().st_size})
     try:
+        with db.archive_lock.for_batch(index):
+            assert ingest._find_duplicate(db, archive, 'absent', path.stat().st_size,
+                                         dedup_batch=index) is None
         assert index.entries
         with pytest.raises(PermissionError):
             path.write_bytes(b'blocked external writer')

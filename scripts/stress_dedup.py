@@ -102,7 +102,7 @@ def seed(db, archive, count, files_per_directory, depth=0):
     return records
 
 
-async def cancelled_preparation(db, archive, size, checkpoint):
+async def cancelled_lookup(db, archive, size, checkpoint):
     original = ingest._fingerprint_file
     entered, release, cancel = threading.Event(), threading.Event(), threading.Event()
     reads = 0
@@ -115,7 +115,17 @@ async def cancelled_preparation(db, archive, size, checkpoint):
                 raise RuntimeError('Stress cancellation worker was not released')
         return original(path, *args)
     ingest._fingerprint_file = pause
-    task = asyncio.create_task(ingest._archive_io(ingest.DedupBatch.prepare,
+    def prepare_and_lookup(db, archive, sizes, cancel):
+        index = ingest.DedupBatch.prepare(db, archive, sizes, cancel)
+        try:
+            with db.archive_lock.for_batch(index):
+                ingest._find_duplicate(db, archive, 'absent', size,
+                    dedup_batch=index, cancel_event=cancel)
+            return index
+        except BaseException:
+            index.close()
+            raise
+    task = asyncio.create_task(ingest._archive_io(prepare_and_lookup,
         db, archive, {size}, cancel, on_cancel=lambda index: index.close(), cancel_event=cancel))
     try:
         bench.require(await asyncio.to_thread(entered.wait, 15), 'Cancellation checkpoint was not reached')
@@ -132,8 +142,8 @@ async def cancelled_preparation(db, archive, size, checkpoint):
             pass
         finally:
             ingest._fingerprint_file = original
-    bench.require(cancel.is_set() and reads == checkpoint, 'Cancelled preparation continued hashing')
-    bench.require(available(db), 'Cancelled preparation leaked its archive lease')
+    bench.require(cancel.is_set() and reads == checkpoint, 'Cancelled lookup continued hashing')
+    bench.require(available(db), 'Cancelled lookup leaked its archive lease')
     return {'hash_checkpoint': reads, 'worker_drained': True, 'lease_released': True}
 
 
@@ -174,10 +184,15 @@ def exercise(root, count, cycles=3, files_per_directory=32, depth=0,
             started = time.perf_counter()
             index = ingest.DedupBatch.prepare(db, archive, {size})
             try:
+                bench.require(not index.entries and reads == 0,
+                    'Preparation read unrelated archive bytes')
+                with db.archive_lock.for_batch(index):
+                    bench.require(ingest._find_duplicate(db, archive, 'absent', size,
+                        dedup_batch=index) is None, 'Distinct bytes matched the initial negative probe')
                 held = resources()
                 pinned = min(count, cap)
-                bench.require(len(index.entries) == pinned and reads == pinned,
-                    'Preparation did not hash and pin exactly the bounded candidates')
+                bench.require(len(index.entries) == pinned and reads == count,
+                    'First lookup did not hash all candidates and pin the bounded population')
                 bench.require(held['handles'] - before['handles'] >= pinned,
                     'Expected native file pins were not observed')
                 if os.name == 'nt':
@@ -195,13 +210,13 @@ def exercise(root, count, cycles=3, files_per_directory=32, depth=0,
                     for _ in range(2):
                         bench.require(ingest._find_duplicate(db, archive, 'absent', size,
                             dedup_batch=index) is None, 'Distinct bytes matched a negative probe')
-                    bench.require(reads == pinned + 2 * max(0, count - cap),
+                    bench.require(reads == count + 2 * max(0, count - cap),
                         'Above-cap candidates did not retain fresh fallback hashes')
                     last = records[-1]
                     duplicate = ingest._find_duplicate(db, archive, last['content_sha256'], size,
                         dedup_batch=index)
                     bench.require(duplicate and duplicate['id'] == last['id'], 'Positive duplicate lost identity')
-                    bench.require(reads == pinned + 2 * max(0, count - cap) + 1,
+                    bench.require(reads == count + 2 * max(0, count - cap) + 1,
                         'Positive duplicate was not freshly hashed')
                 live_heap, peak_heap = tracemalloc.get_traced_memory()
                 folders = len(index.folders)
@@ -229,10 +244,10 @@ def exercise(root, count, cycles=3, files_per_directory=32, depth=0,
                 traced_peak_bytes=peak_heap, elapsed_seconds=time.perf_counter() - started))
             print(f'{count} files, cycle {cycle + 1}: {pinned} pinned; {reads} hashes; handles {before["handles"]}/{held["handles"]}/{after["handles"]}', flush=True)
         cancellation_before = resources()
-        cancelled = asyncio.run(cancelled_preparation(db, archive, size, min(32, count, cap)))
+        cancelled = asyncio.run(cancelled_lookup(db, archive, size, min(32, count, cap)))
         gc.collect()
         bench.require(resources()['handles'] <= cancellation_before['handles'] + 2,
-            'Cancelled preparation leaked native handles')
+            'Cancelled lookup leaked native handles')
         final_resources = resources()
         bench.require(final_resources['handles'] <= case_baseline['handles'] + 2,
             f'Repeated requests accumulated native handles: before={case_baseline}, after={final_resources}')

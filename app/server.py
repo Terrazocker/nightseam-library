@@ -42,11 +42,12 @@ log = logging.getLogger(__name__)
 
 
 # per-request upload caps, checked against Content-Length before the body is
-# spooled (ingest: MAX_FILES_PER_REQUEST files, each capped at 1 GiB inside
-# app/ingest.py)
-MAX_FILES_PER_REQUEST = 24
+# spooled. The UI batches by both bytes and count; larger file-count batches
+# amortize archive verification without increasing the previous body/worker
+# budgets. Individual exposures remain capped at 1 GiB in app/ingest.py.
+MAX_FILES_PER_REQUEST = 96
 _MAX_REQUEST_BYTES = {
-    "/api/images/ingest": MAX_FILES_PER_REQUEST * (1 << 30),
+    "/api/images/ingest": 24 * (1 << 30),
 }
 
 
@@ -185,7 +186,7 @@ def create_app(db: Database) -> FastAPI:
     diagnostics.install_error_collector()
     health = ArchiveHealthManager(db)
     compression = CompressionManager(db)
-    ingest_workers = asyncio.Semaphore(max(1, min(MAX_FILES_PER_REQUEST, os.cpu_count() or 1)))
+    ingest_workers = asyncio.Semaphore(max(1, min(24, os.cpu_count() or 1)))
     ingest_admission = asyncio.Lock()
     resolver_lock = threading.Lock()
     resolver_cache = None

@@ -11,7 +11,10 @@ def pinned_version(path):
     Unsupported filesystems and open writers disable caching. POSIX callers
     compare fstat before/after hashing; ctime detects restored mtime there.
     Windows timestamps can collide after rapid writes with restored mtime.
-    Versions may be reused only while the same writer-excluding handle is open.
+    version() may be reused only while the same writer-excluding handle is open.
+    version.durable() compares across handle lifetimes, or returns None. On
+    Windows it requires an active NTFS/ReFS change journal: every closed writer
+    advances the file USN, and journal recreation changes the journal id.
     """
     if os.name != 'nt':
         try:
@@ -26,12 +29,14 @@ def pinned_version(path):
                 if (info.st_dev, info.st_ino) != (current.st_dev, current.st_ino):
                     return None
                 return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+            version.durable = version
             yield version
         finally:
             stream.close()
         return
 
     import ctypes
+    from ctypes import wintypes
     kernel, Basic, Identity, Standard = _windows_api()
 
     # Attribute-only handles do not participate in Windows read/write sharing
@@ -56,6 +61,25 @@ def pinned_version(path):
             if basic.attributes & (0x400 | 0x10) or standard.deleted:
                 return None
             return lifetime, identity.volume, bytes(identity.id), standard.size, basic.written, basic.changed
+
+        def durable():
+            current = version()
+            journal, record, returned = ctypes.create_string_buffer(80), ctypes.create_string_buffer(1024), wintypes.DWORD()
+            # READ_FILE_USN_DATA: accept USN_RECORD_V2 or V3 (128-bit ReFS ids).
+            request = (ctypes.c_ushort * 2)(2, 3)
+            if (current is None or
+                    not kernel.DeviceIoControl(handle, 0x000900f4, None, 0, journal, 80, ctypes.byref(returned), None) or
+                    not kernel.DeviceIoControl(handle, 0x000900eb, request, 4, record, 1024, ctypes.byref(returned), None)):
+                return None
+            major = int.from_bytes(record.raw[4:6], 'little')
+            if major not in (2, 3):
+                return None
+            offset = 24 if major == 2 else 40
+            usn = int.from_bytes(record.raw[offset:offset + 8], 'little', signed=True)
+            if usn <= 0:
+                return None
+            return current[1:] + (journal.raw[:8], usn)
+        version.durable = durable
         yield version
     finally:
         kernel.CloseHandle(handle)
@@ -73,6 +97,8 @@ def _windows_api():
     kernel.GetFileInformationByHandleEx.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
     kernel.GetVolumeInformationByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD,
         ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, wintypes.LPWSTR, wintypes.DWORD]
+    kernel.DeviceIoControl.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+        ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
 
     class Basic(ctypes.Structure):
         _fields_ = [(name, ctypes.c_longlong) for name in ('created', 'accessed', 'written', 'changed')] + [('attributes', wintypes.DWORD)]
