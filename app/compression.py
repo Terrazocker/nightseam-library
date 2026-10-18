@@ -79,22 +79,20 @@ def tools():
 
 def native(executable, flags, source, destination, checkpoint):
     # No shell, source deletion or overwrite flags; output is private staging.
-    # Keep common archive ancestry out of CFITSIO's extended filename parser.
-    # A common cwd also avoids long '..' paths on Windows library copies.
+    # Keep source ancestry out of CFITSIO's extended filename parser. Preserve
+    # absolute outputs normally (long '..' paths can fail on Windows copies).
+    # Only shorten outputs whose archive ancestry contains parser syntax.
     # Popen's cwd never changes the server/worker cwd.
     source, destination = Path(source).absolute(), Path(destination).absolute()
-    try:
-        directory = Path(os.path.commonpath((source.parent, destination.parent)))
-        input_argument = './' + source.relative_to(directory).as_posix()
-        output_argument = destination.relative_to(directory).as_posix()
-    except ValueError:
-        # Library-copy output can be on another Windows drive. Preserve its
-        # absolute path rather than refusing an otherwise supported copy.
-        directory = source.parent
-        input_argument = './' + source.name
-        output_argument = str(destination)
+    output_argument = str(destination)
+    if any(character in output_argument for character in '[]()'):
+        try:
+            output_argument = Path(os.path.relpath(destination, source.parent)).as_posix()
+        except ValueError:
+            # An unrelated Windows drive cannot be addressed relatively.
+            pass
     with subprocess.Popen([str(Path(executable).absolute()), *flags, '-O',
-            output_argument, input_argument], cwd=directory,
+            output_argument, './' + source.name], cwd=source.parent,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)) as process:
         started = time.monotonic()

@@ -54,7 +54,7 @@ def no_stages(db, archive):
     assert db.conn.execute('SELECT COUNT(*) FROM compression_journal').fetchone()[0] == 0
 
 
-@pytest.mark.parametrize('separate_parents', [False, True])
+@pytest.mark.parametrize('separate_parents', [False, True, 'outside_archive'])
 def test_native_rice_roundtrip_under_literal_archive_parent(tmp_path, separate_parents):
     # CFITSIO parses parentheses/brackets in full path arguments as syntax.
     parent = tmp_path / 'archive $(literal); [test] with spaces'
@@ -67,6 +67,9 @@ def test_native_rice_roundtrip_under_literal_archive_parent(tmp_path, separate_p
         packed, restored = (parent / 'backup/staging' / name for name in ('packed.fz', 'restored.fit'))
         source.parent.mkdir(parents=True)
         packed.parent.mkdir(parents=True)
+    if separate_parents == 'outside_archive':
+        packed, restored = (tmp_path / 'backup' / name for name in ('packed.fz', 'restored.fit'))
+        packed.parent.mkdir()
     source.write_bytes(original)
     utilities = compression.tools()
     compression.native(utilities['fpack'], ['-r'], source, packed, lambda: None)
@@ -74,15 +77,15 @@ def test_native_rice_roundtrip_under_literal_archive_parent(tmp_path, separate_p
     assert restored.read_bytes() == source.read_bytes() == original
 
 
-def test_native_preserves_absolute_output_when_volumes_have_no_relative_path(tmp_path, monkeypatch):
+def test_native_plain_output_never_requires_a_relative_path_across_volumes(tmp_path, monkeypatch):
     source, packed, restored = (tmp_path / name for name in ('original.fit', 'packed.fz', 'restored.fit'))
     original = exposure()
     source.write_bytes(original)
     def different_drive(*args):
-        raise ValueError('path is on a different drive')
+        pytest.fail('Ordinary outputs must stay absolute, including across Windows drives')
     utilities = compression.tools()
     with monkeypatch.context() as patch:
-        patch.setattr(compression.os.path, 'commonpath', different_drive)
+        patch.setattr(compression.os.path, 'relpath', different_drive)
         compression.native(utilities['fpack'], ['-r'], source, packed, lambda: None)
         compression.native(utilities['funpack'], ['-C'], packed, restored, lambda: None)
     assert restored.read_bytes() == source.read_bytes() == original
