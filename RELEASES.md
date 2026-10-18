@@ -1,5 +1,26 @@
 # Independent catalog release record
 
+## Streamed import requests — October 18, 2026
+
+/api/images/ingest now parses multipart incrementally and streams each file
+straight into its archive stage, with no temporary spool copy. The UI sends
+options and a file_count before the files, so earlier files publish while later
+ones arrive. Undeclared requests still validate the whole body before
+publishing anything, and options after a file are refused with 400. Worker slots
+are granted in file order once a file's bytes are staged. Without that order, a
+96-file overflow request deadlocked during development.
+
+Validation: the full suite ran 986 passed, 1 failed and 4 skipped in 321.13
+seconds. The failure was the import profiler's counter classification; after
+the fix, profiler and streaming tests passed 13 cases. New streaming tests
+cover publication before the body ends, refusal without publication, disconnect
+cleanup and byte-exact parts at 1-byte to 3 MiB chunk sizes. All 27 packaged
+browser checks passed on 0.1.0-g62ab73a6-dirty, including options-before-files
+order. A packaged 288-file timeline (3×96) took 11.8–12.0 seconds versus 17.6,
+with application writes reduced from 2.3 GB to 1.16 GB. These are single
+warm-cache observations, not throughput guarantees. Evidence is under
+logs/import-slow-20261018/. No release was staged or published.
+
 ## Cross-request dedup reuse on change-journal volumes — October 18, 2026
 
 Windows imports no longer reread every same-size archived exposure for each

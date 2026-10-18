@@ -105,6 +105,10 @@ def desktop_catalog_rice_ingest_chunks(c):
         c.expect(b'name="compress"\r\n\r\ntrue' in body, 'every chunk explicitly requests compression')
         c.expect(b'name="compression_mode"\r\n\r\nsafe' in body, 'every chunk carries the captured Safe choice')
         count = body.count(b'name="files"; filename=')
+        c.expect(body.find(b'name="file_count"\r\n\r\n%d\r\n' % count) != -1 and
+                 body.find(b'name="compression_mode"') < body.find(b'name="files"') and
+                 body.find(b'name="file_count"') < body.find(b'name="files"'),
+                 'options and the declared file count precede the streamed files')
         requests.append(count)
         c.expect(c.page.locator('#compressOnIngest').is_disabled(), 'checkbox locked during upload')
         c.expect(c.page.locator('#ingestSafeMode').is_disabled(), 'mode locked during upload')
@@ -533,10 +537,11 @@ def desktop_catalog_solar_sessions(c):
     response = c.page.request.post(c.url('/api/settings'), data={'observing_site': None})
     c.expect_eq(response.status, 200)
     def upload(stamp, identity, **fields):
+        # Streamed imports require options before the files.
         response = c.page.request.post(c.url('/api/images/ingest'), multipart={
+            **fields,
             'files': {'name': identity + '.fit', 'mimeType': 'application/octet-stream',
-                      'buffer': capture(stamp, identity, 'M42', (40, -74) if fields else None)},
-            **fields})
+                      'buffer': capture(stamp, identity, 'M42', (40, -74) if fields else None)}})
         c.expect_eq(response.status, 200)
         result = response.json()['results'][0]
         c.expect(result['ok'], 'real packaged calibration upload must succeed')

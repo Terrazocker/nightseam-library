@@ -207,14 +207,17 @@ async function ingestFiles(files, frame, session, sessionAnchorId, source = "fil
     let submitted = 0;
     for (const chunk of importChunks(list, batchSize)) {
       submitted += chunk.length;
+      // The server streams parts as they arrive: options and the declared
+      // file count must precede the files so each file can publish once ready.
       const fd = new FormData();
-      for (const f of chunk) fd.append("files", f);
       if (selectedFrame) fd.append("frame", selectedFrame);
       if (session) fd.append("session", session);
       if (sessionAnchorId) fd.append("session_anchor_id", sessionAnchorId);
       fd.append("run_id", runId);
       fd.append("compress", String(compress));
       fd.append("compression_mode", compressionMode);
+      fd.append("file_count", String(chunk.length));
+      for (const f of chunk) fd.append("files", f);
       let res;
       try {
         // FITS batches can take longer than the helper's generic 30s timeout.

@@ -169,9 +169,10 @@ class DedupBatch:
         Candidates acquire their file/lineage pins only when a negative lookup
         actually needs them. Exact duplicates can therefore finish after one
         current-byte verification, independent of the same-size population.
+        `sizes` is None when a streamed request does not know its uploads yet.
         """
         index = cls()
-        if not _WINDOWS_BATCH_PINS or not sizes or not hasattr(db.archive_lock, 'reserve'):
+        if not _WINDOWS_BATCH_PINS or sizes is not None and not sizes or not hasattr(db.archive_lock, 'reserve'):
             return index
         try:
             with _waiting_archive_lock(db, cancel):
@@ -764,11 +765,14 @@ async def ingest_one(db: Database, catalog: list[dict], archive: Path,
                      on_import=None, enforce_archive_root: bool = False,
                      session_target: dict | None = None,
                      compress: bool = False, compression_mode: str = 'safe',
-                     before_publish=None, dedup_batch=None) -> dict:
+                     before_publish=None, dedup_batch=None, workers=None) -> dict:
     """Stream one supported FITS exposure into the archive and record it.
 
-    `f` is a fastapi UploadFile. Only the header block is buffered; the
-    remainder is streamed to disk. Returns a per-file result dict.
+    `f` is a fastapi UploadFile or an upload_stream.StreamedUpload. Only the
+    header block is buffered; the remainder is streamed to disk. `workers`, an
+    asyncio.Semaphore, is acquired only once the bytes are staged: a streamed
+    request's later parts must keep arriving while earlier files wait to publish.
+    Returns a per-file result dict.
     """
     if compression_mode not in ('fast', 'safe'):
         raise ValueError('Compression mode must be fast or safe.')
@@ -786,6 +790,7 @@ async def ingest_one(db: Database, catalog: list[dict], archive: Path,
                 "error": "Unsupported exposure file (SIMPLE header missing)"}
 
     stage = prepared = None
+    working = False
     digest = hashlib.sha256()
     try:
         archive = await _archive_io(archive.resolve)
@@ -794,6 +799,9 @@ async def ingest_one(db: Database, catalog: list[dict], archive: Path,
         if streamed is None:
             return {"file": name, "ok": False,
                     "error": f"file too large (max {MAX_INGEST_BYTES // (1 << 20)} MB)"}
+        if workers is not None:
+            await workers.acquire()
+            working = True
         try:
             storage_info = {}
             hdr = await _archive_io(fits_metadata.read_metadata, stage, storage_info=storage_info)
@@ -864,10 +872,14 @@ async def ingest_one(db: Database, catalog: list[dict], archive: Path,
         return {"file": name, "ok": False,
                 "error": f"could not write to the archive: {exc.strerror or exc}"}
     finally:
-        if prepared is not None:
-            await _archive_io(_discard_prepared, prepared)
-        if stage is not None:
-            await _archive_io(_remove_stage, stage)
+        try:
+            if prepared is not None:
+                await _archive_io(_discard_prepared, prepared)
+            if stage is not None:
+                await _archive_io(_remove_stage, stage)
+        finally:
+            if working:
+                workers.release()
 
 
 def _discard_prepared(prepared):
@@ -1158,11 +1170,13 @@ async def _stream_to(archive: Path, target: Path, f, first_chunk: bytes,
         if digest is not None:
             digest.update(chunk)
 
+    # Streamed uploads hand over whole received chunks without joining copies.
+    read = getattr(f, "read1", None) or f.read
     out = await _archive_io(target.open, "wb", on_cancel=lambda stream: stream.close())
     try:
         await _archive_io(write_chunk, out, first_chunk)
         while True:
-            chunk = await f.read(_COPY_CHUNK)
+            chunk = await read(_COPY_CHUNK)
             if not chunk:
                 break
             total += len(chunk)

@@ -230,6 +230,15 @@ def instrument(measurements):
                 context.__exit__(None, None, None)
     ingest.pinned_version = measured_pin
     ingest.DedupBatch.fingerprint = measurements.wrap('batch_candidate', ingest.DedupBatch.fingerprint)
+    # Streamed uploads hash in per-chunk workers outside any phase; classify
+    # their digest at the stream boundary instead of by thread-local phase.
+    stream_to = ingest._stream_to
+    async def streamed(archive, target, f, first_chunk, digest=None):
+        if isinstance(digest, CountingHash) and digest.category is None:
+            digest.category = 'incoming'
+            measurements.add(incoming_sha256_streams=1)
+        return await stream_to(archive, target, f, first_chunk, digest)
+    ingest._stream_to = streamed
     paths.safe_join = measurements.wrap('safe_archive_join', paths.safe_join)
     archive_trash._contained = measurements.wrap('archive_containment', archive_trash._contained)
     negative = ingest.DedupBatch.negative

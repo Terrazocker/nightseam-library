@@ -43,6 +43,17 @@ and full-byte deduplication path; source relative paths never become destination
 paths. The UI sends at most 96 files per ordinary request, or 24 with compression,
 and at most 512 MiB per batch unless a larger single file needs its own request.
 The server retains its 1 GiB per-file, 24 GiB body and 24-worker ceilings.
+/api/images/ingest parses multipart incrementally (app/upload_stream.py): each
+file part streams with bounded buffering straight into its own archive stage
+while it is hashed, so bytes are never spooled to a temporary copy first.
+Option fields must precede the files; a later option is refused with 400. With
+a leading file_count (the UI always sends one), files publish as soon as they
+are ready while later parts still arrive. Without it, publication waits until
+the whole body has arrived and passed validation, so a refused request (late
+option, too many files, malformed body) publishes nothing. A disconnect or
+refusal stops further publication; files already published remain, as with
+any interrupted request. Worker slots are granted in file order after a file's
+bytes are staged, so later parts keep arriving while earlier files publish.
 A request-scoped DedupBatch pins up to 4,096 earlier
 same-size files and their directory lineage, validating their negative hashes
 once per batch. Preparation captures only root identity; existing and newly
@@ -351,11 +362,12 @@ real populated SQLite catalogs with synthetic filesystem work. The existing
 integrity_snapshot list API remains for compatibility; in-memory databases keep
 that API but cannot supply an independent file-backed health snapshot.
 
-Upload streams, hashing, header matching and optional Rice preparation run in
-bounded workers (up to CPU count, at most 24) outside archive_lock. Original and
+Upload streams and hashing run as parts arrive; header matching and optional
+Rice preparation run in bounded workers (up to CPU count, at most 24) outside
+archive_lock. Original and
 packed stages stay private until their ordered publication turn. One failed SQL
 write stops all later publication in that request; cancellation drains every
-worker before cleaning staging or releasing multipart sources. Publication,
+worker before cleaning staging or abandoning unread multipart parts. Publication,
 duplicate/restoration decisions and commits retain archive_lock. Missing-file
 representation recovery remains strictly verified. Resolver snapshots persist
 across requests until catalog table triggers or SQLite data_version invalidate

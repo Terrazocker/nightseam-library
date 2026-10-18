@@ -1,5 +1,20 @@
 # Current NightSeam Catalog findings
 
+## Import alternates between upload and processing — October 18, 2026 (mitigated)
+
+Disk activity during import came in bursts with long idle gaps. Each request was
+fully received and spooled to temporary files before processing began, and each
+batch was sent only after the previous response, so the two CPU-bound phases
+(about three seconds each per 96 files) never overlapped. Every byte was written
+twice and read back once. The ingest route now streams multipart parts straight
+into archive stages. With the UI's declared file count, earlier files publish
+while later ones arrive. A packaged 288-file timeline (3×96, 4 MB exposures)
+fell from 17.6 to 11.8–12.0 seconds and from 2.3 GB to 1.16 GB of application
+writes. Remaining: receiving now competes with per-file metadata/dedup/commit
+work for Python's GIL (about 140 MB/s per request here). Each publication also
+scans every same-size catalog row in Python, which grows with the archive.
+Windows' write-back cache still flushes in bursts by design.
+
 ## Every import request rereads the same-size archive on Windows — October 18, 2026 (mitigated)
 
 Proving an upload is not a duplicate requires current bytes of every same-size
