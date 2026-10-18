@@ -329,11 +329,24 @@ def group_library(images: list[dict], catalog: list[dict]) -> list[dict]:
         g["images"].append(im)
 
     objects = []
-    rows = normalize_catalog(catalog)
+    # Scan catalog IDs once, retaining only requested rows. Stop early for a
+    # small current library, and avoid alias indexes unless an old ID vanished.
+    # First-row precedence is shared with CatalogResolver and the old _by_id.
+    missing_ids = {g['object_id'] for g in by_key.values() if g['object_id']}
+    row_by_id = {}
+    rows = normalize_catalog(catalog) if missing_ids else []
+    for row in rows:
+        identifier = row['id']
+        if identifier in missing_ids:
+            row_by_id[identifier] = row
+            missing_ids.remove(identifier)
+            if not missing_ids:
+                break
+    resolver = None
     for g in by_key.values():
         row = None
         if g["object_id"]:
-            row = _by_id(rows, g["object_id"])
+            row = row_by_id.get(g["object_id"])
             if row is None:
                 # A stored id can vanish when the CATALOG changes (the curated
                 # list was replaced by OpenNGC ids: an old capture resolved to
@@ -343,8 +356,10 @@ def group_library(images: list[dict], catalog: list[dict]) -> list[dict]:
                 # "Unknown object". A capture that was never resolved
                 # (object_id is None) stays unresolved: that is user intent.
                 first = g["images"][0]
-                row = resolve_object(rows, first.get("object_name"),
-                                     first.get("ra_hours"), first.get("dec_deg"))
+                if resolver is None:
+                    resolver = CatalogResolver(rows)
+                row = resolver.resolve(first.get("object_name"),
+                                       first.get("ra_hours"), first.get("dec_deg"))
         if row:
             g["name"] = row["primary_name"] or g["object_id"]
             g["designation"] = designation_of(row, g["images"][0])

@@ -1,5 +1,31 @@
 # Independent catalog release record
 
+## Large library response performance — October 18, 2026
+
+Library grouping now uses one scan for requested catalog IDs, a single lazy
+fallback resolver for obsolete IDs, and no catalog normalization for an empty
+or intentionally unresolved-only library. Duplicate catalog IDs retain
+first-row precedence; obsolete IDs are resolved only for display, and stored
+image IDs/metadata and session membership are preserved. Indexes stay local to
+each request's catalog snapshot. Library JSON conversion/rendering now occurs
+in the route worker with the existing FastAPI encoding semantics.
+
+All four new regressions failed before the fixes. The focused library/API
+run passed 148 tests. A real HTTP test now serves catalog.html while library
+JSON rendering is deliberately held and verifies Unicode, fingerprint exclusion
+and equality with JSON export. The final encoding-preservation rerun is retained
+under logs/library-final-focused.log.
+
+The repeatable synthetic benchmark against commit 78e6a55 used a 12,000-row
+catalog and three alternating-order samples per implementation, requiring exact
+output equality. Median grouping time for 1,000 current objects was 164.2 ms
+before and 24.4 ms after; 64 obsolete IDs took 3.476 s before and 56.1 ms after.
+Four current objects took 4.36/4.14 ms; unresolved-only and empty cases also
+improved. These are local grouping observations with uncontrolled CPU/cache
+conditions, not HTTP throughput, physical IO or packaged application speedup
+claims. scripts/bench_library_grouping.py records samples and implementation
+hashes; final CI/source/package outcomes are retained in the draft PR.
+
 ## Offline Linux runtime acceptance — October 18, 2026
 
 Added a non-root runtime-only Docker gate for the unchanged Linux tarball on

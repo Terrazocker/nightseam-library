@@ -237,6 +237,22 @@ before the fix. FITS utility subprocesses now use the validated source parent
 as their own cwd and relative staging arguments, keeping that ancestry out of
 the parser while leaving the server cwd and shell behavior unchanged.
 
+## Large library grouping and response stalls — October 18, 2026 (fixed)
+
+Library grouping rescanned the complete catalog for each stored object ID and
+rebuilt the alias resolver for every obsolete ID. Regression fixtures observed
+820 ID reads for 40 current groups and 13 resolver constructions for 13 obsolete
+groups. Grouping now scans catalog IDs once, retaining only requested rows and
+stopping early when all current IDs are found. One lazy per-call resolver
+handles obsolete IDs; intentionally unresolved groups remain unresolved.
+
+The synchronous library route also returned a raw dictionary. FastAPI walked
+and rendered its nested JSON on the event loop after the worker returned,
+blocking unrelated HTTP requests during encoding. The route now performs the
+same jsonable_encoder/JSONResponse conversion inside its worker. A real-socket
+regression held encoding and reproduced a blocked catalog request before the
+fix; after the fix the catalog responds while encoding remains held.
+
 ## Acceptance still open
 
 - Linux minimal offline systems now have a dedicated runtime gate; real
