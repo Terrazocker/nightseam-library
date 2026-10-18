@@ -111,6 +111,20 @@ def build_linux():
     print(json.dumps(binaries))
 
 
+def trim_build_paths(data):
+    # MSVC embeds assert() __FILE__ as an absolute path, which would publish the
+    # builder's checkout location. Make it source-relative and NUL-pad it to the
+    # same length so no other byte moves; refuse any remaining build-root path.
+    prefix = (str(WORK / 'sources') + '\\').encode()
+    while (start := data.find(prefix)) >= 0:
+        end = data.index(b'\0', start)
+        relative = data[start + len(prefix):end]
+        data = data[:start] + relative + b'\0' * (end - start - len(relative)) + data[end:]
+    if str(ROOT).encode().lower() in data.lower():
+        raise RuntimeError('A built FITS utility still embeds the local build path.')
+    return data
+
+
 def main():
     if platform.machine().lower() not in ('amd64', 'x86_64'):
         raise RuntimeError('FITS tool builds support x64 hosts only.')
@@ -152,7 +166,7 @@ def main():
     binaries = {}
     for name in ('fpack', 'funpack'):
         target = OUT / (name + '.exe')
-        shutil.copyfile(WORK / 'cfitsio-build' / target.name, target)
+        target.write_bytes(trim_build_paths((WORK / 'cfitsio-build' / target.name).read_bytes()))
         binaries[target.name] = {'sha256': hashlib.sha256(target.read_bytes()).hexdigest(),
             'version': subprocess.check_output([str(target), '-V'], text=True).strip()}
     # Distribute the upstream notices verbatim alongside the utilities.
