@@ -1,5 +1,20 @@
 # Independent catalog release record
 
+## Binary integrity baseline handling — October 18, 2026
+
+Quick and Deep health checks now treat a non-text integrity hash as no_baseline
+rather than aborting the complete scan with TypeError. SQLite permits BLOBs in
+the legacy TEXT column. The check does not decode, trust or rewrite those bytes;
+healthy records continue to be checked, and invalid baselines cannot use the
+accept_contents acknowledgement.
+
+All four new API cases failed before the guard. The focused health/snapshot/spool
+suite then passed 86 tests with one Windows-only skip on Linux. Coverage includes
+matching ASCII digest bytes and non-UTF8 BLOBs in both modes, unchanged source
+rows/exposures, public JSON serialization, acknowledgement refusal and complete
+scratch/lock cleanup. Source release validation passed with zero errors.
+The final local full suite passed 965 tests with 9 skips in 213.77 seconds.
+
 ## Native lifecycle startup and close observation — October 18, 2026
 
 The compact-spool Windows run passed 962 source tests, 24 browser checks and

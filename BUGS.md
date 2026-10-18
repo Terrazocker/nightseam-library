@@ -1,5 +1,15 @@
 # Current NightSeam Catalog findings
 
+## Binary integrity baseline aborts health scans — October 18, 2026 (fixed)
+
+SQLite TEXT affinity permits a BLOB in image_integrity.sha256. A nonempty BLOB
+reached the text hash pattern and raised TypeError, aborting both Quick and Deep
+scans before subsequent healthy records. Health now requires a textual SHA-256
+baseline; a binary value produces the existing no_baseline finding. It is not
+coerced or accepted, and the stored bytes remain unchanged. API regressions cover
+ASCII digest and non-UTF8 BLOBs, continued healthy checking, acknowledgement
+refusal, read-only results, scratch cleanup and released archive locks.
+
 ## Native lifecycle close observation — October 18, 2026 (fixed in harness)
 
 Run 39124675987 passed source/browser/native checks but required HWND destruction

@@ -265,7 +265,7 @@ def scan_archive(db, mode, cancel, publish):
             try:
                 info, observed = _inspect(root, relative, identity, mode == "deep", checkpoint, read_progress)
                 expected = rec.get("expected_sha256") or ""
-                if not _SHA256.fullmatch(expected):
+                if not isinstance(expected, str) or not _SHA256.fullmatch(expected):
                     finding("no_baseline", relative, "No recorded integrity hash is available for comparison.", rec, observed_sha256=observed)
                 elif mode == "deep":
                     if observed == expected:
