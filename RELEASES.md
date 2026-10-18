@@ -16,7 +16,11 @@ browser handoff restores the system library environment, with tests for missing
 xdg-open, literal arguments and unchanged Windows behavior. The new Rice check
 then found CFITSIO filename parsing failures under archive paths with parentheses
 and brackets; the native regression reproduced the failure before the fix.
-Utility subprocess cwd/relative arguments now avoid parsing archive ancestry.
+Utility subprocess cwd/relative arguments now avoid parsing common ancestry.
+The first Windows CI run caught a library-copy regression from long relative
+paths beginning with several parent traversals. Using the common source/output
+ancestor as the child cwd keeps those paths short; different-drive outputs
+retain their original absolute paths.
 
 The local frozen development bundle passed the complete offline runtime gate on
 all three OS images, including the literal archive parent and native Rice byte

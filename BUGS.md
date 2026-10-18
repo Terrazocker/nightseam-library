@@ -233,7 +233,7 @@ through an owned launcher capture, without modifying the server environment.
 
 CFITSIO treated parentheses/brackets in archive ancestry as extended filename
 syntax and refused Rice conversion. A real native round-trip regression failed
-before the fix. FITS utility subprocesses now use the validated source parent
+before the fix. FITS utility subprocesses now use the common validated ancestry
 as their own cwd and relative staging arguments, keeping that ancestry out of
 the parser while leaving the server cwd and shell behavior unchanged.
 
