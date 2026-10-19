@@ -609,8 +609,6 @@ def _selected_session_actions(c):
     c.page.route("**/api/images/ingest", import_calibration)
     c.page.route("**/api/library/open_folder", open_folder)
     c.goto()
-    if c.target == "desktop":
-        c.page.locator('#tabs [data-tab="image-catalog"]').click()
     c.page.locator('#librarySessions tr.library-session').first.wait_for()
     c.expect_eq(c.page.locator('#btnTopIngest').inner_text().strip(), "Import",
                 "the primary action must use plain Import wording")
@@ -662,11 +660,6 @@ def _selected_session_actions(c):
 
 @check("desktop-catalog-selected-session-actions", "catalog")
 def desktop_catalog_selected_session_actions(c):
-    _selected_session_actions(c)
-
-
-@check("desktop-planner-selected-session-actions", "desktop")
-def desktop_planner_selected_session_actions(c):
     _selected_session_actions(c)
 
 
@@ -733,8 +726,6 @@ def _active_object_workspace(c):
     c.page.route("**/api/settings", save_units)
     c.page.set_viewport_size({"width": 1586, "height": 900})
     c.goto()
-    if c.target == "desktop":
-        c.page.locator('#tabs [data-tab="image-catalog"]').click()
     c.page.locator('#libraryObjectList [data-library-object]').first.wait_for()
     c.expect_eq(c.page.locator('#libraryArchiveTools, #libraryObjectTotals, #libraryTable').count(), 0,
                 "the old global disclosure and duplicate object table must be removed")
@@ -797,40 +788,33 @@ def _active_object_workspace(c):
         _expect_catalog_bounds(c, c.page, '.library-layout')
         unit.scroll_into_view_if_needed()
         c.expect(unit.is_visible(), "inline unit switching must remain reachable at narrow widths")
-        if c.target == 'catalog':
-            c.expect_eq(c.page.locator('#topbar img, #topbar .catalog-logo').count(), 0,
-                        "the compact catalog toolbar must omit the logo")
-            c.expect(c.page.locator('#topbar').bounding_box()['height'] <= 52,
-                     "the catalog toolbar must fit its controls without an oversized brand row")
+        c.expect_eq(c.page.locator('#topbar img, #topbar .catalog-logo').count(), 0,
+                    "the compact catalog toolbar must omit the logo")
+        c.expect(c.page.locator('#topbar').bounding_box()['height'] <= 52,
+                 "the catalog toolbar must fit its controls without an oversized brand row")
         c.page.screenshot(path=str(c.artifacts / f'{c.target}-active-object-{width}.png'))
-    if c.target == 'catalog':
-        # DejaVu's wider metrics reproduce the Ubuntu 22.04 toolbar wrap even
-        # when the controller's default system font happens to be narrower.
-        c.page.set_viewport_size({'width': 900, 'height': 800})
-        fallback = c.page.add_style_tag(content='body.catalog-only { --font-ui: "DejaVu Sans", system-ui, sans-serif; }')
-        try:
-            _settle_catalog_layout(c.page)
-            c.expect(c.page.locator('#topbar').bounding_box()['height'] <= 52,
-                     'wider system fonts must retain the compact toolbar')
-            c.expect(c.page.locator('#btnTopIngest span').is_visible(), 'primary Import label remains visible')
-            for label in ('Copy library', 'Download support report'):
-                button = c.page.get_by_role('button', name=label, exact=True)
-                c.expect(button.is_visible() and button.is_enabled(), 'secondary actions remain named and reachable')
-            c.expect_eq(c.page.evaluate('getComputedStyle(document.documentElement).fontSize'), '14px',
-                        'font fallback must not change interface density')
-            c.page.screenshot(path=str(c.artifacts / 'catalog-toolbar-wide-system-font.png'))
-        finally:
-            fallback.evaluate('(node) => node.remove()')
+    # DejaVu's wider metrics reproduce the Ubuntu 22.04 toolbar wrap even
+    # when the controller's default system font happens to be narrower.
+    c.page.set_viewport_size({'width': 900, 'height': 800})
+    fallback = c.page.add_style_tag(content='body.catalog-only { --font-ui: "DejaVu Sans", system-ui, sans-serif; }')
+    try:
+        _settle_catalog_layout(c.page)
+        c.expect(c.page.locator('#topbar').bounding_box()['height'] <= 52,
+                 'wider system fonts must retain the compact toolbar')
+        c.expect(c.page.locator('#btnTopIngest span').is_visible(), 'primary Import label remains visible')
+        for label in ('Copy library', 'Download support report'):
+            button = c.page.get_by_role('button', name=label, exact=True)
+            c.expect(button.is_visible() and button.is_enabled(), 'secondary actions remain named and reachable')
+        c.expect_eq(c.page.evaluate('getComputedStyle(document.documentElement).fontSize'), '14px',
+                    'font fallback must not change interface density')
+        c.page.screenshot(path=str(c.artifacts / 'catalog-toolbar-wide-system-font.png'))
+    finally:
+        fallback.evaluate('(node) => node.remove()')
     c.assert_clean()
 
 
 @check("desktop-catalog-library-active-object", "catalog")
 def desktop_catalog_library_active_object(c):
-    _active_object_workspace(c)
-
-
-@check("desktop-planner-library-active-object", "desktop")
-def desktop_planner_library_active_object(c):
     _active_object_workspace(c)
 
 
@@ -958,47 +942,6 @@ def _expect_host_owned_chrome(c, page):
           /^(minimize|maximize|restore|close) window$/i.test(label.trim());
       }).map(node => node.id || node.className || node.tagName)""")
     c.expect(not controls, f"window chrome must belong to the host: {controls}")
-
-
-@check("desktop-planner-archive-selection-and-folder-picker", "desktop")
-def desktop_planner_archive_selection_and_folder_picker(c):
-    c.page.add_init_script("""(() => {
-      window.__ns_picker_calls = 0;
-      window.pywebview = {api: {
-        async host_capabilities() {
-          return {window_chrome: 'native', native_folder_picker: false};
-        },
-        async pick_archive_dir() { window.__ns_picker_calls++; return null; },
-      }};
-    })();""")
-    c.page.route("**/api/library", lambda route: route.fulfill(json={
-        "image_dir": "", "total_images": 1, "total_exposure": 300,
-        "objects": [{"object_id": None, "name": "Archive test field",
-                     "otype": "nebula", "ra_hours": 6, "dec_deg": 0,
-                     "n_images": 1, "n_sessions": 1, "total_exposure": 300,
-                     "images": [], "sessions": []}]}))
-    c.goto()
-    c.page.locator("#tabs [data-tab='image-catalog']").click()
-    c.page.locator("#libraryObjectList [data-library-object]").wait_for()
-    c.page.locator("#catalog-tab-skymap").click()
-    canvas = c.page.locator("#skymapCanvas")
-    canvas.focus()
-    c.page.wait_for_function("() => document.querySelector('#skymapChartSummary').textContent.includes('1 library objects')")
-    c.expect_eq(canvas.get_attribute("role"), "application",
-                "the interactive map must allow its keyboard commands to reach the canvas")
-    canvas.press("Home")
-    canvas.press("Enter")
-    c.page.locator("#skymapSelectionContent .library-map-name").filter(
-        has_text="Archive test field").wait_for()
-    c.expect_in("Home or End", c.page.locator("#skymapChartSummary").inner_text(),
-                "the chart must describe its keyboard interaction")
-    c.page.locator("#catalog-tab-import").click()
-    c.page.locator("#btnArcBrowse").click()
-    c.page.wait_for_function("() => window.__ns_picker_calls === 1")
-    c.expect(not c.page.locator("#toasts .toast").filter(
-        has_text="Folder dialog is only available").count(),
-        "the planner must use an available native picker bridge")
-    c.expect(not c.page_errors, f"planner archive interactions must not throw: {c.page_errors}")
 
 
 @check("desktop-catalog-import-progress", "catalog")

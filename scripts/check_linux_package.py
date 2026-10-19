@@ -101,7 +101,7 @@ def run(bundle, output):
         version = subprocess.check_output([str(executable), '--version'], cwd=scratch,
             env=environment, timeout=30, text=True).strip()
         bench.require(version == 'NightSeam ' + manifest['version'], 'Frozen version bake differs')
-        server = bench.harness.DesktopServer(executable, seed=False, restricted_runtime=True)
+        server = bench.harness.DesktopServer(executable, restricted_runtime=True)
         server.start(timeout=60)
         archive = server.tmp / 'archive'
         database = server.tmp / 'data/nightseam.db'

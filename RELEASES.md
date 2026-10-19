@@ -1,5 +1,27 @@
 # Independent catalog release record
 
+## Retired planner harness and stylesheet rules — October 19, 2026
+
+The browser harness keeps only the packaged catalog target. Removed: the
+unreachable `desktop` target (it launched the executable with the retired
+--planner flag, and its three planner checks never ran), the `web` target
+and production CSP smoke for the separate website, the Tonight wait helpers,
+and DesktopServer's `seed` option, whose default posted to the removed
+/api/sites route. Callers no longer pass seed=False. style.css and themes.css
+drop 523 and 87 selectors that can never match catalog.html: their ids or
+classes appear in neither the page nor any static/js module, or they require
+a body without catalog-only. Mixed selector lists keep their live entries.
+
+Validation: tinycss2 parses both stylesheets without errors, and the surviving
+(media context, selector, declarations) sequence equals the original minus the
+removed selectors, in the same order. On Linux with Python 3.12 and the Linux
+build lock, the full suite ran 995 passed and 9 skipped in 310.68 seconds;
+scripts/check_js.py passed. A marked development bundle
+(0.1.0-g0bde027f-dirty, scripts/build_linux.py --allow-dirty) passed all 27
+packaged browser checks with Chromium 141 (`check_browser.py --desktop
+--channel chromium`). Windows was not run here. No release was staged or
+published.
+
 ## Retired-feature comments — October 19, 2026
 
 Comments and help text no longer describe retired planner features as

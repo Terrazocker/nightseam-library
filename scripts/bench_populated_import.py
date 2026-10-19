@@ -117,7 +117,7 @@ def workload_digest(manifest, sources):
 
 class PopulatedServer(bench.harness.DesktopServer):
     def __init__(self, exe, small_count, large_count):
-        super().__init__(exe, seed=False, native=True, debug_port=bench.harness.free_port(), restricted_runtime=True)
+        super().__init__(exe, native=True, debug_port=bench.harness.free_port(), restricted_runtime=True)
         self.small_count, self.large_count = small_count, large_count
 
     def _start(self, timeout):

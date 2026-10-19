@@ -29,6 +29,6 @@ def main():
         for name,target,_ in harness.all_checks():
             if target=="catalog": print(f"{target:7s} {name}")
         return 0
-    return run_gate(channel=args.channel,targets=("catalog",),exe=Path(args.exe),only=args.only,headed=args.headed,prod_url=None)
+    return run_gate(channel=args.channel,targets=("catalog",),exe=Path(args.exe),only=args.only,headed=args.headed)
 
 if __name__=="__main__": raise SystemExit(main())
