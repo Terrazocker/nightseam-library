@@ -206,7 +206,7 @@ def run(args):
         'controller_python': platform.python_version(), 'child_developer_path_removed': True,
         'clean_windows_vm': False, 'network_denial_tested': False}
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    server = harness.DesktopServer(args.exe, seed=False, restricted_runtime=True)
+    server = harness.DesktopServer(args.exe, restricted_runtime=True)
     try:
         server.start(timeout=60)
         required = int(args.count * FILE_BYTES * 2.5)
@@ -217,7 +217,7 @@ def run(args):
             report['import'] = benchmark(client, server.tmp / 'archive',
                 server.tmp / 'data/nightseam.db', sources, args.batch_size)
         server.stop()
-        server = harness.DesktopServer(args.exe, seed=False, restricted_runtime=True)
+        server = harness.DesktopServer(args.exe, restricted_runtime=True)
         server.start(timeout=60)
         with httpx.Client(base_url=server.base, trust_env=False, timeout=120) as client:
             report['restricted_runtime_rice'] = rice_smoke(client, server.tmp / 'archive')

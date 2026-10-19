@@ -305,7 +305,7 @@ def child(root, port, seed_count=0):
 
 class SourceServer(harness.DesktopServer):
     def __init__(self, stderr_log=None, seed_count=0):
-        super().__init__(ROOT / 'main.py', seed=False)
+        super().__init__(ROOT / 'main.py')
         self.stderr_log = stderr_log or ROOT / 'logs/import-profile-child-stderr.log'
         self.seed_count = seed_count
 

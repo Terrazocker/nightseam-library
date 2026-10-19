@@ -75,8 +75,7 @@ html[data-theme="workbench"] textarea {
   border-radius: 4px;
 }
 html[data-theme="workbench"] #topbar button:hover,
-html[data-theme="workbench"] button:hover,
-html[data-theme="workbench"] .btnlink:hover {
+html[data-theme="workbench"] button:hover {
   filter: none;
   border-color: var(--accent);
   color: var(--accent);
@@ -87,15 +86,9 @@ html[data-theme="workbench"] form button[type=submit] {
   border-color: var(--accent);
   color: var(--accent-ink);
 }
-html[data-theme="workbench"] .nightinfo { color: var(--dim); }
-html[data-theme="workbench"] .nightinfo b { color: var(--text); }
+
 html[data-theme="workbench"] .scrub { border-left-color: var(--border); }
-html[data-theme="workbench"] .popover {
-  background: var(--panel);
-  border-color: var(--border);
-  border-radius: 6px;
-  box-shadow: 0 16px 34px rgba(0,0,0,.42);
-}
+
 html[data-theme="workbench"] .menu-section { border-bottom-color: var(--border-soft); }
 html[data-theme="workbench"] #tabs,
 html[data-theme="workbench"] #catalogTabs {
@@ -139,10 +132,9 @@ html[data-theme="workbench"] #catalogTabs .tab.active {
 html[data-theme="workbench"] .tabpane {
   padding: 14px 16px 32px;
 }
-html[data-theme="workbench"] .cards { gap: 10px; }
+
 html[data-theme="workbench"] .card,
 html[data-theme="workbench"] .chart-side,
-html[data-theme="workbench"] #panoPanel,
 html[data-theme="workbench"] .archpanel {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -164,28 +156,13 @@ html[data-theme="workbench"] .pick:hover {
   background: var(--raised);
   border-color: var(--accent);
 }
-html[data-theme="workbench"] .pick-thumb { border-radius: 3px; }
+
 html[data-theme="workbench"] .pick .win { color: var(--accent); }
 html[data-theme="workbench"] .pick.blocked { border-left-color: var(--bad); }
 html[data-theme="workbench"] .pick.low { border-left-color: var(--warn); }
-html[data-theme="workbench"] #tab-tonight.active {
-  display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(280px, .8fr);
-  gap: 0 14px;
-}
-html[data-theme="workbench"] #tab-tonight #tonightCards,
-html[data-theme="workbench"] #tab-tonight #nowHeading,
-html[data-theme="workbench"] #tab-tonight #nightBrief {
-  grid-column: 1 / -1;
-}
-html[data-theme="workbench"] #tab-tonight #topPicks { grid-column: 1; }
-html[data-theme="workbench"] #tab-tonight > h3:nth-of-type(2),
-html[data-theme="workbench"] #tab-tonight #laterList { grid-column: 2; }
-html[data-theme="workbench"] #tab-tonight > h3:nth-of-type(2) { align-self: end; }
+
 html[data-theme="workbench"] .chart-layout { gap: 12px; }
-html[data-theme="workbench"] #skyCanvas,
-html[data-theme="workbench"] #skymapCanvas,
-html[data-theme="workbench"] #panoStage {
+html[data-theme="workbench"] #skymapCanvas {
   border-radius: 5px;
   box-shadow: none;
 }
@@ -196,9 +173,7 @@ html[data-theme="workbench"] .tablewrap {
   border-radius: 6px;
   box-shadow: none;
 }
-html[data-theme="workbench"] table.cat th { color: var(--dim); }
-html[data-theme="workbench"] table.cat td { border-bottom-color: var(--border-soft); }
-html[data-theme="workbench"] table.cat tbody tr:hover { background: rgba(249,200,93,.08); }
+
 html[data-theme="workbench"] .chip {
   background: var(--raised);
   border-color: var(--border);
@@ -209,8 +184,7 @@ html[data-theme="workbench"] .chip.on {
   border-color: var(--accent);
   color: var(--accent-ink);
 }
-html[data-theme="workbench"] .btnlink,
-html[data-theme="workbench"] .pager button { border-radius: 4px; }
+
 html[data-theme="workbench"] .modal {
   background: rgba(8,10,10,.76);
   backdrop-filter: none;
@@ -221,33 +195,16 @@ html[data-theme="workbench"] .modal-box {
   border-radius: 6px;
   box-shadow: 0 20px 50px rgba(0,0,0,.5);
 }
-html[data-theme="workbench"] .modal-box header,
-html[data-theme="workbench"] .modal-tabs {
+html[data-theme="workbench"] .modal-box header {
   background: var(--panel);
   border-bottom-color: var(--border);
 }
-html[data-theme="workbench"] #detailModal {
-  justify-content: flex-end;
-  align-items: stretch;
-}
-html[data-theme="workbench"] #detailModal .modal-box {
-  width: min(680px, 100vw);
-  height: 100%;
-  max-height: none;
-  border-width: 0 0 0 1px;
-  border-radius: 0;
-  margin: 0;
-}
-html[data-theme="workbench"] #dImage { border-radius: 4px; }
+
 html[data-theme="workbench"] .toast { border-radius: 4px; }
 html[data-theme="workbench"] .lgchip { border-radius: 4px; }
 html[data-theme="workbench"] ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
 html[data-theme="workbench"] ::-webkit-scrollbar-track { background: var(--bg); }
 @media (max-width: 900px){
-html[data-theme="workbench"] #tab-tonight.active {
-    display: block;
-  }
-html[data-theme="workbench"] #tab-tonight #laterList { margin-bottom: 12px; }
 html[data-theme="workbench"] .tabpane { padding: 16px 10px 34px; }
 }
 html[data-theme="workbench"] {
@@ -324,13 +281,10 @@ html[data-theme="workbench"] {
   --viz-moon-glow-blur: 0;
   --viz-label-shadow-blur: 2;
 }
-html[data-theme="workbench"] #skyCanvas,
 html[data-theme="workbench"] #skymapCanvas {
   background: var(--viz-sky-surface);
 }
-html[data-theme="workbench"] #altChart {
-  background: var(--viz-graph-surface);
-}
+
 html[data-theme="workbench"] #tabs {
   position: relative;
   inset: auto;
@@ -356,75 +310,18 @@ html[data-theme="workbench"] #catalogTabs {
   max-width: 100%;
   margin: 0 0 10px;
 }
-html[data-theme="workbench"] .tonight-overview,
-html[data-theme="workbench"] .catalog-filter-rail,
-html[data-theme="workbench"] .catalog-results,
 html[data-theme="workbench"] .ingest-results {
   border-color: var(--border);
   background: var(--panel);
 }
-html[data-theme="workbench"] .catalog-filter-rail { border-radius: 4px; }
-html[data-theme="workbench"] .catalog-results { padding: 0; }
-html[data-theme="workbench"] .tonight-overview { border-radius: 4px; }
-html[data-theme="workbench"] .series-key { border-radius: 3px; }
-html[data-theme="workbench"] .series-key:hover { color: var(--text); background: var(--raised); }
+
 html[data-theme="workbench"] .chart-side .menu-section { border-color: var(--border); }
 html[data-theme="workbench"] .archpanel,
 html[data-theme="workbench"] .ingest-results { border-radius: 4px; }
-html[data-theme="workbench"] #detailModal.detail-docked {
-  position: fixed;
-  inset: 96px var(--edge-space, 16px) 12px auto;
-  display: block;
-  width: var(--inspector-width, 360px);
-  padding: 0;
-  z-index: 39;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  backdrop-filter: none;
-  pointer-events: none;
-  overflow: visible;
-}
-html[data-theme="workbench"] #detailModal.detail-docked .modal-box {
-  width: 100%;
-  height: 100%;
-  max-height: none;
-  margin: 0;
-  padding: 0 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--panel);
-  box-shadow: none;
-  pointer-events: auto;
-}
-html[data-theme="workbench"] #detailModal.detail-docked .modal-box header {
-  position: sticky;
-  top: 0;
-  padding: 10px 0 8px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-}
-html[data-theme="workbench"] body.detail-open main {
-  padding-right: calc(var(--inspector-width, 360px) + var(--edge-space, 16px) + 12px);
-}
-html[data-theme="workbench"] body.detail-open[data-primary-view="targets"] {
-  --inspector-width: min(35vw, 560px);
-}
-html[data-theme="workbench"] body.detail-open[data-primary-view="sky"] {
-  --inspector-width: min(37vw, 620px);
-}
-html[data-theme="workbench"] body.detail-open main .tabpane {
-  padding-right: 0;
-}
-@media (max-width: 1240px){
-html[data-theme="workbench"] #detailModal.detail-docked { width: min(32vw, 400px); }
-html[data-theme="workbench"] body.detail-open main {
-    padding-right: calc(min(32vw, 400px) + var(--edge-space, 16px) + 12px);
-  }
-}
+
 @media (max-width: 900px){
 html[data-theme="workbench"] main { padding-right: 10px; }
-html[data-theme="workbench"] body.detail-open main { padding-right: 10px; }
+
 html[data-theme="workbench"] .tabpane { padding-right: 0; padding-left: 0; }
 }
 html[data-theme="workbench"] #topbar {
@@ -433,54 +330,13 @@ html[data-theme="workbench"] #topbar {
   flex-wrap: nowrap;
 }
 html[data-theme="workbench"] .controls { flex-wrap: nowrap; min-width: 0; }
-html[data-theme="workbench"] #tab-tonight.active { display: block; }
-html[data-theme="workbench"] #tab-tonight #nightBrief,
-html[data-theme="workbench"] #tab-tonight #tonightCards,
-html[data-theme="workbench"] #tab-tonight #nowHeading,
-html[data-theme="workbench"] #tab-tonight #topPicks,
-html[data-theme="workbench"] #tab-tonight #laterList {
-  grid-column: auto;
-  align-self: auto;
-}
+
 @media (max-width: 900px){
 html[data-theme="workbench"] #topbar {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-rows: auto auto;
   }
   html[data-theme="workbench"] .controls { flex-wrap: wrap; }
-}
-
-/* Source Library uses the space after its real planner and catalog chrome. */
-@media (min-width: 901px) {
-  body.image-catalog-view:not(.catalog-only):has(#tab-library.active) {
-    display: flex;
-    flex-direction: column;
-    height: 100dvh;
-  }
-  body.image-catalog-view:not(.catalog-only):has(#tab-library.active) > #topbar,
-  body.image-catalog-view:not(.catalog-only):has(#tab-library.active) > #tabs { flex: none; }
-  body.image-catalog-view:not(.catalog-only):has(#tab-library.active) > main {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: auto;
-  }
-  html[data-theme="workbench"] body.image-catalog-view:not(.catalog-only):has(#tab-library.active) #tab-image-catalog.active {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-    padding-bottom: 16px;
-  }
-  body.image-catalog-view:not(.catalog-only):has(#tab-library.active) #catalogTabs { flex: none; }
-  body.image-catalog-view:not(.catalog-only) #tab-library.active {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-  }
-  body.image-catalog-view:not(.catalog-only) .library-layout { flex: 1 1 auto; min-height: 0; height: auto; }
 }
 
 /* Packaged Image Catalog: stable 14px density, independent of viewport size.
@@ -873,8 +729,7 @@ body.catalog-only #dropZone .large-outline-icon {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-body.catalog-only #btnIngest,
-body.catalog-only #btnLibraryIngest {
+body.catalog-only #btnIngest {
   min-height: 3.7143rem;
   padding: .55rem 1.3rem;
   border: max(1px, .07143rem) solid var(--accent);
@@ -920,7 +775,6 @@ body.catalog-only .ingest-toolbar h2,
 body.catalog-only .recent-import-card > h2,
 body.catalog-only .library-sessions-heading h2,
 body.catalog-only .selected-session-heading h2,
-body.catalog-only .library-import-dock h2,
 body.catalog-only .chart-side h2,
 body.catalog-only #skymapSelection > h2 {
   margin: 0;
@@ -1087,25 +941,7 @@ body.catalog-only .library-object {
   text-align: left;
 }
 body.catalog-only .library-object small { font-size: .85rem; }
-body.catalog-only .library-all-objects {
-  flex: none;
-  margin-top: .6rem;
-}
-body.catalog-only .library-all-objects > summary { font-size: .9rem; }
-body.catalog-only .library-all-objects > .skytoolbar,
-body.catalog-only .library-all-objects > .tablewrap { margin: .6rem; }
-body.catalog-only .library-all-objects .archstats .stat { padding: .5rem; }
-body.catalog-only #libraryTable {
-  width: 100%;
-  min-width: 45rem;
-  border-collapse: collapse;
-}
-body.catalog-only #libraryTable th,
-body.catalog-only #libraryTable td {
-  padding: .4rem .55rem;
-  border-bottom: max(1px, .07143rem) solid var(--border-soft);
-  white-space: nowrap;
-}
+
 body.catalog-only .library-workspace {
   display: flex;
   flex-direction: column;
@@ -1230,53 +1066,10 @@ body.catalog-only .selected-session-empty .empty-icon { width: 72px; height: 80p
 @media (min-width: 1280px) and (min-height: 850px) {
   body.catalog-only .selected-session-empty { padding-top: 100px; }
 }
-body.catalog-only #libraryObjectTotals { flex: none; margin-top: .7rem; }
-body.catalog-only #libraryObjectTotals > summary {
-  padding: .5rem 0;
-  border-top: max(1px, .07143rem) solid var(--border);
-  color: var(--dim);
-  cursor: pointer;
-}
+
 body.catalog-only .library-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 body.catalog-only .library-session-actions { flex: none; margin-top: .5rem; }
-body.catalog-only .library-import-dock {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  min-width: 0;
-  min-height: 0;
-  padding: 1.0714rem 1.1429rem;
-  gap: .0714rem;
-  border: max(1px, .07143rem) solid var(--border);
-  border-radius: .4286rem;
-  background: var(--panel);
-}
-body.catalog-only .library-import-dock h2 { margin: 0; }
-body.catalog-only #libraryDropZone {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: .55rem;
-  min-height: 0;
-  padding: .8rem .65rem .5rem;
-  border: max(1px, .07143rem) dashed var(--border2);
-  border-radius: .4286rem;
-  background: transparent;
-}
-body.catalog-only #libraryDropZone #btnLibraryIngest { width: 18.5714rem; }
-body.catalog-only #libraryDropZone .hint { color: var(--dim); font-size: 1.0714rem; }
-/* Compact docks retain their action and drop hint without squeezing the group. */
-@media (max-height: 900px), (max-width: 1279px) {
-  body.catalog-only .library-import-dock { padding: 10px 16px; }
-  body.catalog-only #libraryDropZone { flex-direction: row; gap: 16px; padding: 6px; }
-  body.catalog-only #libraryDropZone #btnLibraryIngest { min-height: 44px; }
-}
-@media (max-width: 620px) {
-  body.catalog-only #libraryDropZone { flex-direction: column; gap: 4px; padding: 4px; }
-}
+
 body.catalog-only .library-map-name { margin: .5rem 0 0; color: var(--text); font-size: 1.1rem; font-weight: 650; }
 body.catalog-only .library-map-facts { display: grid; gap: .3rem; margin: .7rem 0 0; }
 body.catalog-only .library-map-facts > div {
@@ -1501,7 +1294,7 @@ body.catalog-only .selected-map-empty .empty-icon { width: 4.5714rem; height: 4.
   body.catalog-only .library-workspace { grid-column: 2; grid-row: 1; order: 0; }
   body.catalog-only .library-session-rail { grid-column: 2; grid-row: 2; order: 0; }
   body.catalog-only #librarySessionDetail { flex: 1 1 auto; }
-  body.catalog-only .library-import-dock { grid-column: 1 / -1; grid-row: 3; order: 0; }
+
   body.catalog-only .selected-session-empty { flex-direction: row; gap: 14px; padding: 8px; }
   body.catalog-only .selected-session-empty .empty-icon { width: 36px; height: 44px; margin: 0; }
   body.catalog-only .selected-session-empty p { margin: 0; text-align: left; }
@@ -1536,8 +1329,7 @@ body.catalog-only .selected-map-empty .empty-icon { width: 4.5714rem; height: 4.
   }
   body.catalog-only .library-object-rail,
   body.catalog-only .library-workspace,
-  body.catalog-only .library-session-rail,
-  body.catalog-only .library-import-dock { grid-column: 1; grid-row: auto; height: auto; }
+  body.catalog-only .library-session-rail { grid-column: 1; grid-row: auto; height: auto; }
   body.catalog-only .library-object-rail {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -1548,10 +1340,8 @@ body.catalog-only .selected-map-empty .empty-icon { width: 4.5714rem; height: 4.
   body.catalog-only #libraryObjectsToggle { display: block; }
   body.catalog-only .library-search-field { grid-column: 1 / -1; margin: 0; }
   body.catalog-only .library-list-sort { grid-column: 1 / -1; margin: 0; }
-  body.catalog-only .library-object-list,
-  body.catalog-only .library-all-objects { grid-column: 1 / -1; max-height: 240px; }
-  body.catalog-only .library-object-rail:not(.objects-expanded) .library-object-list,
-  body.catalog-only .library-object-rail:not(.objects-expanded) .library-all-objects { display: none; }
+  body.catalog-only .library-object-list { grid-column: 1 / -1; max-height: 240px; }
+  body.catalog-only .library-object-rail:not(.objects-expanded) .library-object-list { display: none; }
   body.catalog-only .objects-empty-state { min-height: 0; padding: 14px; }
   body.catalog-only .objects-empty-state .empty-icon { width: 36px; height: 32px; margin-bottom: 8px; }
   body.catalog-only .library-workspace { min-height: 280px; }

@@ -100,14 +100,14 @@ def test_desktop_start_failure_removes_its_private_scratch(tmp_path, monkeypatch
 @pytest.mark.parametrize("accept_archive", [False, True])
 @pytest.mark.parametrize("native", [False, True])
 @pytest.mark.parametrize("restricted_runtime", [False, True])
-def test_browser_start_requires_private_archive_even_without_seed(tmp_path, monkeypatch, accept_archive, native, restricted_runtime):
+def test_browser_start_requires_private_archive(tmp_path, monkeypatch, accept_archive, native, restricted_runtime):
     exe = tmp_path / "candidate.exe"
     exe.write_bytes(b"private fake executable")
     scratch = tmp_path / "browser"
     monkeypatch.setattr(harness, "SCRATCH", scratch)
     monkeypatch.setenv('PYTHONPATH', str(tmp_path / 'developer-packages'))
     monkeypatch.setenv('NODE_PATH', str(tmp_path / 'developer-node'))
-    server = harness.DesktopServer(exe, seed=False, native=native, debug_port=43210,
+    server = harness.DesktopServer(exe, native=native, debug_port=43210,
                                    restricted_runtime=restricted_runtime)
     calls, trees = [], []
 

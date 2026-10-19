@@ -9,17 +9,17 @@ from pathlib import Path
 
 _DRIVE_RE = re.compile(r"^[A-Za-z]:")
 
-# Opaque record ids (panorama ids, custom-object ids). Some routes interpolate
-# an id into a FILE NAME, so an id must never be able to act as a path.
+# Opaque record ids (custom-object ids). An id that could reach a FILE NAME
+# must never be able to act as a path.
 TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
 def safe_token(value) -> str | None:
     """Canonical opaque id, or None when it could act as a path.
 
-    Some routes interpolate an id into a FILE NAME, so an id must never be able
-    to act as one. Ids are stored and compared, never interpreted: anything
-    outside [A-Za-z0-9_-] is refused. (Kept for stored-data validation and
+    An id that could reach a FILE NAME must never be able to act as one. Ids
+    are stored and compared, never interpreted: anything outside
+    [A-Za-z0-9_-] is refused. (Kept for stored-data validation and
     tests; the panorama routes that motivated SP-05 are retired.)
     """
     if value is None:
@@ -79,9 +79,9 @@ def avoid_windows_device(part: str) -> str:
 def safe_rel(rel) -> str | None:
     """Canonicalize an *untrusted* relative path, or return None when unsafe.
 
-    Used for every path that arrives from stored/imported JSON (a setup ZIP's
-    `panoramas[].file` / `images[].file`), so a crafted backup can never plant
-    a value that a later read/delete/export resolves outside its folder.
+    Used for every stored or derived archive path (image records' `file`,
+    archive targets, selected-session anchors), so a stored value can never
+    resolve outside its folder on a later read, move or export.
 
     Rejects: absolute POSIX paths, UNC paths, Windows drive-absolute
     ("C:/x") and drive-relative ("C:x") paths, any `..` segment, NUL bytes,
@@ -164,7 +164,7 @@ def data_dir() -> Path:
 
 
 def window_placement_path() -> Path:
-    """Machine-local window geometry, kept out of setup backups and the DB."""
+    """Machine-local window geometry (LOCALAPPDATA when set), kept out of the DB."""
     local_app_data = os.environ.get("LOCALAPPDATA")
     root = (Path(local_app_data) / "NightSeam" if local_app_data else
             data_dir())

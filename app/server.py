@@ -73,10 +73,10 @@ def _same_origin_request(request) -> bool:
     """False for browser requests that provably come from another origin.
 
     A local port is not protected by CORS for "simple" requests, so without
-    this check any website the user visits could call /api/shutdown or another
-    state-changing endpoint. `Sec-Fetch-Site` is sent by current browsers and
-    `Origin` accompanies cross-origin requests; non-browser clients (PowerShell,
-    curl, TestClient) send neither and stay allowed."""
+    this check any website the user visits could call /api/library/edit or
+    another state-changing endpoint. `Sec-Fetch-Site` is sent by current
+    browsers and `Origin` accompanies cross-origin requests; non-browser
+    clients (PowerShell, curl, TestClient) send neither and stay allowed."""
     site = (request.headers.get("sec-fetch-site") or "").strip().lower()
     if site and site not in ("same-origin", "none"):
         return False

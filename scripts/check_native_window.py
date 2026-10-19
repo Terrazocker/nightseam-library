@@ -196,7 +196,7 @@ def run(executable, restricted_runtime=False):
     from playwright.sync_api import sync_playwright
     artifacts = harness.ARTIFACTS
     artifacts.mkdir(parents=True, exist_ok=True)
-    server = harness.DesktopServer(executable, seed=False, native=True,
+    server = harness.DesktopServer(executable, native=True,
         debug_port=harness.free_port(), restricted_runtime=restricted_runtime)
     windows = None
     checks = []

@@ -120,7 +120,7 @@ def audit(database, archive, expected):
 
 def run(executable, output):
     require(os.name == 'nt', 'Windows is required; no packaged lifecycle checks executed')
-    server = harness.DesktopServer(executable, seed=False, native=True, restricted_runtime=True,
+    server = harness.DesktopServer(executable, native=True, restricted_runtime=True,
                                    debug_port=harness.free_port())
     with executable.open('rb') as stream:
         executable_digest = hashlib.file_digest(stream, 'sha256').hexdigest()
