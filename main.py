@@ -276,7 +276,7 @@ def launch_app_window(url: str) -> bool:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="NightSeam - image archive and DSO planning tool")
+        description="NightSeam Catalog - local astrophotography exposure archive")
     ap.add_argument("--version", action="version",
                     version=f"NightSeam {app_version()}")
     ap.add_argument("--port", type=int, default=8407)

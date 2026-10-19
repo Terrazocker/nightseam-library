@@ -58,8 +58,7 @@ def _never_touch_the_user_profile(monkeypatch, tmp_path):
     monkeypatch.setattr("app.paths.window_placement_path", _sandbox_placement)
 
     def _sandbox_data() -> Path:
-        # mirror paths.data_dir(): the writers assume <data>/panos exists
-        (sandbox / "panos").mkdir(parents=True, exist_ok=True)
+        sandbox.mkdir(parents=True, exist_ok=True)
         return sandbox
 
     for target in ("app.paths.data_dir", "app.server.data_dir"):

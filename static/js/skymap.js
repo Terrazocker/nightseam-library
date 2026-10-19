@@ -1,6 +1,6 @@
 /* Static sky map: whole-sky RA/Dec chart of the ingested image library.
-   Unlike the planner's Sky View this chart never moves - objects sit at
-   their catalog/header coordinates and dots scale with capture-session count. */
+   The chart never moves - objects sit at their catalog/header coordinates
+   and dots scale with capture-session count. */
 
 import { $, clamp, esc, TYPE_COLOR, TYPE_LABEL } from "./util.js";
 import { S } from "./state.js";
@@ -78,8 +78,8 @@ export function renderSkyMap() {
 
 function drawSkyMap() {
   const cv = $("#skymapCanvas");
-  // The packaged catalog has a dedicated plot cell with axes; the source-run
-  // planner shell places its canvas directly in the map wrapper.
+  // catalog.html has a dedicated plot cell with axes; the wrapper is only a
+  // fallback for a page without one.
   const plot = $("#skymapPlot") || $("#skymapWrap");
   if (!cv || !plot || !plot.clientWidth || !plot.clientHeight) return;
   // Marker/label density stays in CSS pixels; only the backing bitmap uses DPR.
@@ -531,8 +531,8 @@ export function bindSkyMap() {
     });
   }
 
-  // The source planner retains its existing chart lifecycle. The standalone
-  // catalog owns one observer and one scheduler for every geometry invalidation.
+  // The catalog page (body.catalog-only) owns one observer and one scheduler
+  // for every geometry invalidation; any other page redraws directly.
   if (!document.body.classList.contains("catalog-only")) return;
   const plot = $("#skymapPlot");
   const observer = plot && typeof ResizeObserver === "function"

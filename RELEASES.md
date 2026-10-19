@@ -1,5 +1,17 @@
 # Independent catalog release record
 
+## Retired-feature comments — October 19, 2026
+
+Comments and help text no longer describe retired planner features as
+current: the /api/shutdown example, setup-ZIP and panorama path sources, the
+planner Sky View and shell, and the "DSO planning tool" --help description.
+The test sandbox no longer creates an unused data/panos folder. No behavior
+changed.
+
+Validation: on Linux with Python 3.12 and the Linux build lock, the full suite
+ran 995 passed and 9 skipped in 306.63 seconds; scripts/check_js.py passed.
+No release was staged or published.
+
 ## Storable archive names for device and control-character inputs — October 19, 2026
 
 Imports whose unresolved OBJECT or filename is a Windows device name (NUL,
