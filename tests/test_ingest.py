@@ -249,6 +249,13 @@ def test_obj_slug_keeps_safe_chars():
     assert obj_slug("M42!?") == "M42"
 
 
+def test_obj_slug_avoids_windows_device_names():
+    assert obj_slug("NUL") == "NUL_"
+    assert obj_slug("Com1!") == "Com1_"
+    assert obj_slug("Aux.") == "Aux_"
+    assert obj_slug("CONE Nebula") == "CONE Nebula"
+
+
 def test_obj_slug_empty_falls_back():
     assert obj_slug("") == "misc"
     assert obj_slug("///") == "misc"

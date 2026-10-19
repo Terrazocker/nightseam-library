@@ -1,5 +1,19 @@
 # Independent catalog release record
 
+## Storable archive names for device and control-character inputs — October 19, 2026
+
+Imports whose unresolved OBJECT or filename is a Windows device name (NUL,
+COM1, con.fits) or whose raw filename carries a control character now store
+under safe names (NUL_, con_.fits, ctl_name.fits) instead of being published
+and then refused by safe_rel. The original upload name is kept.
+
+Validation: on Linux with Python 3.12 and the Linux build lock, the full suite
+ran 995 passed and 9 skipped (Windows-only and missing local popularity data)
+in 339.54 seconds; scripts/check_js.py passed. The 13 new path, slug and HTTP
+ingest cases failed before the change and pass after it. Windows tests,
+packaged builds and browser gates were not run here. No release was staged or
+published.
+
 ## Streamed import requests — October 18, 2026
 
 /api/images/ingest now parses multipart incrementally and streams each file

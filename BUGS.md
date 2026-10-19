@@ -1,5 +1,17 @@
 # Current NightSeam Catalog findings
 
+## Device and control-character archive names refused imports — October 19, 2026 (fixed)
+
+An unresolved FITS OBJECT such as NUL or COM1, an upload named con.fits or
+aux.light.fit, or a raw multipart filename carrying a control character produced
+an archive path that safe_rel rejects. The exposure was published, then removed
+and reported as an invalid archive filename; only empty session folders
+remained. On Windows such a name can address a device instead of a file. Object
+folders and file stems now append `_` to a device name (NUL_, con_.fits) and
+replace control characters with `_`; the original upload name stays in
+orig_name. Folders an earlier refusal left empty are not removed. Windows
+device behavior itself was not exercised on real hardware.
+
 ## Import alternates between upload and processing — October 18, 2026 (mitigated)
 
 Disk activity during import came in bursts with long idle gaps. Each request was

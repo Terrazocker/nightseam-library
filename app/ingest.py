@@ -596,7 +596,8 @@ def _promote_stage(stage: Path, target: Path) -> None:
 
 
 def obj_slug(object_name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9 _-]+", "", object_name).strip() or "misc"
+    slug = re.sub(r"[^A-Za-z0-9 _-]+", "", object_name).strip() or "misc"
+    return paths.avoid_windows_device(slug)
 
 
 FRAME_TYPES = {          # normalized IMAGETYP -> archive subfolder
@@ -749,7 +750,9 @@ def _archive_target(archive: Path, name: str, slug: str,
     """Unique destination <archive>/<slug>/<session>/<frames>/<stem>..."""
     stem, suffix = fits_metadata.filename_parts(name)
     suffix = suffix or ".fit"
-    stem = (stem or "image")[:80]
+    # Stored paths must pass safe_rel: no control characters or device names.
+    stem = re.sub(r"[\x00-\x1f\x7f]", "_", stem or "image")[:80]
+    stem = paths.avoid_windows_device(stem)
     sub = session / FRAME_TYPES.get(frame, "lights")
     sub.mkdir(parents=True, exist_ok=True)
     for t in FRAME_TYPES.values():      # keep all four frame folders beside it
