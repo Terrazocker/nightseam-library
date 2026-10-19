@@ -58,8 +58,22 @@ def _segment_ok(part: str) -> bool:
         return False
     if not part.strip(". "):
         return False
-    stem = part.split(".", 1)[0].lower()
-    return stem not in _WINDOWS_DEVICES
+    return not is_windows_device(part)
+
+
+def is_windows_device(part: str) -> bool:
+    """True when Windows would address a device for this segment (NUL, con.fits)."""
+    return part.split(".", 1)[0].lower() in _WINDOWS_DEVICES
+
+
+def avoid_windows_device(part: str) -> str:
+    """`part`, with `_` after its leading name when that name is a device.
+
+    Archive names derived from FITS metadata or upload filenames must pass
+    `safe_rel`; `NUL` becomes `NUL_` and `con.fits` becomes `con_.fits`.
+    """
+    head, dot, rest = part.partition(".")
+    return f"{head}_{dot}{rest}" if is_windows_device(part) else part
 
 
 def safe_rel(rel) -> str | None:

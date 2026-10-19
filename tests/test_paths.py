@@ -9,7 +9,7 @@ of the target folder.
 
 import pytest
 
-from app.paths import safe_join, safe_rel
+from app.paths import avoid_windows_device, safe_join, safe_rel
 
 
 @pytest.mark.parametrize("value", [
@@ -97,3 +97,17 @@ def test_safe_join_rejects_symlink_escape(tmp_path):
     # the textual path is harmless ("link/secret.txt") but resolves outside
     assert safe_rel("link/secret.txt") == "link/secret.txt"
     assert safe_join(root, "link/secret.txt") is None
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("NUL", "NUL_"),
+    ("com1", "com1_"),
+    ("con.fits", "con_.fits"),
+    ("aux.light.fit", "aux_.light.fit"),
+    ("M 31", "M 31"),
+    ("console.fits", "console.fits"),
+    ("nul_.fits", "nul_.fits"),
+])
+def test_avoid_windows_device_produces_storable_segments(value, expected):
+    assert avoid_windows_device(value) == expected
+    assert safe_rel(expected) == expected

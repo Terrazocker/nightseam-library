@@ -95,6 +95,47 @@ def test_retired_sky_brightness_setting_is_ignored(client):
 # and the derive engines - plus the frozen fixtures under tests/fixtures/.
 
 
+@pytest.mark.parametrize("obj,filename,stored", [
+    ("NUL", "light.fits", "NUL_/{session}/lights/light.fits"),
+    ("COM1", "light.fits", "COM1_/{session}/lights/light.fits"),
+    ("Plain", "con.fits", "Plain/{session}/lights/con_.fits"),
+    ("Plain", "aux.light.fit", "Plain/{session}/lights/aux_.light.fit"),
+])
+def test_ingest_stores_device_and_control_names_safely(client, obj, filename, stored):
+    """Windows device names in OBJECT or the filename, and control characters in
+    the filename, used to be published and then refused by safe_rel. They are
+    stored under safe names instead, keeping the original upload name."""
+    from pathlib import Path
+
+    payload = make_fits([("SIMPLE", "T"), ("OBJECT", f"'{obj}'"), ("EXPTIME", "60.0"),
+                         ("DATE-OBS", "'2026-08-22T22:00:00'"),
+                         ("SITELAT", "50.0383"), ("SITELONG", "7.81667")])
+    r = client.post("/api/images/ingest", files=[
+        ("files", (filename, payload, "application/octet-stream"))])
+    result = r.json()["results"][0]
+    assert result["ok"], result
+    session = result["stored"].split("/")[1]
+    assert result["stored"] == stored.format(session=session)
+    image_dir = Path(client.get("/api/state").json()["image_dir"])
+    assert (image_dir / result["stored"]).read_bytes() == payload
+
+
+def test_ingest_replaces_control_characters_in_raw_filenames(client):
+    """A raw multipart filename can carry a control character that clients
+    usually escape; the archive name replaces it and keeps the original name."""
+    body = (b'--B\r\nContent-Disposition: form-data; name="file_count"\r\n\r\n1\r\n'
+            b'--B\r\nContent-Disposition: form-data; name="files"; '
+            b'filename="ctl\x01name.fits"\r\n'
+            b'Content-Type: application/octet-stream\r\n\r\n'
+            + unresolved_fits() + b'\r\n--B--\r\n')
+    r = client.post("/api/images/ingest", content=body,
+                    headers={"content-type": "multipart/form-data; boundary=B"})
+    result = r.json()["results"][0]
+    assert result["ok"], result
+    assert result["file"] == "ctl\x01name.fits"
+    assert result["stored"].endswith("/lights/ctl_name.fits")
+
+
 def test_library_edit_database_failure_undoes_the_disk_move(client, db, monkeypatch):
     """F-22: if the database update fails AFTER the folder move completed, the
     move is undone - the files are back where the unchanged rows point."""
