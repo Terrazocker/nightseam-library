@@ -35,7 +35,7 @@ Whole-file SHA-256 identity prevents duplicate imports across names and folders.
 Reindex reports unsupported archive layouts rather than populating a broken UI.
 Each object's Night session runs from sunset to sunrise; Day runs from sunrise
 to sunset at the FITS observing location. Files without location can use a known
-fallback in Import Exposures. Missing or unreliable metadata remains visibly
+fallback in Import › Archive settings. Missing or unreliable metadata remains visibly
 unresolved. Reindex refreshes existing membership without moving exposure files.
 
 Source data lives in `data/`; packaged data lives in `dist/data/` beside the

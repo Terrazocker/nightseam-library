@@ -1,5 +1,5 @@
 /* Manual session Rice conversion and portable library copies. */
-import { $, api } from "./util.js";
+import { $, api, restoreFocus } from "./util.js";
 import { beginCompression, loadLibrary } from "./archive.js";
 
 let selection = null, job = null, release = null, timer = null, opener = null;
@@ -159,7 +159,7 @@ function close() {
   ++openRequest;
   $("#compressionModal").classList.add("hidden");
   inertState.forEach(([element, inert]) => { element.inert = inert; });
-  (opener?.isConnected && !opener.disabled ? opener : $("#btnTopCopy"))?.focus();
+  restoreFocus(opener, $("#btnTools"));
 }
 
 async function start() {

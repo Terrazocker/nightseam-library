@@ -2,7 +2,7 @@
 
 ## Compress automatically during import
 
-In **Import Exposures**, check **Compress on import with lossless Rice** before
+In **Import**, check **Compress on import with lossless Rice** before
 selecting or dropping files. The option starts unchecked and stays selected in
 that application window, including when attaching calibration frames. It applies
 to the whole import action; you cannot change it halfway through upload chunks.
@@ -73,7 +73,7 @@ temporary space while originals remain retained.
 
 ## Make a one-time library copy
 
-Choose **Copy library**, select an existing destination folder, then start.
+Choose **Tools › Copy library**, select an existing destination folder, then start.
 A new folder contains individual usable FITS under `images/`, `nightseam.db`
 with catalog metadata, and `manifest.json` with hashes and provenance. Supported
 integer FITS use Rice with the dialog's independent Fast/Safe policy; existing Rice and
@@ -86,23 +86,26 @@ copied catalog's archive location to its new `images` folder before using it.
 
 ## Import now
 
-1. Open **Import Exposures**.
-2. Check the **Archive folder**. Use **Browse...** in the native window or type
-   a path, then **Save** when changing it. This is the destination for copies.
-3. Use **Import exposures...**, the toolbar's **Import**, or drop FITS exposures
-   into the drop area. **Import folder...** searches the selected folder and all
+1. Open the **Import** tab.
+2. Check the destination shown under the drop area (**Copied to …**). To change
+   it, choose **Change** or scroll to **Archive settings**, use **Browse…** in
+   the native window or type a path, then **Save**.
+3. Leave **Frame type** on **Auto** to read each exposure's header, or choose a
+   type to override it for the next import.
+4. Use **Choose files…**, the header's **Import**, or drop FITS exposures into
+   the drop area. **Choose folder…** searches the selected folder and all
    its subfolders for supported exposures, ignoring other files. Existing
    exposures are checked by complete contents and skipped even if renamed;
    different contents with the same filename are imported separately.
    Supported names are `.fit`, `.fits`, `.fts`, tiled `.fz`
    (including `.fits.fz`), and their `.gz` wrappers. Originals stay in their
    original location; imported copies preserve the complete original bytes.
-4. Watch **files processed / total** and **elapsed time**. Counts advance after
+5. Watch **files processed / total** and **elapsed time**. Counts advance after
    each batch returns: up to 96 files normally, or 24 with compression enabled.
    Batches also stay within 512 MiB, except that a larger individual exposure
    is sent alone (the per-file limit is 1 GiB). Elapsed time keeps updating during
    a batch. A failure counter appears when a returned file result fails.
-5. Review **Import results**, then open **Library** to inspect the objects and
+6. Review **Import results**, then open **Library** to inspect the objects and
    capture sessions. Final progress remains visible until another import or
    **Clear**. If a request fails, the UI distinguishes unconfirmed file outcomes
    from files that were never attempted. Repeating an uncertain batch is safe:
@@ -207,7 +210,7 @@ when viewed from the wrong root.
 ## Add calibration exposures to a session
 
 Select an object and capture session in Library, then use **+ Darks**, **+ Flats**
-or **+ Bias**. The exposure picker opens and Import Exposures identifies the
+or **+ Bias** under **Add calibration frames**. The exposure picker opens and Import identifies the
 target. These actions force the chosen frame type and attach new exposures to
 that object and logical session. Missing object metadata or a different capture
 date does not send calibration exposures to another session. Undated sessions
@@ -226,7 +229,7 @@ existing association; selecting a different session does not move it.
 
 ## Archive health
 
-Open **Archive health** in the toolbar. **Quick check** inspects availability,
+Open **Tools › Archive health** in the header. **Quick check** inspects availability,
 paths, readability, sizes and modification times. It also discovers unindexed
 supported FITS files, including compressed exposures. Unchanged metadata does
 not verify contents. **Deep
@@ -283,7 +286,7 @@ stored-byte verification. Exposure previews remain retired.
 
 ## Export and duplicate handling
 
-**Export library** writes the full library's metadata as CSV. The separate
+**Tools › Export library** writes the full library's metadata as CSV. The separate
 object export and format strip has been removed from the Library workspace.
 The native window opens Windows **Save As**; a browser uses its normal download
 behavior. The FITS files remain in the archive. Export errors appear in a toast

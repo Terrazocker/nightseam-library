@@ -307,11 +307,11 @@ function renderSelection() {
   if (!SM_SELECTED) {
     const hasObjects = (S.library?.objects || []).some((object) =>
       object.ra_hours != null && object.dec_deg != null);
-    panel.innerHTML = `<div class="empty-state selected-map-empty">${catalogIcon("file", "empty-icon")}
-      <strong>${hasObjects ? "No plotted object selected." : "No mapped exposures yet."}</strong>
+    panel.innerHTML = `<div class="empty-state inline selected-map-empty">${catalogIcon("file", "empty-icon")}
+      <div><strong>${hasObjects ? "No object selected" : "Nothing mapped yet"}</strong>
       <p>${hasObjects
-        ? "Select a plotted object to see its archive summary."
-        : "Import exposures with object coordinates to populate this map."}</p></div>`;
+        ? "Select a marker to see its archive summary."
+        : "Exposures with object coordinates appear on this map."}</p></div></div>`;
     return;
   }
   const object = SM_SELECTED;

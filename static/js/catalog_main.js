@@ -40,6 +40,54 @@ function updateVersionTag() {
   const version = S.cfg?.version;
   $("#versionTag").textContent = version
     ? `NightSeam v${version} · Image Catalog` : "Image Catalog";
+  $("#toolsVersion").textContent = version ? `NightSeam Image Catalog v${version}` : "";
+}
+
+/* WAI-ARIA menu button: arrows move between enabled items, Escape returns
+   focus to the button, Tab or an outside pointer closes the menu. */
+function bindToolsMenu() {
+  const button = $("#btnTools");
+  const menu = $("#toolsMenu");
+  const items = () => [...menu.querySelectorAll('[role="menuitem"]')].filter(item => !item.disabled);
+  const setOpen = (open, focus = null) => {
+    menu.hidden = !open;
+    button.setAttribute("aria-expanded", String(open));
+    if (!open) return;
+    const list = items();
+    (focus === "last" ? list.at(-1) : list[0])?.focus();
+  };
+  button.addEventListener("click", () => setOpen(menu.hidden));
+  button.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    setOpen(true, event.key === "ArrowUp" ? "last" : "first");
+  });
+  menu.addEventListener("keydown", (event) => {
+    const list = items();
+    const index = list.indexOf(document.activeElement);
+    const moves = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: list.length - 1 };
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      button.focus();
+    } else if (event.key in moves && list.length) {
+      event.preventDefault();
+      list[(moves[event.key] + list.length) % list.length].focus();
+    } else if (event.key === "Tab") {
+      setOpen(false);
+    }
+  });
+  // Item handlers run first; an action that opened a dialog keeps its focus.
+  menu.addEventListener("click", (event) => {
+    if (!event.target.closest('[role="menuitem"]')) return;
+    const focusInside = menu.contains(document.activeElement);
+    setOpen(false);
+    if (focusInside) button.focus();
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!menu.hidden && !menu.contains(event.target) && !button.contains(event.target)) setOpen(false);
+  });
 }
 
 function ensureLibraryLoaded() {
@@ -109,6 +157,19 @@ function bindTopActions() {
   $("#btnTopReindex").addEventListener("click", () => $("#btnArcReindex").click());
   $("#btnTopExport").addEventListener("click", () => exportLibrary());
   $("#btnSupportReport").addEventListener("click", downloadSupportReport);
+  // Empty states offer the next step directly.
+  document.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-empty-import]");
+    if (!action) return;
+    selectChild($("#catalog-tab-import"));
+    $(action.dataset.emptyImport === "folder" ? "#btnIngestFolder" : "#btnIngest").click();
+  });
+  $(".import-destination .text-link").addEventListener("click", (event) => {
+    event.preventDefault();
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    $("#archiveSettings").scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+    $("#arcDir").focus({ preventScroll: true });
+  });
 }
 
 async function downloadSupportReport() {
@@ -147,6 +208,7 @@ async function initCatalog() {
   bindCatalogHost();
   updateVersionTag();
   bindCatalogTabs();
+  bindToolsMenu();
   bindTopActions();
   bindArchive();
   bindArchiveHealth();

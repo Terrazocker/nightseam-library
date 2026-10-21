@@ -8,7 +8,7 @@ project reads source, databases, build outputs or versions from the other.
 
 main.py hosts the local FastAPI application in app/server.py and opens the
 catalog shell. The client is vanilla ES-module JavaScript and CSS, with no npm
-or bundler. static/catalog.html owns Library, Import Exposures and the fixed
+or bundler. static/catalog.html owns Library, Import and the fixed
 archive Sky Map. Native pywebview/Windows chrome provides window behavior.
 The retired planning shell (sites, rigs, panoramas, custom-target editing) was
 removed on October 10, 2026; existing databases that still carry those tables
@@ -504,7 +504,7 @@ two MiB; the report explicitly includes retained sample records and does not
 claim to rule out native leaks from RSS. Resource and byte/lease/cancellation
 failures remain fatal. Each population has fresh owned scratch.
 
-The toolbar's **Support report** downloads a local JSON attachment. It contains
+**Tools › Download support report** downloads a local JSON attachment. It contains
 application/Python/OS/selected package versions, bundled FITS utility integrity,
 browser/native capability flags and numeric Chromium version. At most 25 warning
 or error categories from the current process are included. Raw messages,

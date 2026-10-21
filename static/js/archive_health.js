@@ -1,5 +1,5 @@
 /* Read-only scans, retained reports, and confirmed acknowledgement actions. */
-import { $, api, toast } from "./util.js";
+import { $, api, toast, restoreFocus } from "./util.js";
 import { S } from "./state.js";
 import { beginArchiveHealth, loadLibrary } from "./archive.js";
 
@@ -208,7 +208,7 @@ function close() {
   $("#archiveHealthModal").classList.add("hidden");
   for (const [element, wasInert] of inertState) element.inert = wasInert;
   inertState = [];
-  opener?.focus();
+  restoreFocus(opener);
 }
 
 async function open() {

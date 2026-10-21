@@ -1,6 +1,6 @@
 """Browser checks for the packaged executable's catalog-only default shell."""
 
-from harness import check
+from harness import check, tool
 from time import monotonic
 import archive_features
 
@@ -180,8 +180,9 @@ def desktop_catalog_rice_job_controls(c):
     c.expect(c.page.locator('#btnTopIngest').is_disabled(), 'conversion locks import')
     c.page.locator('#compressionClose').click()
     c.expect(not c.page_errors, f'job controls must have no uncaught script errors: {c.page_errors}')
-    c.expect(c.page.locator('#btnTopCopy').evaluate('node => node === document.activeElement'), 'focus returns to an enabled action')
-    c.page.locator('#btnTopCopy').click()
+    c.expect(c.page.locator('#btnTools').evaluate('node => node === document.activeElement'),
+             'focus returns to the Tools menu that opened the action')
+    tool(c.page, '#btnTopCopy').click()
     c.page.wait_for_function("() => document.querySelector('#compressionTitle').textContent === 'Compressing session losslessly'")
     c.expect(not c.page.locator('#compressionDestination').is_visible(), 'session resume does not show copy destination')
     c.expect(not c.page.locator('#compressionSafeMode').is_checked(), 'reopening restores the running Fast choice')
@@ -213,7 +214,7 @@ def desktop_catalog_compression_refresh_before_complete(c):
     c.page.wait_for_function("() => document.querySelector('#compressionStatus').textContent.startsWith('Writing and replacing files')")
     # The background reconnect locks archive buttons. Open the running job's
     # dialog through the existing action without triggering another operation.
-    c.page.locator('#btnTopCopy').click()
+    tool(c.page, '#btnTopCopy').click()
     c.page.wait_for_function("() => document.querySelector('#compressionTitle').textContent === 'Compressing session losslessly'")
     state['hold'] = True
     state['job'].update(status='completed', phase='complete', published=1)
@@ -280,7 +281,7 @@ def desktop_catalog_rice_session_roundtrip(c):
     c.expect_eq(hashlib.sha256((archive / result['stored']).read_bytes()).digest(), hashlib.sha256(raw).digest())
     disk = archive.parent / 'rice-copy-disk'
     disk.mkdir()
-    c.page.locator('#btnTopCopy').click()
+    tool(c.page, '#btnTopCopy').click()
     c.page.locator('#compressionPath').fill(str(disk))
     c.page.locator('#compressionStart').click()
     c.page.wait_for_function("() => document.querySelector('#compressionStatus').textContent.startsWith('Complete')", timeout=30000)
@@ -778,7 +779,7 @@ def _active_object_workspace(c):
         style.backgroundColor === 'rgba(0, 0, 0, 0)';})"""),
              "metrics and inline units must use the open, unframed presentation")
     with c.page.expect_download():
-        c.page.locator('#btnTopExport').click()
+        tool(c.page, '#btnTopExport').click()
     c.expect('object_name' not in export_requests[-1],
              "top Export library must retain the global scope after choosing an object")
 
@@ -802,9 +803,11 @@ def _active_object_workspace(c):
         c.expect(c.page.locator('#topbar').bounding_box()['height'] <= 52,
                  'wider system fonts must retain the compact toolbar')
         c.expect(c.page.locator('#btnTopIngest span').is_visible(), 'primary Import label remains visible')
+        tool(c.page, '#btnTopCopy')
         for label in ('Copy library', 'Download support report'):
-            button = c.page.get_by_role('button', name=label, exact=True)
+            button = c.page.get_by_role('menuitem', name=label, exact=True)
             c.expect(button.is_visible() and button.is_enabled(), 'secondary actions remain named and reachable')
+        c.page.keyboard.press('Escape')
         c.expect_eq(c.page.evaluate('getComputedStyle(document.documentElement).fontSize'), '14px',
                     'font fallback must not change interface density')
         c.page.screenshot(path=str(c.artifacts / 'catalog-toolbar-wide-system-font.png'))
@@ -896,7 +899,7 @@ def desktop_catalog_archive_folder_errors(c):
         status=400, json={"detail": detail}))
     c.allow_failed_responses("one deliberate invalid archive layout response")
     c.allow_console_errors("one deliberate invalid archive layout response")
-    c.page.locator("#btnTopReindex").click()
+    tool(c.page, "#btnTopReindex").click()
     error = c.page.locator(".archive-reindex-error")
     error.wait_for(state="visible")
     c.expect_in("NGC 6960_sub", error.inner_text(), "reindex must identify the unexpected folder")
@@ -1202,7 +1205,7 @@ def desktop_catalog_library_export(c):
     c.page.locator("#versionTag").filter(has_text="NightSeam v").wait_for()
     for format in ("csv",):
         with c.page.expect_download() as captured:
-            c.page.locator("#btnTopExport").click()
+            tool(c.page, "#btnTopExport").click()
         download = captured.value
         c.expect_eq(download.suggested_filename, f"nightseam-library.{format}",
                     "the primary export action must download the library CSV")
@@ -1222,7 +1225,7 @@ def desktop_catalog_library_export(c):
     c.page.route("**/api/library/export?*", lambda route: route.fulfill(
         status=503, content_type="application/json",
         body='{"detail":"temporary export failure"}'))
-    c.page.locator("#btnTopExport").click()
+    tool(c.page, "#btnTopExport").click()
     c.page.locator("#toasts .toast").filter(
         has_text="Library export failed: temporary export failure").wait_for()
     c.page.wait_for_function("() => !document.querySelector('#btnTopExport').disabled")
@@ -1240,9 +1243,10 @@ def desktop_catalog_support_report(c):
     c.page.wait_for_function("() => !document.querySelector('#btnTopExport').disabled")
     held = []
     c.page.route('**/api/library/export?*', lambda route: held.append(route))
-    c.page.locator('#btnTopExport').click()
+    tool(c.page, '#btnTopExport').click()
     c.page.wait_for_function("() => document.querySelector('#btnTopIngest').disabled")
-    button = c.page.get_by_role('button', name='Download support report', exact=True)
+    tool(c.page, '#btnSupportReport')
+    button = c.page.get_by_role('menuitem', name='Download support report', exact=True)
     c.expect(button.is_enabled(), 'support remains available during archive work')
     button.focus()
     with c.page.expect_download() as captured:
@@ -1550,7 +1554,7 @@ def desktop_catalog_only_launch(c):
     with c.page.expect_response(
             lambda response: response.url.endswith("/api/library/reindex")
             and response.status == 200):
-        c.page.locator("#btnTopReindex").click()
+        tool(c.page, "#btnTopReindex").click()
     c.expect_eq(len(reindex_calls), 1,
                 "the primary reindex action should call the archive reindex endpoint")
 
@@ -1788,9 +1792,12 @@ def desktop_catalog_responsive_layout(c):
             c.expect(frame_selector.bounding_box()['height'] >= 40,
                      'short Import forms must preserve readable frame-type controls')
             for selector in ('#btnIngest', '#btnIngestFolder', '#btnArcBrowse', '#btnTopReindex'):
-                c.page.locator(selector).scroll_into_view_if_needed()
-                c.expect(c.page.locator(selector).is_visible(),
+                target = tool(c.page, selector) if selector == '#btnTopReindex' else c.page.locator(selector)
+                target.scroll_into_view_if_needed()
+                c.expect(target.is_visible(),
                          f"import action {selector} must remain reachable at {width}x{height}")
+            _expect_catalog_bounds(c, c.page, '#toolsMenu')
+            c.page.keyboard.press('Escape')
 
             c.page.locator('#catalog-tab-skymap').click()
             c.page.evaluate('() => window.scrollTo(0, 0)')

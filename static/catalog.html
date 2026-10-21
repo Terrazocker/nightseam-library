@@ -5,272 +5,293 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NightSeam — Image Catalog</title>
 <link rel="icon" href="/favicon.ico">
-<link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/themes.css">
+<link rel="stylesheet" href="/style.css">
 </head>
 <body class="image-catalog-view catalog-only" data-primary-view="image-catalog" data-window-chrome="browser">
-<header id="topbar" class="catalog-topbar">
-  <div class="catalog-header-inner">
-    <div class="brand" id="brand" title="NightSeam">
-      <span class="catalog-brand-word">NightSeam</span>
-    </div>
-    <span class="busy-slot"><span id="busy" class="hidden" role="status" aria-atomic="true" title="Working"><span class="busy-dot" aria-hidden="true"></span><span class="busy-txt"></span></span></span>
-    <div class="topbar-right">
-      <span id="archiveInfo" class="archinfo mono hidden" title="Image archive folder" aria-hidden="true"></span>
-      <div id="imageCatalogTools" class="image-catalog-tools" aria-label="Image Catalog actions">
-        <button id="btnTopIngest" class="catalog-action import-action" type="button" aria-label="Import">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg><span>Import</span>
+<header id="topbar" class="app-header">
+  <div class="brand" id="brand" title="NightSeam Image Catalog">
+    <span class="catalog-brand-word">NightSeam</span>
+  </div>
+  <nav id="catalogTabs" class="app-nav" role="tablist" aria-label="Catalog views">
+    <button id="catalog-tab-library" data-tab="library" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="tab-library" tabindex="0">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h4v14H4zM10 5h4v14h-4zM16.5 5.5l3.6-1 3.4 13.3-3.6 1z"/></svg><span>Library</span>
+    </button>
+    <button id="catalog-tab-import" data-tab="import" class="tab" type="button" role="tab" aria-selected="false" aria-controls="tab-import" tabindex="-1">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg><span>Import</span>
+    </button>
+    <button id="catalog-tab-skymap" data-tab="skymap" class="tab" type="button" role="tab" aria-selected="false" aria-controls="tab-skymap" tabindex="-1">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15m6-12v15"/></svg><span>Sky Map</span>
+    </button>
+  </nav>
+  <span class="busy-slot"><span id="busy" class="hidden" role="status" aria-atomic="true" title="Working"><span class="busy-dot" aria-hidden="true"></span><span class="busy-txt"></span></span></span>
+  <div id="imageCatalogTools" class="image-catalog-tools" role="group" aria-label="Catalog actions">
+    <button id="btnTopIngest" class="button primary import-action" type="button" aria-label="Import" title="Import FITS exposures into the archive">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg><span>Import</span>
+    </button>
+    <div class="menu-anchor">
+      <button id="btnTools" class="button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="toolsMenu" title="Archive maintenance, export and support">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span>Tools</span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+      </button>
+      <div id="toolsMenu" class="menu" role="menu" aria-labelledby="btnTools" hidden>
+        <div class="menu-group" role="group" aria-labelledby="toolsArchiveLabel">
+          <p id="toolsArchiveLabel" class="menu-label">Archive</p>
+          <button id="btnTopReindex" class="menu-item" type="button" role="menuitem" aria-label="Reindex folders" aria-describedby="btnTopReindexDesc">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.7-2L20 12M4 12l2.7 5a7 7 0 0 0 11.7-2"/></svg>
+            <span class="menu-text"><span class="menu-title">Reindex folders</span><span class="menu-desc" id="btnTopReindexDesc">Rescan the archive and refresh sessions</span></span>
+          </button>
+          <button id="btnTopHealth" class="menu-item" type="button" role="menuitem" aria-label="Archive health" aria-describedby="btnTopHealthDesc">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6.5v5.5c0 4.6 3.4 7.8 8 9 4.6-1.2 8-4.4 8-9V6.5Z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>
+            <span class="menu-text"><span class="menu-title">Archive health</span><span class="menu-desc" id="btnTopHealthDesc">Check for missing or changed files</span></span>
+          </button>
+        </div>
+        <div class="menu-separator" role="separator"></div>
+        <div class="menu-group" role="group" aria-labelledby="toolsExportLabel">
+          <p id="toolsExportLabel" class="menu-label">Backup &amp; export</p>
+          <button id="btnTopExport" class="menu-item" type="button" role="menuitem" aria-label="Export library" aria-describedby="btnTopExportDesc">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3m-5 5 5-5 5 5M5 14v6h14v-6"/></svg>
+            <span class="menu-text"><span class="menu-title">Export library</span><span class="menu-desc" id="btnTopExportDesc">Download every exposure record as CSV</span></span>
+          </button>
+          <button id="btnTopCopy" class="menu-item" type="button" role="menuitem" aria-label="Copy library" aria-describedby="btnTopCopyDesc">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h12v13H8zM4 16V3h12"/></svg>
+            <span class="menu-text"><span class="menu-title">Copy library</span><span class="menu-desc" id="btnTopCopyDesc">Losslessly compressed copy on another disk</span></span>
+          </button>
+        </div>
+        <div class="menu-separator" role="separator"></div>
+        <button id="btnSupportReport" class="menu-item" type="button" role="menuitem" aria-label="Download support report" aria-describedby="btnSupportReportDesc">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1.1.9-1.1 1.7M12 16.5v.1"/></svg>
+          <span class="menu-text"><span class="menu-title">Download support report</span><span class="menu-desc" id="btnSupportReportDesc">Version details and recent error categories</span></span>
         </button>
-        <button id="btnTopReindex" class="catalog-action" type="button" aria-label="Reindex folders">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.7-2L20 12M4 12l2.7 5a7 7 0 0 0 11.7-2"/></svg><span>Reindex folders</span>
-        </button>
-        <button id="btnTopHealth" class="catalog-action" type="button" aria-label="Archive health">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 7v6c0 5 9 8 9 8s9-3 9-8V7Z"/><path d="m7 12 3 3 7-7"/></svg><span>Archive health</span>
-        </button>
-        <button id="btnTopExport" class="catalog-action" type="button" aria-label="Export library">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V3m-5 5 5-5 5 5M5 14v6h14v-6"/></svg><span>Export library</span>
-        </button>
-        <button id="btnTopCopy" class="catalog-action" type="button" aria-label="Copy library" title="Copy library">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h12v13H8zM4 16V3h12"/></svg><span>Copy library</span>
-        </button>
-        <button id="btnSupportReport" class="catalog-action" type="button" aria-label="Download support report" title="Download version details and recent error categories">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v7M14 3v5h5M6 3v18h5M17 12v9m-4-4 4 4 4-4"/></svg><span>Support report</span>
-        </button>
+        <p id="toolsVersion" class="menu-footer" aria-hidden="true"></p>
       </div>
     </div>
   </div>
 </header>
-<div id="compressionModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="compressionTitle">
-  <div class="modal-box archive-health-box">
-    <header><h2 id="compressionTitle">Lossless Rice compression</h2><button id="compressionClose" class="close" type="button" aria-label="Close compression">&times;</button></header>
-    <p id="compressionHelp"></p>
-    <div id="compressionVerification" class="ingest-compression-mode" data-mode="safe" role="group" aria-label="Compression verification">
-      <label class="ingest-mode-switch"><span>Fast</span><input id="compressionSafeMode" type="checkbox" role="switch" aria-label="Safe session compression" aria-describedby="compressionModeHelp" checked><span>Safe</span></label>
-      <details class="compression-mode-help"><summary aria-label="Explain Fast and Safe compression" title="Fast skips restoring each file for comparison. Safe restores each file and checks its original SHA-256. Both verify stored bytes and retain originals until commit.">i</summary><p id="compressionModeHelp"><strong>Fast</strong> trusts lossless Rice and skips restoring every file for comparison. <strong>Safe</strong> restores each file and compares its complete original SHA-256. Both verify stored bytes and keep originals until the catalog switch succeeds.</p></details>
-    </div>
-    <div id="compressionDestination" hidden>
-      <label for="compressionPath">Destination folder</label>
-      <div class="btnrow"><input id="compressionPath" type="text" placeholder="Choose a folder on your backup disk" style="flex:1;min-width:0"><button id="compressionBrowse" type="button">Browse…</button></div>
-      <p class="hint">Creates a new library folder with individual FITS files, a catalog snapshot and a verification manifest. Your current archive stays in place. Unsupported images are copied unchanged.</p>
-    </div>
-    <p id="compressionStatus" role="status" aria-live="polite">Ready.</p>
-    <details id="compressionSkipped" hidden><summary>Skipped exposures</summary><p class="hint">Unsupported files stay unchanged. Missing files remain in the catalog; check archive health to review them. Up to 50 paths are shown.</p><ul id="compressionSkippedFiles" style="max-height:10rem;overflow:auto"></ul></details>
-    <label id="compressionPrepareLabel" for="compressionProgress">Preparing files · 0 / 0</label>
-    <progress id="compressionProgress" max="1" value="0" style="width:100%" aria-label="Files prepared"></progress>
-    <label id="compressionWriteLabel" for="compressionWriteProgress">Writing and replacing files · 0 / 0</label>
-    <progress id="compressionWriteProgress" max="1" value="0" style="width:100%" aria-label="Files written and replaced"></progress>
-    <div class="btnrow"><button id="compressionStart" type="button">Start</button><button id="compressionCancel" type="button" disabled>Cancel</button></div>
-  </div>
-</div>
-<main>
-  <section id="tab-image-catalog" class="tabpane image-catalog-pane active" role="tabpanel" aria-label="Image Catalog">
-    <nav id="catalogTabs" role="tablist" aria-label="Image Catalog views">
-      <button id="catalog-tab-library" data-tab="library" class="tab active" role="tab" aria-selected="true" aria-controls="tab-library" tabindex="0">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h12v17H6zM9 7h6M9 11h6M9 15h6"/></svg><span>Library</span>
-      </button>
-      <button id="catalog-tab-import" data-tab="import" class="tab" role="tab" aria-selected="false" aria-controls="tab-import" tabindex="-1">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg><span>Import Exposures</span>
-      </button>
-      <button id="catalog-tab-skymap" data-tab="skymap" class="tab" role="tab" aria-selected="false" aria-controls="tab-skymap" tabindex="-1">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15m6-12v15"/></svg><span>Sky Map</span>
-      </button>
-    </nav>
 
-    <section id="tab-import" class="catpane" role="tabpanel" aria-labelledby="catalog-tab-import" hidden>
-      <div class="arch-layout">
-        <aside class="archpanel import-config-card">
-          <header class="import-card-heading">
-            <h1>Import Exposures</h1>
-            <p>Add exposures to your image catalog.</p>
-          </header>
-          <div class="import-divider"></div>
-          <label for="arcDir">Archive folder</label>
-          <div class="archrow archive-path-row">
-            <input type="text" id="arcDir" spellcheck="false" placeholder="C:\path\to\images" autocomplete="off">
-            <button id="btnArcBrowse" class="ghost" type="button" title="Browse for archive folder">Browse...</button>
-            <button id="btnArcSave" class="ghost" type="button">Save</button>
-          </div>
-          <p id="arcDirHint" class="hint" aria-live="polite"></p>
-          <p class="archive-copy">Original files are copied to your archive folder and never moved or modified.</p>
-          <div class="import-divider"></div>
-          <span class="field-label" id="observingSiteLabel">Observing location fallback</span>
-          <div class="observing-site-fields" role="group" aria-labelledby="observingSiteLabel">
-            <label for="siteLat">Latitude</label>
-            <input id="siteLat" type="number" min="-90" max="90" step="any" placeholder="Degrees">
-            <label for="siteLon">Longitude</label>
-            <input id="siteLon" type="number" min="-180" max="180" step="any" placeholder="East positive">
-            <button id="btnSiteSave" type="button" class="ghost">Save</button>
-          </div>
-          <p class="hint">FITS location takes priority. Night sessions run sunset to sunrise; daytime sessions run sunrise to sunset. Leave both blank to clear the fallback.</p>
-          <div class="import-divider"></div>
-          <span class="field-label" id="frameTypeLabel">Frame type</span>
-          <div id="ingestFrameSelector" class="frame-type-selector" role="group" aria-labelledby="frameTypeLabel" aria-describedby="frameTypeHelp">
-            <button type="button" data-frame-override="light" aria-pressed="true">Lights</button>
-            <button type="button" data-frame-override="dark" aria-pressed="false">Darks</button>
-            <button type="button" data-frame-override="flat" aria-pressed="false">Flats</button>
-            <button type="button" data-frame-override="bias" aria-pressed="false">Bias</button>
-          </div>
-          <span id="frameTypeHelp" class="visually-hidden" aria-live="polite">Exposure metadata determines the frame type. Lights is the default when no frame type is recorded. Select a type to override the exposure metadata for the next import.</span>
-          <div class="import-divider"></div>
-          <h2 class="field-label add-files-label">Add exposures</h2>
-          <div class="chkrow"><label for="compressOnIngest"><input id="compressOnIngest" type="checkbox" aria-describedby="compressOnIngestHelp"> Compress on import with lossless Rice</label></div>
-          <div id="ingestCompressionMode" class="ingest-compression-mode" data-mode="fast" role="group" aria-label="Compression verification">
-            <label class="ingest-mode-switch"><span>Fast</span><input id="ingestSafeMode" type="checkbox" role="switch" aria-label="Safe ingestion" aria-describedby="ingestModeTip" disabled><span>Safe</span></label>
-            <button id="ingestModeInfo" class="ingest-mode-info" type="button" aria-label="Explain Fast and Safe ingestion" aria-expanded="false" aria-controls="ingestModeTip" aria-describedby="ingestModeTip">i</button>
-            <div id="ingestModeTip" class="ingest-mode-tip" role="tooltip" hidden><strong>Fast</strong> trusts the lossless Rice encoder and skips restoring each file for comparison. <strong>Safe</strong> decompresses each file and checks its complete original SHA-256. Both check the stored compressed bytes and leave your source files untouched.</div>
-          </div>
-          <p id="compressOnIngestHelp" class="hint">Source files stay untouched. Unsupported or already compressed files are imported unchanged.</p>
-          <div id="dropZone" class="import-drop-zone">
-            <input type="file" id="fitFiles" accept=".fit,.fits,.fts,.fz,.fit.gz,.fits.gz,.fts.gz,.fz.gz" multiple hidden>
-            <input type="file" id="fitFolder" webkitdirectory multiple hidden>
-            <svg class="large-outline-icon" viewBox="0 0 32 40" fill="none" aria-hidden="true"><path d="M6 1.5h13l11.5 11.8v24.2H6a3 3 0 0 1-3-3v-30a3 3 0 0 1 3-3Z"/><path d="M19 2v12h11"/></svg>
-            <div class="import-picker-actions">
-              <button id="btnIngest" class="primary" type="button">Import exposures...</button>
-              <button id="btnIngestFolder" type="button" aria-describedby="folderImportHelp">Import folder...</button>
-            </div>
-            <p class="hint">or drop exposures here</p>
-            <p id="folderImportHelp" class="hint">Folder import includes subfolders, finds FITS exposures and skips exposures already imported.</p>
-          </div>
-          <button id="btnArcReindex" type="button" hidden title="Scan archive exposures, recover unique missing references and refresh observing-session metadata">Reindex folder</button>
-        </aside>
-        <div class="import-results-column">
-          <section class="ingest-results import-result-card" aria-labelledby="importResultsHeading">
-            <header class="ingest-toolbar">
-              <h2 id="importResultsHeading">Import results</h2>
-              <button id="btnClearResults" class="ghost" type="button" hidden>Clear</button>
-              <span id="ingestSummary" class="hint" aria-live="polite"></span>
-            </header>
-            <div id="ingestProgress" class="import-progress" role="status" hidden></div>
-            <div id="ingestResults" class="import-result-body">
-              <div class="empty-state">
-                <svg class="empty-icon" viewBox="0 0 32 40" fill="none" aria-hidden="true"><path d="M6 1.5h13l11.5 11.8v24.2H6a3 3 0 0 1-3-3v-30a3 3 0 0 1 3-3Z"/><path d="M19 2v12h11M10 20h14M10 25h14M10 30h9"/></svg>
-                <strong>Imported sessions appear here.</strong>
-                <p>Files will be copied to your archive folder and added to the catalog.</p>
-              </div>
-            </div>
-          </section>
-          <section class="recent-import-card" aria-labelledby="recentImportsHeading">
-            <h2 id="recentImportsHeading">Recent imports</h2>
-            <input type="file" id="fitFilesCal" accept=".fit,.fits,.fts,.fz,.fit.gz,.fits.gz,.fts.gz,.fz.gz" multiple hidden>
-            <div id="importHistory" class="recent-import-body">
-              <div class="empty-state">
-                <svg class="empty-icon clock-icon" viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="20" cy="20" r="17"/><path d="M20 9v11l8 5"/></svg>
-                <strong>Recent imports appear here.</strong>
-                <p>You can also add darks, flats, or bias to an existing session.</p>
-              </div>
-            </div>
-          </section>
+<main id="tab-image-catalog" class="image-catalog-pane active">
+  <section id="tab-library" class="catpane active" role="tabpanel" aria-labelledby="catalog-tab-library">
+    <div class="library-layout">
+      <aside class="library-object-rail panel" aria-label="Library objects">
+        <div class="panel-heading object-panel-heading">
+          <h2>Objects</h2><span id="libObjectCount" class="panel-count">0 objects</span>
+          <button id="libraryObjectsToggle" class="button subtle" type="button" aria-expanded="false" aria-controls="libraryObjectList">Show objects</button>
         </div>
-      </div>
-    </section>
-
-    <section id="tab-library" class="catpane active" role="tabpanel" aria-labelledby="catalog-tab-library">
-      <div class="library-layout">
-        <aside class="library-object-rail" aria-label="Library objects">
-          <div class="panel-heading object-panel-heading"><h2>Objects</h2><span id="libObjectCount" class="mono">0 objects</span></div>
-          <button id="libraryObjectsToggle" class="ghost" type="button" aria-expanded="false" aria-controls="libraryObjectList">Show objects</button>
+        <div class="library-object-tools">
           <label class="visually-hidden" for="libSearch">Search library objects</label>
           <div class="library-search-field">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.7" cy="10.7" r="6.3"/><path d="m15.5 15.5 5 5"/></svg>
-            <input id="libSearch" type="search" placeholder="Search objects..." autocomplete="off">
+            <input id="libSearch" type="search" placeholder="Search objects" autocomplete="off" spellcheck="false">
           </div>
-          <label class="library-list-sort" for="libSort">Object list sort
+          <label class="library-list-sort" for="libSort"><span>Sort by</span>
             <select id="libSort"><option value="name">Name</option><option value="integ">Integration time</option><option value="sessions">Sessions</option></select>
           </label>
-          <div id="libraryObjectList" class="library-object-list"></div>
-        </aside>
-        <section class="library-workspace" aria-label="Image library and capture sessions">
-          <header class="library-title">
-            <div class="library-context-heading">
-              <div id="libraryHeroIdentity"><h1>Library</h1><p class="hint">No object selected</p></div>
-              <div id="libSummary" class="library-summary" aria-label="Selected object totals"></div>
-            </div>
-          </header>
-          <section class="library-sessions" aria-labelledby="librarySessionsHeading">
-            <header class="panel-heading library-sessions-heading"><h2 id="librarySessionsHeading">Capture sessions</h2><span id="librarySessionCount" class="hint">0 sessions</span></header>
-            <div class="tablewrap library-session-table-wrap">
-              <table id="librarySessionTable" class="library-session-table">
-                <thead><tr><th>Date / time</th><th>Lights</th><th>Darks</th><th>Flats</th><th>Bias</th><th>Light integration</th><th>Filters</th><th>Folder</th></tr></thead>
-                <tbody id="librarySessions"><tr><td colspan="8"><div class="empty-state session-empty-state">
-                  <svg class="empty-icon database-icon" viewBox="0 0 40 40" fill="none" aria-hidden="true"><ellipse cx="20" cy="8" rx="16" ry="5.5"/><path d="M4 8v24c0 3 7.2 5.5 16 5.5S36 35 36 32V8M4 16c0 3 7.2 5.5 16 5.5S36 19 36 16M4 24c0 3 7.2 5.5 16 5.5S36 27 36 24"/></svg>
-                  <strong>No capture sessions yet</strong><p>Import exposures to build your image library.</p>
-                </div></td></tr></tbody>
-              </table>
-            </div>
-          </section>
-        </section>
-        <aside id="librarySessionRail" class="library-session-rail" aria-label="Selected session details">
-          <div class="panel-heading selected-session-heading"><h2>Selected session</h2><span id="libraryFrameCount" class="hint">0 frames</span></div>
-          <div id="librarySessionDetail" class="hint">
-            <div id="librarySessionFacts">
-            <div class="empty-state selected-session-empty">
-              <svg class="empty-icon" viewBox="0 0 32 40" fill="none" aria-hidden="true"><path d="M6 1.5h13l11.5 11.8v24.2H6a3 3 0 0 1-3-3v-30a3 3 0 0 1 3-3Z"/><path d="M19 2v12h11"/></svg>
-              <strong>No session selected</strong><p>Choose a capture session<br>from the library to view details<br>and frames.</p>
-            </div>
-          </div>
-          </div>
-          <div id="librarySessionActions" class="library-session-actions" aria-label="Selected session actions" hidden></div>
-        </aside>
-      </div>
-    </section>
+        </div>
+        <div id="libraryObjectList" class="library-object-list"></div>
+      </aside>
 
-    <section id="tab-skymap" class="catpane" role="tabpanel" aria-labelledby="catalog-tab-skymap" hidden>
-      <div class="chart-layout">
-        <section class="sky-map-card" aria-label="Image library sky map">
-          <div id="skymapWrap" class="skywrap">
-            <div id="skymapRaAxis" class="sky-axis sky-axis-top" aria-hidden="true">
-              <span>00h</span><span>02h</span><span>04h</span><span>06h</span><span>08h</span><span>10h</span><span>12h</span><span>14h</span><span>16h</span><span>18h</span><span>20h</span><span>22h</span><span>24h</span>
+      <section class="library-workspace panel" aria-label="Selected object and capture sessions">
+        <header class="library-title">
+          <div class="library-context-heading">
+            <div id="libraryHeroIdentity"><h1 class="object-title">Library</h1><p class="object-subtitle">No object selected</p></div>
+            <div id="libSummary" class="library-summary" aria-label="Selected object totals"></div>
+          </div>
+        </header>
+        <section class="library-sessions" aria-labelledby="librarySessionsHeading">
+          <header class="panel-heading library-sessions-heading"><h2 id="librarySessionsHeading">Capture sessions</h2><span id="librarySessionCount" class="panel-count">0 sessions</span></header>
+          <div class="tablewrap library-session-table-wrap">
+            <table id="librarySessionTable" class="library-session-table">
+              <thead><tr><th scope="col">Date</th><th scope="col" class="num">Lights</th><th scope="col" class="num">Darks</th><th scope="col" class="num">Flats</th><th scope="col" class="num">Bias</th><th scope="col" class="num">Integration</th><th scope="col">Filters</th><th scope="col">Folder</th></tr></thead>
+              <tbody id="librarySessions"><tr><td colspan="8"></td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <aside id="librarySessionRail" class="library-session-rail panel" aria-label="Selected session details">
+        <div class="panel-heading selected-session-heading"><h2>Session details</h2><span id="libraryFrameCount" class="panel-count">0 frames</span></div>
+        <div id="librarySessionDetail">
+          <div id="librarySessionFacts"></div>
+        </div>
+        <div id="librarySessionActions" class="library-session-actions" aria-label="Selected session actions" hidden></div>
+      </aside>
+    </div>
+  </section>
+
+  <section id="tab-import" class="catpane" role="tabpanel" aria-labelledby="catalog-tab-import" hidden>
+    <div class="arch-layout">
+      <div class="import-main">
+        <section class="panel import-config-card" aria-labelledby="importHeading">
+          <header class="import-card-heading">
+            <h1 id="importHeading">Import exposures</h1>
+            <p>FITS files are copied into your archive and grouped into capture sessions by object and night.</p>
+          </header>
+          <div id="dropZone" class="import-drop-zone">
+            <input type="file" id="fitFiles" accept=".fit,.fits,.fts,.fz,.fit.gz,.fits.gz,.fts.gz,.fz.gz" multiple hidden>
+            <input type="file" id="fitFolder" webkitdirectory multiple hidden>
+            <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4m-4.5 4.5L12 4l4.5 4.5"/><path d="M4 14v4.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V14"/></svg>
+            <p class="drop-title">Drop FITS exposures here</p>
+            <div class="import-picker-actions">
+              <button id="btnIngest" class="button primary" type="button">Choose files…</button>
+              <button id="btnIngestFolder" class="button" type="button" aria-describedby="folderImportHelp">Choose folder…</button>
             </div>
-            <div id="skymapDecAxis" class="sky-axis sky-axis-left" aria-hidden="true">
-              <span>+90°</span><span>+60°</span><span>+30°</span><span>0°</span><span>−30°</span><span>−60°</span><span>−90°</span>
+            <p class="hint">.fit, .fits, .fts, .fz and gzip-compressed FITS</p>
+            <p id="folderImportHelp" class="hint">Folder import includes subfolders and skips exposures that are already in the catalog.</p>
+          </div>
+          <p class="import-destination">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19V6.5A1.5 1.5 0 0 1 4.5 5h5l2 2.5h8A1.5 1.5 0 0 1 21 9v10a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19Z"/></svg>
+            <span>Copied to <span id="archiveInfo" class="mono hidden" title="Image archive folder"></span><span class="archive-default">the default archive folder</span></span>
+            <a class="text-link" href="#archiveSettings">Change</a>
+          </p>
+
+          <div class="form-section">
+            <span class="field-label" id="frameTypeLabel">Frame type</span>
+            <div id="ingestFrameSelector" class="segmented frame-type-selector" role="group" aria-labelledby="frameTypeLabel" aria-describedby="frameTypeHelp">
+              <button type="button" data-frame-override="" aria-pressed="true">Auto</button>
+              <button type="button" data-frame-override="light" aria-pressed="false">Lights</button>
+              <button type="button" data-frame-override="dark" aria-pressed="false">Darks</button>
+              <button type="button" data-frame-override="flat" aria-pressed="false">Flats</button>
+              <button type="button" data-frame-override="bias" aria-pressed="false">Bias</button>
             </div>
-            <div id="skymapPlot" class="skyplot">
-              <canvas id="skymapCanvas" tabindex="0" role="application" aria-roledescription="interactive sky map" aria-label="Image library sky map" aria-describedby="skymapChartSummary"></canvas>
+            <p id="frameTypeHelp" class="hint" aria-live="polite">Auto reads the frame type from each exposure's header and treats unlabeled files as lights.</p>
+          </div>
+
+          <div class="form-section">
+            <span class="field-label">Compression</span>
+            <label class="check-row" for="compressOnIngest"><input id="compressOnIngest" type="checkbox" aria-describedby="compressOnIngestHelp"><span>Compress on import with lossless Rice</span></label>
+            <div id="ingestCompressionMode" class="ingest-compression-mode" data-mode="fast" role="group" aria-label="Compression verification">
+              <label class="ingest-mode-switch"><span>Fast</span><input id="ingestSafeMode" type="checkbox" role="switch" aria-label="Safe ingestion" aria-describedby="ingestModeTip" disabled><span>Safe</span></label>
+              <button id="ingestModeInfo" class="info-button" type="button" aria-label="Explain Fast and Safe ingestion" aria-expanded="false" aria-controls="ingestModeTip" aria-describedby="ingestModeTip">i</button>
+              <div id="ingestModeTip" class="ingest-mode-tip popover" role="tooltip" hidden><strong>Fast</strong> trusts the lossless Rice encoder and skips restoring each file for comparison. <strong>Safe</strong> decompresses each file and checks its complete original SHA-256. Both check the stored compressed bytes and leave your source files untouched.</div>
             </div>
+            <p id="compressOnIngestHelp" class="hint">Source files stay untouched. Unsupported or already compressed files are imported unchanged.</p>
+          </div>
+        </section>
+
+        <section id="archiveSettings" class="panel settings-card" aria-labelledby="archiveSettingsHeading" tabindex="-1">
+          <h2 id="archiveSettingsHeading">Archive settings</h2>
+          <div class="form-section">
+            <label class="field-label" for="arcDir">Archive folder</label>
+            <div class="archrow archive-path-row">
+              <input type="text" id="arcDir" spellcheck="false" placeholder="C:\path\to\images" autocomplete="off">
+              <button id="btnArcBrowse" class="button" type="button" title="Browse for archive folder">Browse…</button>
+              <button id="btnArcSave" class="button" type="button">Save</button>
+            </div>
+            <p id="arcDirHint" class="hint" aria-live="polite"></p>
+            <p class="hint">Originals are copied here and never moved or modified.</p>
+          </div>
+          <div class="form-section">
+            <span class="field-label" id="observingSiteLabel">Observing location fallback</span>
+            <div class="observing-site-fields" role="group" aria-labelledby="observingSiteLabel">
+              <label for="siteLat">Latitude</label>
+              <input id="siteLat" type="number" min="-90" max="90" step="any" placeholder="°, north positive" inputmode="decimal">
+              <label for="siteLon">Longitude</label>
+              <input id="siteLon" type="number" min="-180" max="180" step="any" placeholder="°, east positive" inputmode="decimal">
+              <button id="btnSiteSave" type="button" class="button">Save</button>
+            </div>
+            <p class="hint">Used when an exposure has no location. Night sessions run sunset to sunrise, daytime sessions sunrise to sunset. Leave both blank to clear.</p>
+          </div>
+          <button id="btnArcReindex" type="button" hidden title="Scan archive exposures, recover unique missing references and refresh observing-session metadata">Reindex folder</button>
+        </section>
+      </div>
+
+      <div class="import-results-column">
+        <section class="panel ingest-results import-result-card" aria-labelledby="importResultsHeading">
+          <header class="panel-heading ingest-toolbar">
+            <h2 id="importResultsHeading">Import results</h2>
+            <span id="ingestSummary" class="panel-count" aria-live="polite"></span>
+            <button id="btnClearResults" class="button subtle" type="button" hidden>Clear</button>
+          </header>
+          <div id="ingestProgress" class="import-progress" role="status" hidden></div>
+          <div id="ingestResults" class="import-result-body"></div>
+        </section>
+        <section class="panel recent-import-card" aria-labelledby="recentImportsHeading">
+          <header class="panel-heading"><h2 id="recentImportsHeading">Recent imports</h2></header>
+          <input type="file" id="fitFilesCal" accept=".fit,.fits,.fts,.fz,.fit.gz,.fits.gz,.fts.gz,.fz.gz" multiple hidden>
+          <div id="importHistory" class="recent-import-body"></div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-skymap" class="catpane" role="tabpanel" aria-labelledby="catalog-tab-skymap" hidden>
+    <div class="chart-layout">
+      <section class="panel sky-map-card" aria-label="Image library sky map">
+        <div id="skymapWrap" class="skywrap">
+          <div id="skymapRaAxis" class="sky-axis sky-axis-top" aria-hidden="true">
+            <span>00h</span><span>02h</span><span>04h</span><span>06h</span><span>08h</span><span>10h</span><span>12h</span><span>14h</span><span>16h</span><span>18h</span><span>20h</span><span>22h</span><span>24h</span>
+          </div>
+          <div id="skymapDecAxis" class="sky-axis sky-axis-left" aria-hidden="true">
+            <span>+90°</span><span>+60°</span><span>+30°</span><span>0°</span><span>−30°</span><span>−60°</span><span>−90°</span>
+          </div>
+          <div id="skymapPlot" class="skyplot">
+            <canvas id="skymapCanvas" tabindex="0" role="application" aria-roledescription="interactive sky map" aria-label="Image library sky map" aria-describedby="skymapChartSummary"></canvas>
+          </div>
           <p id="skymapChartSummary" class="visually-hidden" role="note">Image library sky map. Select a plotted object to inspect its archive details.</p>
           <div id="skymapTip" class="tooltip hidden"></div>
+        </div>
+      </section>
+      <aside class="chart-side" aria-label="Sky map options and selection">
+        <section class="panel chart-options-card" aria-labelledby="skymapDisplayHeading">
+          <h2 id="skymapDisplayHeading">Display</h2>
+          <div class="side-chk">
+            <label class="check-row"><input type="checkbox" id="smLabels" checked><span>Object names</span></label>
+            <label class="check-row"><input type="checkbox" id="smCons" checked><span>Constellations</span></label>
           </div>
         </section>
-        <aside class="chart-side">
-          <section class="menu-section chart-options-card">
-            <h2>Chart</h2>
-            <div class="chkrow side-chk">
-              <label><input type="checkbox" id="smLabels" checked> <span>Object names</span></label>
-              <label><input type="checkbox" id="smCons" checked> <span>constellations</span></label>
-            </div>
-          </section>
-          <section class="menu-section chart-legend-card">
-            <h2>Legend</h2>
-            <div id="smLegend"></div>
-          </section>
-          <section id="skymapSelection" class="library-map-selection" aria-live="polite">
-            <h2>Selected library object</h2>
-            <div id="skymapSelectionContent" class="selected-map-content">
-              <div class="empty-state selected-map-empty">
-                <svg class="empty-icon" viewBox="0 0 32 40" fill="none" aria-hidden="true"><path d="M6 1.5h13l11.5 11.8v24.2H6a3 3 0 0 1-3-3v-30a3 3 0 0 1 3-3Z"/><path d="M19 2v12h11"/></svg>
-                <strong>No mapped exposures yet.</strong>
-                <p>Import exposures with object coordinates to populate this map.</p>
-              </div>
-            </div>
-          </section>
-        </aside>
-      </div>
-    </section>
+        <section class="panel chart-legend-card" aria-labelledby="skymapLegendHeading">
+          <h2 id="skymapLegendHeading">Object types</h2>
+          <p class="hint">Select a type to show or hide it. Marker size shows capture sessions.</p>
+          <div id="smLegend"></div>
+        </section>
+        <section id="skymapSelection" class="panel library-map-selection" aria-live="polite" aria-labelledby="skymapSelectionHeading">
+          <h2 id="skymapSelectionHeading">Selected object</h2>
+          <div id="skymapSelectionContent" class="selected-map-content"></div>
+        </section>
+      </aside>
+    </div>
   </section>
 </main>
 
+<div id="compressionModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="compressionTitle">
+  <div class="modal-box archive-health-box">
+    <header class="modal-header"><h2 id="compressionTitle">Lossless Rice compression</h2><button id="compressionClose" class="close" type="button" aria-label="Close compression">&times;</button></header>
+    <div class="modal-body">
+      <p id="compressionHelp"></p>
+      <div id="compressionVerification" class="ingest-compression-mode" data-mode="safe" role="group" aria-label="Compression verification">
+        <label class="ingest-mode-switch"><span>Fast</span><input id="compressionSafeMode" type="checkbox" role="switch" aria-label="Safe session compression" aria-describedby="compressionModeHelp" checked><span>Safe</span></label>
+        <details class="compression-mode-help"><summary class="info-button" aria-label="Explain Fast and Safe compression" title="Fast skips restoring each file for comparison. Safe restores each file and checks its original SHA-256. Both verify stored bytes and retain originals until commit.">i</summary><p id="compressionModeHelp"><strong>Fast</strong> trusts lossless Rice and skips restoring every file for comparison. <strong>Safe</strong> restores each file and compares its complete original SHA-256. Both verify stored bytes and keep originals until the catalog switch succeeds.</p></details>
+      </div>
+      <div id="compressionDestination" class="form-section" hidden>
+        <label class="field-label" for="compressionPath">Destination folder</label>
+        <div class="archrow"><input id="compressionPath" type="text" placeholder="Choose a folder on your backup disk"><button id="compressionBrowse" class="button" type="button">Browse…</button></div>
+        <p class="hint">Creates a new library folder with individual FITS files, a catalog snapshot and a verification manifest. Your current archive stays in place. Unsupported images are copied unchanged.</p>
+      </div>
+      <p id="compressionStatus" class="status-line" role="status" aria-live="polite">Ready.</p>
+      <details id="compressionSkipped" hidden><summary>Skipped exposures</summary><p class="hint">Unsupported files stay unchanged. Missing files remain in the catalog; check archive health to review them. Up to 50 paths are shown.</p><ul id="compressionSkippedFiles" class="path-list"></ul></details>
+      <div class="progress-field">
+        <label id="compressionPrepareLabel" for="compressionProgress">Preparing files · 0 / 0</label>
+        <progress id="compressionProgress" max="1" value="0" aria-label="Files prepared"></progress>
+      </div>
+      <div class="progress-field">
+        <label id="compressionWriteLabel" for="compressionWriteProgress">Writing and replacing files · 0 / 0</label>
+        <progress id="compressionWriteProgress" max="1" value="0" aria-label="Files written and replaced"></progress>
+      </div>
+    </div>
+    <footer class="modal-footer"><button id="compressionCancel" class="button" type="button" disabled>Cancel</button><button id="compressionStart" class="button primary" type="button">Start</button></footer>
+  </div>
+</div>
+
 <div id="libEditModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="libEditTitle">
-  <div class="modal-box">
-    <header><h2 id="libEditTitle">Edit library object</h2>
-      <button class="close" id="libEditClose" aria-label="Close">&times;</button></header>
-    <p class="hint">Rename the object and pick its type. The archive folder
-    (and the saved files in it) are renamed to match.</p>
-    <div class="formrow" style="flex-direction:column;align-items:stretch;gap:10px">
-      <label class="inline">Name
-        <input type="text" id="libEditName" maxlength="80" style="flex:1">
-      </label>
-      <label class="inline">Type
-        <select id="libEditType" style="flex:1">
+  <div class="modal-box modal-small">
+    <header class="modal-header"><h2 id="libEditTitle">Edit library object</h2>
+      <button class="close" id="libEditClose" type="button" aria-label="Close">&times;</button></header>
+    <div class="modal-body">
+      <p class="hint">The archive folder and the files in it are renamed to match.</p>
+      <div class="form-grid">
+        <label for="libEditName">Name</label>
+        <input type="text" id="libEditName" maxlength="80">
+        <label for="libEditType">Type</label>
+        <select id="libEditType">
           <option value="">Unknown</option>
           <option value="galaxy">Galaxy</option>
           <option value="globular">Globular cluster</option>
@@ -281,39 +302,43 @@
           <option value="star_cloud">Star cloud</option>
           <option value="asterism">Asterism</option>
         </select>
-      </label>
+      </div>
     </div>
-    <div class="rowbtns" style="justify-content:flex-end">
-      <button id="libEditCancel" class="ghost">Cancel</button>
-      <button id="libEditSave" class="primary">Save</button>
-    </div>
+    <footer class="modal-footer">
+      <button id="libEditCancel" class="button" type="button">Cancel</button>
+      <button id="libEditSave" class="button primary" type="button">Save</button>
+    </footer>
   </div>
 </div>
 
 <div id="archiveHealthModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="archiveHealthTitle" aria-describedby="healthDescription">
   <div class="modal-box archive-health-box">
-    <header><h2 id="archiveHealthTitle">Archive health</h2>
+    <header class="modal-header"><h2 id="archiveHealthTitle">Archive health</h2>
       <button id="healthClose" class="close" type="button" aria-label="Close archive health">&times;</button></header>
-    <p id="healthDescription">Scans inspect the archive without changing files or library records. After a completed scan, acknowledge expected deletions or accept changed contents. Closing this window lets a running scan continue.</p>
-    <p id="healthArchive" class="mono health-archive"></p>
-    <div class="health-actions">
-      <button id="healthQuick" class="primary" type="button">Quick check</button>
-      <button id="healthDeep" type="button">Deep verification</button>
-      <button id="healthCancel" class="ghost" type="button" disabled>Cancel scan</button>
+    <div class="modal-body">
+      <p id="healthDescription">Scans inspect the archive without changing files or library records. After a completed scan, acknowledge expected deletions or accept changed contents. Closing this window lets a running scan continue.</p>
+      <p id="healthArchive" class="mono health-archive"></p>
+      <div class="health-actions">
+        <button id="healthQuick" class="button primary" type="button">Quick check</button>
+        <button id="healthDeep" class="button" type="button">Deep verification</button>
+        <button id="healthCancel" class="button subtle" type="button" disabled>Cancel scan</button>
+      </div>
+      <p class="hint">Quick checks paths, readability, sizes and modification times. Deep reads indexed files and compares SHA-256 hashes. Neither checks image quality or embedded FITS checksums.</p>
+      <p id="healthStatus" class="status-line" role="status" aria-live="polite">Choose a check to inspect your archive.</p>
+      <progress id="healthProgress" aria-label="Archive health scan progress" value="0" max="1"></progress>
+      <p id="healthCounters" class="mono" aria-live="off"></p>
+      <p id="healthBaseline" class="hint"></p>
+      <div class="health-actions"><button id="healthAcceptAll" class="button" type="button" hidden>Accept all deletions</button></div>
+      <ul id="healthFindings" class="health-findings" aria-label="Archive health findings"></ul>
+      <p id="healthReportLimit" class="hint"></p>
     </div>
-    <p class="hint">Quick checks paths, readability, sizes and modification times. Deep reads indexed files and compares SHA-256 hashes. Neither checks image quality or embedded FITS checksums.</p>
-    <p id="healthStatus" role="status" aria-live="polite">Choose a check to inspect your archive.</p>
-    <progress id="healthProgress" aria-label="Archive health scan progress" value="0" max="1"></progress>
-    <p id="healthCounters" class="mono" aria-live="off"></p>
-    <p id="healthBaseline" class="hint"></p>
-    <div class="health-actions"><button id="healthAcceptAll" type="button" hidden>Accept all deletions</button></div>
-    <ul id="healthFindings" class="health-findings" aria-label="Archive health findings"></ul>
-    <p id="healthReportLimit" class="hint"></p>
-    <div class="health-actions"><button id="healthDownload" type="button" disabled>Download JSON report</button></div>
-    <p class="hint">The latest report remains until another scan starts or the app closes. Download it to keep a copy. Acknowledgements require confirmation and leave files unchanged.</p>
+    <footer class="modal-footer health-footer">
+      <p class="hint">The latest report remains until another scan starts or the app closes. Acknowledgements require confirmation and leave files unchanged.</p>
+      <button id="healthDownload" class="button" type="button" disabled>Download JSON report</button>
+    </footer>
   </div>
 </div>
-<div id="toasts"></div>
+<div id="toasts" aria-live="polite"></div>
 <div id="versionTag" aria-live="polite"></div>
 <script type="module" src="/js/catalog_main.js"></script>
 </body>
