@@ -231,8 +231,8 @@ The client captures it once per action and passes compress=true on every multipa
 chunk, including calibration uploads. The API defaults to false independently.
 The accessible Fast/Safe sliding switch defaults to Fast in the UI and supplies
 compression_mode=fast/safe on every chunk. Omitted API mode defaults to Safe for
-existing clients. Mode selection is disabled when compression is off and locked
-during archive operations. A hover/focus/tap info tooltip explains the difference.
+existing clients. Mode selection is hidden and disabled when compression is off
+and locked during archive operations. A hover/focus/tap info tooltip explains the difference.
 After original-byte dedup, supported integer uploads are encoded into a second
 private stage using the shared compression.encode_verified helper. Safe mode
 requires funpack -C to restore exact full-file SHA-256/size; Fast skips decoding

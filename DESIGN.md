@@ -105,8 +105,8 @@ the header never wraps.
 Three regions at full width: the object rail, the selected object's
 workspace and the session inspector.
 
-- **Object rail:** search (name, designation or type), sort, and the object
-  list. Each row shows the name, designation and type, and a session count.
+- **Object rail:** search (name, designation or type), sort (name, light
+  integration or sessions), and the object list. Each row shows the name, designation and type, and a session count.
   The selected row has an amber edge and tint.
 - **Workspace:** the selected object's name is the view title, with its
   designation, type and switchable size unit (activate the unit to cycle),
@@ -136,8 +136,10 @@ verification). **Archive settings** below hold the archive folder and the
 observing-location fallback. The right column shows import results with live
 progress (files processed / total, elapsed time, failures) and recent imports
 with + Darks / + Flats / + Bias to attach calibration to that session.
-Calibration requests identify the target object and session above the drop
-target. Use "exposures" in visible copy.
+Recent imports show one entry per archive session folder with the night's
+date and its frames per type. Calibration requests identify the target object
+and session above the drop target. The Fast/Safe switch appears only once
+compression is checked. Use "exposures" in visible copy.
 
 ## Sky Map
 
@@ -149,7 +151,8 @@ square-root scale in CSS pixels; image count and integration do not determine
 size. Keep names near their markers with quiet leader lines when displaced.
 The side column holds Display options, the Object types legend (activate a
 type to show or hide it; hidden types are struck through) and the selected
-object's summary.
+object's summary. Object-type colors come only from the `--viz-type-*` tokens;
+they are data colors and stay distinct from amber, which marks selection.
 
 ## Composition
 
@@ -160,7 +163,7 @@ region becomes unreadable:
 
 | Width | Library | Import | Sky Map |
 | --- | --- | --- | --- |
-| ≥ 1100px | Three columns, fits the window | Two columns, fits the window | Map beside side column (≥ 1001px) |
+| ≥ 1100px | Three columns, fits the window (below 1280px: slimmer rails, time range in the inspector only) | Two columns, fits the window | Map beside side column (≥ 1001px) |
 | 761–1099px | Objects beside workspace; inspector below | Single column, page scrolls (≤ 1100px) | Stacked (≤ 1000px) |
 | ≤ 760px | Single column; collapsible object list | Single column | Stacked |
 
@@ -170,7 +173,8 @@ Primary actions and selected details remain reachable at every size.
 
 Target WCAG 2.2 AA. Text keeps ≥4.5:1 contrast and control boundaries ≥3:1
 on every surface. Every control is keyboard operable with a visible 2px amber
-focus ring; tabs use arrow keys. Honor reduced motion (no transitions or
+focus ring. Arrow keys, Home and End move through the view tabs, the object
+list and the session table, and selection follows focus in the lists. Honor reduced motion (no transitions or
 spinner motion), increased contrast (stronger lines and text) and forced
 colors (system highlight for selection, native checkboxes). Live regions
 announce progress without re-announcing the clock every second.

@@ -7,7 +7,7 @@ selecting or dropping files. The option starts unchecked and stays selected in
 that application window, including when attaching calibration frames. It applies
 to the whole import action; you cannot change it halfway through upload chunks.
 
-Choose the sliding **Fast / Safe** control below the compression checkbox:
+Checking it reveals the sliding **Fast / Safe** control below the checkbox:
 
 - **Fast** (left, initial choice) trusts the lossless Rice encoder and skips
   decompressing each file for comparison.
@@ -171,8 +171,9 @@ such as `night_2026-08-22_181703_<identity>`. Unresolved folders use
 use the same folder. Reindex refreshes old logical membership without moving
 existing files, so one Library session can still refer to multiple older folders.
 **Recent imports** is
-upload history, so separate upload actions can remain separate entries even
-when Library combines their capture sessions.
+upload history grouped by archive session folder: one entry lists that night's
+lights, darks, flats and bias. Uploads stored in different folders remain
+separate entries even when Library combines their capture sessions.
 
 ## Reindex an existing archive
 

@@ -1,5 +1,37 @@
 # Independent catalog release record
 
+## Redesign follow-ups — October 21, 2026
+
+- Sorting objects by integration uses light integration, the figure the
+  workspace shows; it previously used total exposure including calibration.
+  The option is now labeled Light integration.
+- Empty-library Import actions lock with other archive actions; a click that
+  races an operation explains why nothing started.
+- Recent imports group history rows by archive session folder: one entry per
+  night with its date and frames per type, instead of one per frame type.
+- The Fast/Safe switch appears only once compression on import is checked.
+- Arrow keys, Home and End move through the object list and the session
+  table with selection following focus; clicking an object keeps focus on it.
+- Between 1100 and 1279px the rails are slimmer, cells tighter and the row
+  time range moves to the inspector, so the session table fits without
+  horizontal scrolling from 1100px up. Overnight ranges read "17:49–04:22
+  +1d", and calibration buttons share one row.
+- The `--viz-type-*` tokens are the only object-type palette; skymap.js no
+  longer carries its own table (asterism changes from amber-orange to teal to
+  stay distinct from open clusters). viztheme.js and themes.css keep only the
+  ten canvas roles the Sky Map draws with (72 tokens became 18) and drop the
+  unused planner moon-marker helper.
+- Six historical plans and the pre-redesign mockups move to docs/archive/
+  with an index; nothing outside the archive referenced them.
+
+Validation: on Linux with Python 3.13 the full suite ran 995 passed and 9
+skipped in 231.14 seconds; check_js.py, check_dom_ids.py and
+check_encoding.py passed. The packaged browser checks under the same source
+stand-in (Chromium 141) passed 26 of 27; desktop-catalog-support-report again
+failed only its package-metadata assertion because pywebview cannot be
+installed in that environment. Windows and the native window were not run.
+No release was staged or published.
+
 ## Workbench interface redesign — October 21, 2026
 
 DESIGN.md is rewritten around explicit principles (library-first workflow, one

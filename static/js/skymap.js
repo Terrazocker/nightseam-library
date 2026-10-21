@@ -19,15 +19,6 @@ const MAP_TYPE_ORDER = [
   "galaxy", "nebula", "open_cluster", "globular", "planetary",
   "supernova_remnant",
 ];
-const MAP_TYPE_COLORS = Object.freeze({
-  galaxy: "#DF9398",
-  nebula: "#87BEFC",
-  open_cluster: "#FBD46F",
-  globular: "#A0E992",
-  planetary: "#AA8CFA",
-  supernova_remnant: "#FBA457",
-});
-
 /* RA hours 0..24 -> x, Dec -90..+90 -> y (0h left, north up) */
 function xy(raH, decD, W, H) {
   return [raH / 24 * W, (1 - (decD + 90) / 180) * H];
@@ -47,14 +38,14 @@ function syncTypeLegend() {
   if (types.length !== current.length || types.some((type, index) => type !== current[index])) {
     const initialTheme = vizTheme();
     lg.innerHTML = types.map((type) => {
-      const color = MAP_TYPE_COLORS[type] || initialTheme.types[type] || TYPE_COLOR[type];
+      const color = initialTheme.types[type] || TYPE_COLOR[type];
       return `<button class="lgchip${S.disabledTypes.has(type) ? " off" : ""}" type="button" data-type="${type}" aria-pressed="${!S.disabledTypes.has(type)}" style="--c:${color}"><i aria-hidden="true"></i><span>${TYPE_LABEL[type] || type}</span></button>`;
     }).join("");
   }
   const V = vizTheme();
   lg.querySelectorAll("[data-type]").forEach(chip => {
     chip.classList.toggle("off", S.disabledTypes.has(chip.dataset.type));
-    chip.style.setProperty("--c", MAP_TYPE_COLORS[chip.dataset.type] ||
+    chip.style.setProperty("--c",
       V.types[chip.dataset.type] || TYPE_COLOR[chip.dataset.type] || V.text);
     chip.setAttribute("aria-pressed", String(!S.disabledTypes.has(chip.dataset.type)));
   });
@@ -159,7 +150,7 @@ function drawSkyMap() {
     // without letting a large archive overwhelm neighboring objects. Counts,
     // not image volume or integration time, determine this CSS-pixel radius.
     const r = (3 + 9 * Math.sqrt(sessions / (sessions + 4))) * scale;
-    const col = MAP_TYPE_COLORS[o.otype] || V.types[o.otype] || TYPE_COLOR[o.otype] || V.text;
+    const col = V.types[o.otype] || TYPE_COLOR[o.otype] || V.text;
     const isHover = SM_HOVER && SM_HOVER.name === o.name;
     const isSelected = SM_SELECTED && SM_SELECTED.name === o.name;
     for (const wOff of [0, 1]) {            // wrap objects near RA 0h/24h
@@ -349,7 +340,7 @@ function drawConstellations(ctx, W, H, V, showNames, scale) {
     ctx.beginPath(); ctx.arc(x, y, Math.max(.5, 1.05 * st[2] * scale), 0, 7); ctx.fill();
   }
 
-  ctx.strokeStyle = V.targetSecondary;
+  ctx.strokeStyle = V.constellationLine;
   ctx.globalAlpha = .42;
   ctx.lineWidth = Math.max(1, .8 * scale);
   for (const con of CONSTELLATIONS) {

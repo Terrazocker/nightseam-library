@@ -11,6 +11,8 @@ def desktop_catalog_ingest_fast_safe_control(c):
     c.page.locator('#catalog-tab-import').click()
     mode = c.page.locator('#ingestSafeMode')
     c.expect(not mode.is_checked() and mode.is_disabled(), 'Fast starts selected; mode requires compression')
+    c.expect(not mode.is_visible(), 'verification mode appears only once compression is chosen')
+    c.page.locator('#compressOnIngest').check()
     c.page.locator('#ingestCompressionMode .ingest-mode-switch').hover()
     c.expect(c.page.locator('#ingestModeTip').is_visible(), 'hover explains Fast and Safe')
     c.expect_in('skips restoring each file', c.page.locator('#ingestModeTip').inner_text())
@@ -24,7 +26,6 @@ def desktop_catalog_ingest_fast_safe_control(c):
     c.page.locator('#ingestModeInfo').click()
     c.expect(c.page.locator('#ingestModeTip').is_visible(), 'tap/click opens explanation')
     c.page.keyboard.press('Escape')
-    c.page.locator('#compressOnIngest').check()
     c.expect(mode.is_enabled(), 'compression enables mode switch')
     mode.focus()
     mode.press('Space')
@@ -40,7 +41,7 @@ def desktop_catalog_ingest_fast_safe_control(c):
     c.expect(not mode.is_checked(), 'Space returns to Fast')
     c.page.keyboard.press('Escape')
     c.page.locator('#compressOnIngest').uncheck()
-    c.expect(mode.is_disabled(), 'compression off disables mode')
+    c.expect(mode.is_disabled() and not mode.is_visible(), 'compression off disables and hides mode')
 
 
 @check('desktop-catalog-rice-auto-ingest', 'catalog')

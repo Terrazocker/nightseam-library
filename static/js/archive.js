@@ -78,11 +78,15 @@ function elapsedLabel(ms) {
 }
 
 function lockArchiveActions() {
-  const selectors = "#btnTopIngest, #btnIngest, #btnIngestFolder, #fitFolder, #btnTopReindex, #btnArcReindex, #btnTopExport, #btnTopCopy, #btnTopHealth, #btnClearResults, #btnArcSave, #btnArcBrowse, #arcDir, #siteLat, #siteLon, #btnSiteSave, #compressOnIngest, #ingestSafeMode, #libEditSave, [data-edit], [data-frame-override], [data-library-add], [data-rice-mode], [data-imp]";
+  const selectors = "#btnTopIngest, #btnIngest, #btnIngestFolder, #fitFolder, #btnTopReindex, #btnArcReindex, #btnTopExport, #btnTopCopy, #btnTopHealth, #btnClearResults, #btnArcSave, #btnArcBrowse, #arcDir, #siteLat, #siteLon, #btnSiteSave, #compressOnIngest, #ingestSafeMode, #libEditSave, [data-edit], [data-frame-override], [data-library-add], [data-rice-mode], [data-imp], [data-empty-import]";
   const controls = [...document.querySelectorAll(selectors)];
   const previous = controls.map(control => control.disabled);
   controls.forEach(control => { control.disabled = true; });
   return () => controls.forEach((control, i) => { control.disabled = previous[i]; });
+}
+
+export function archiveBusy() {
+  return Boolean(_archiveOperation);
 }
 
 export function beginArchiveHealth() {
@@ -366,28 +370,44 @@ function renderImports(list) {
       "Completed imports are listed here so you can add darks, flats or bias to their sessions.");
     return;
   }
-  box.innerHTML = list.map(b => {
-    const prefix = `${b.slug}/${b.session}/`.toLowerCase();
+  // History rows are per frame type; one capture session is one entry.
+  const groups = new Map();
+  for (const row of list) {
+    const key = `${row.slug}/${row.session}`.toLowerCase();
+    if (!groups.has(key)) groups.set(key, { slug: row.slug, session: row.session,
+      name: row.object_name || row.slug, first: null, frames: new Map() });
+    const group = groups.get(key);
+    if (row.first_obs && (!group.first || row.first_obs < group.first)) group.first = row.first_obs;
+    const frame = group.frames.get(row.frame) || { n: 0, exposure: 0 };
+    frame.n += Number(row.n_files) || 0;
+    frame.exposure += Number(row.total_exposure) || 0;
+    group.frames.set(row.frame, frame);
+  }
+  const frameOrder = (kind) => { const i = ["light", "dark", "flat", "bias"].indexOf(kind); return i < 0 ? 9 : i; };
+  box.innerHTML = [...groups.values()].map(g => {
+    const prefix = `${g.slug}/${g.session}/`.toLowerCase();
     const anchor = (S.library?.objects || []).flatMap(object => object.images || [])
       .find(image => Number.isSafeInteger(image.id) && image.id > 0 &&
         String(image.file || "").replaceAll("\\", "/").toLowerCase().startsWith(prefix));
     const anchorAttrs = anchor ? `data-imp-anchor="${anchor.id}"`
       : 'disabled title="This session is no longer available in the library."';
-    const dur = b.total_exposure > 0 ? ` \u00B7 ${fmtDur(b.total_exposure)}` : "";
-    const loc = `${esc(b.slug)}/${esc(b.session)}/${esc(b.frame)}s`;
-    const frames = FRAME_NAMES[b.frame] || b.frame;
+    const loc = `${esc(g.slug)}/${esc(g.session)}`;
+    const frames = [...g.frames].sort(([a], [b]) => frameOrder(a) - frameOrder(b)).map(([kind, f]) =>
+      `${FRAME_NAMES[kind] || kind} \u00D7 ${f.n}${f.exposure > 0 ? ` \u00B7 ${fmtDur(f.exposure)}` : ""}`);
+    const day = g.first ? fmtDT(g.first).split(" ")[0] : "";
     return `<div class="imp-item">
       <div class="imp-head">
-        <b>${esc(b.object_name || b.slug)}</b>
-        <span class="hint">${esc(frames)} \u00D7 ${b.n_files}${dur}</span>
+        <b>${esc(g.name)}</b>
+        ${day ? `<span class="imp-date mono">${esc(day)}</span>` : ""}
       </div>
+      <div class="imp-frames">${frames.map((text) => `<span>${esc(text)}</span>`).join("")}</div>
       <div class="imp-path mono" title="Archive folder: ${loc}">${loc}</div>
       <div class="imp-btns" role="group" aria-label="Add calibration exposures to this session">
         <span class="imp-btns-label" aria-hidden="true">Add to session</span>
         <button type="button" data-imp="dark" ${anchorAttrs}>+ Darks</button>
         <button type="button" data-imp="flat" ${anchorAttrs}>+ Flats</button>
         <button type="button" data-imp="bias" ${anchorAttrs}>+ Bias</button>
-        <button type="button" class="imp-open icon-button" data-open="${esc(b.slug)}/${esc(b.session)}" title="Open this session's folder" aria-label="Open this session's folder">${catalogIcon("folder")}</button>
+        <button type="button" class="imp-open icon-button" data-open="${loc}" title="Open this session's folder" aria-label="Open this session's folder">${catalogIcon("folder")}</button>
       </div>
     </div>`;
   }).join("");
@@ -455,15 +475,21 @@ export function renderLibrary() {
       "database", "Your library is empty",
       ["Import FITS exposures to start your catalog.",
        "They are grouped by object into capture sessions, one per night."],
-      "session-empty-state onboarding", IMPORT_ACTIONS)}</td></tr>`;
+      "session-empty-state onboarding", _archiveOperation
+        ? IMPORT_ACTIONS.replaceAll("<button ", "<button disabled ") : IMPORT_ACTIONS)}</td></tr>`;
     clearSessionDetails("No session selected", "Session details appear here after your first import.");
     $("#librarySessionCount").textContent = "0 sessions";
     $("#libObjectCount").textContent = "0 objects";
     return;
   }
   const sort = $("#libSort").value;
+  // "Integration time" means light integration, the figure the workspace
+  // shows; calibration exposure must not lift an object up the list.
+  const lightIntegration = new Map(sort === "integ" ? allObjects.map((o) =>
+    [o, libraryObjectRollup(o.sessions).lightExposure]) : []);
   allObjects.sort((a, b) => {
-    if (sort === "integ") return b.total_exposure - a.total_exposure;
+    if (sort === "integ") return lightIntegration.get(b) - lightIntegration.get(a)
+      || String(a.name || "").localeCompare(String(b.name || ""));
     if (sort === "sessions") return b.n_sessions - a.n_sessions;
     return String(a.name || "").localeCompare(String(b.name || ""));
   });
@@ -591,10 +617,30 @@ function sessionFolderPaths(object, session) {
   return [...new Map(folders.map((folder) => [folder.toLowerCase(), folder])).values()];
 }
 
-function selectLibrarySession(index) {
+function selectLibrarySession(index, { reveal = false } = {}) {
   _selectedLibrarySession = index;
   renderLibrary();
-  $(`#librarySessions [data-select-session="${index}"]`)?.focus({ preventScroll: true });
+  const button = $(`#librarySessions [data-select-session="${index}"]`);
+  button?.focus({ preventScroll: true });
+  if (reveal) button?.closest("tr")?.scrollIntoView({ block: "nearest" });
+}
+
+/* Select an object and keep keyboard focus on its (re-rendered) button. */
+function selectLibraryObject(name, { reveal = false } = {}) {
+  _selectedLibraryObject = name;
+  _selectedLibrarySession = 0;
+  renderLibrary();
+  const button = [...document.querySelectorAll("#libraryObjectList [data-library-object]")]
+    .find((node) => node.dataset.libraryObject === name);
+  button?.focus({ preventScroll: true });
+  if (reveal) button?.scrollIntoView({ block: "nearest" });
+}
+
+/* Arrow keys, Home and End move through a list; selection follows focus. */
+function listStep(key, index, count) {
+  const steps = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: count - 1 };
+  if (!(key in steps) || !count) return null;
+  return Math.max(0, Math.min(count - 1, steps[key]));
 }
 
 function sessionCompression(session) {
@@ -617,8 +663,11 @@ function sessionWhen(session) {
   const [endDay, endTime] = fmtDT(session.end).split(" ");
   if (!startTime) return { day: startDay, time: "" };
   if (!endTime || (endDay === startDay && endTime === startTime)) return { day: startDay, time: startTime };
-  return { day: startDay, time: endDay === startDay
-    ? `${startTime}–${endTime}` : `${startTime} – ${endDay.slice(5)} ${endTime}` };
+  if (endDay === startDay) return { day: startDay, time: `${startTime}–${endTime}` };
+  // Overnight sessions end on the next calendar day; say so compactly.
+  const nextDay = Date.parse(`${endDay}T00:00Z`) - Date.parse(`${startDay}T00:00Z`) === 86400000;
+  return { day: startDay, time: nextDay
+    ? `${startTime}–${endTime} +1d` : `${startTime} – ${endDay.slice(5)} ${endTime}` };
 }
 
 function sessionTypeCount(session, needle) {
@@ -801,8 +850,12 @@ export function bindArchive() {
     }, 180);
   };
   const syncMode = () => {
-    mode.disabled = Boolean(_archiveOperation) || !$("#compressOnIngest").checked;
+    const compress = $("#compressOnIngest").checked;
+    mode.disabled = Boolean(_archiveOperation) || !compress;
     modeGroup.dataset.mode = mode.checked ? "safe" : "fast";
+    // Verification only matters once compression is chosen.
+    modeGroup.hidden = !compress;
+    if (!compress) { pinnedInfo = false; showModeInfo(false); }
   };
   $("#compressOnIngest").addEventListener("change", syncMode);
   mode.addEventListener("change", syncMode);
@@ -997,9 +1050,16 @@ export function bindArchive() {
   $("#libraryObjectList").addEventListener("click", (e) => {
     const button = e.target.closest("[data-library-object]");
     if (!button) return;
-    _selectedLibraryObject = button.dataset.libraryObject;
-    _selectedLibrarySession = 0;
-    renderLibrary();
+    selectLibraryObject(button.dataset.libraryObject);
+  });
+  $("#libraryObjectList").addEventListener("keydown", (e) => {
+    const button = e.target.closest("[data-library-object]");
+    if (!button) return;
+    const buttons = [...$("#libraryObjectList").querySelectorAll("[data-library-object]")];
+    const next = listStep(e.key, buttons.indexOf(button), buttons.length);
+    if (next === null) return;
+    e.preventDefault();
+    selectLibraryObject(buttons[next].dataset.libraryObject, { reveal: true });
   });
   $("#librarySessions").addEventListener("click", (e) => {
     const folder = e.target.closest("[data-open-library-folder]");
@@ -1010,9 +1070,17 @@ export function bindArchive() {
   });
   $("#librarySessions").addEventListener("keydown", (e) => {
     const row = e.target.closest("tr[data-library-session]");
-    if (!row || e.target.closest("[data-open-library-folder]") || !["Enter", " "].includes(e.key)) return;
+    if (!row || e.target.closest("[data-open-library-folder]")) return;
+    const index = Number(row.dataset.librarySession) || 0;
+    if (["Enter", " "].includes(e.key)) {
+      e.preventDefault();
+      selectLibrarySession(index);
+      return;
+    }
+    const next = listStep(e.key, index, $("#librarySessions").querySelectorAll("tr[data-library-session]").length);
+    if (next === null) return;
     e.preventDefault();
-    selectLibrarySession(Number(row.dataset.librarySession) || 0);
+    selectLibrarySession(next, { reveal: true });
   });
   $("#librarySessionRail").addEventListener("click", (e) => {
     const folderButton = e.target.closest("[data-open-library-folder]");

@@ -3,7 +3,7 @@
 
 import { $, toast, initFocusTrap } from "./util.js";
 import { S } from "./state.js";
-import { bindArchive, applyArchiveUI, loadLibrary, exportLibrary } from "./archive.js";
+import { bindArchive, applyArchiveUI, loadLibrary, exportLibrary, archiveBusy } from "./archive.js";
 import { bindArchiveHealth } from "./archive_health.js";
 import { bindCompression } from "./compression.js";
 import { bindSkyMap, renderSkyMap } from "./skymap.js";
@@ -161,6 +161,10 @@ function bindTopActions() {
   document.addEventListener("click", (event) => {
     const action = event.target.closest("[data-empty-import]");
     if (!action) return;
+    if (archiveBusy()) {
+      toast("Wait for the current archive operation to finish.", "info", 4000);
+      return;
+    }
     selectChild($("#catalog-tab-import"));
     $(action.dataset.emptyImport === "folder" ? "#btnIngestFolder" : "#btnIngest").click();
   });

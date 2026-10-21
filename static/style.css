@@ -514,7 +514,7 @@ main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-
 .library-sessions { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; }
 .library-sessions-heading { flex: none; padding: var(--sp-3) var(--sp-4) var(--sp-2); }
 .library-session-table-wrap { flex: 1 1 auto; border-top: 1px solid var(--border-soft); }
-.library-session-table { min-width: 680px; table-layout: fixed; }
+.library-session-table { min-width: 640px; table-layout: fixed; }
 .library-session-table:has(.empty-state) { height: 100%; }
 .library-session-table:has(.onboarding) thead { display: none; }
 .library-session-table th {
@@ -602,6 +602,7 @@ main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-
 .library-map-facts > div:last-child { border-bottom: 0; }
 .library-session-facts dt, .library-frame-rollup span, .library-map-facts dt { color: var(--dim); }
 .library-session-facts dd, .library-frame-rollup b, .library-map-facts dd {
+  white-space: nowrap;
   text-align: right; font: 500 var(--fs-xs) / 1.6 var(--font-mono); font-variant-numeric: tabular-nums; }
 .library-frame-rollup b { font-weight: 500; }
 .chip-list { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
@@ -615,7 +616,8 @@ main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-
 .library-session-actions { display: grid; flex: none; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4) var(--sp-4); border-top: 1px solid var(--border); }
 .library-session-actions .section-label { margin-bottom: 6px; }
 .button-row { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-.button-row.even > .button { flex: 1 1 0; }
+.button-row.even { flex-wrap: nowrap; }
+.button-row.even > .button { flex: 1 1 0; min-width: 0; padding: 0 var(--sp-2); }
 .library-session-actions .hint { margin-top: calc(-1 * var(--sp-1)); }
 
 /* ---------------------------------------------------------------- Import */
@@ -728,7 +730,8 @@ main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-
 .imp-item { display: grid; flex: none; gap: var(--sp-1); padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--border-soft); }
 .imp-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-3); }
 .imp-head b { font-size: var(--fs-sm); font-weight: 600; }
-.imp-head .hint { margin-left: auto; font-variant-numeric: tabular-nums; }
+.imp-date { margin-left: auto; color: var(--dim); }
+.imp-frames { display: flex; flex-wrap: wrap; gap: 2px var(--sp-3); color: var(--dim); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .imp-path { overflow: hidden; color: var(--faint); text-overflow: ellipsis; white-space: nowrap; }
 .imp-btns { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); margin-top: var(--sp-1); }
 .imp-btns-label { margin-right: var(--sp-1); color: var(--dim); font-size: var(--fs-xs); }
@@ -906,8 +909,16 @@ main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-
 /* Reflow before regions become unreadable; type and controls never scale. */
 
 @media (max-width: 1279px) {
-  html[data-theme="workbench"] { --rail-w: 224px; --inspector-w: 264px; }
+  /* Keep the whole session table visible in the three-column range. */
+  html[data-theme="workbench"] { --rail-w: 208px; --inspector-w: 248px; }
+  .library-session-table { min-width: 560px; }
+  .library-session-table th, .library-session-table td { padding: 0 var(--sp-2); }
   .library-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-2) var(--sp-4); }
+}
+
+@media (min-width: 1100px) and (max-width: 1279px) {
+  /* The inspector and the row tooltip carry the time range here. */
+  .session-time { display: none; }
 }
 
 @media (max-width: 1100px) {
