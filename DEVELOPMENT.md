@@ -36,12 +36,27 @@ volume's change-journal id and the file's USN, which every closed writer
 advances, so independent handles reuse a measured digest only while that is
 unchanged. Without an active change journal they always rehash.
 Unsupported filesystems/open writers disable memoization. Only measured bytes
-populate the cache, and positive duplicate
+populate the cache: an earlier read, or an uncompressed publication by this
+process, whose digest was computed over exactly the bytes written to the stage.
+Publication removes the stage hard link and lets the first handle close before
+capturing the durable version (both advance the USN), so files just imported are
+not read back serially under the archive lock. Positive duplicate
 matches always rehash. Import offers individual files or a recursive directory
-selection through a browser/WebView2 directory input. Both use the same upload
-and full-byte deduplication path; source relative paths never become destination
-paths. The UI sends at most 96 files per ordinary request, or 24 with compression,
-and at most 512 MiB per batch unless a larger single file needs its own request.
+selection. In the browser fallback the directory comes through a directory
+input and uploads like files. In the native window, Choose folder… opens the
+Windows folder dialog through JsApi.pick_import_folder, which registers the
+folder in app/local_import.py and returns only an opaque token, so WebView2
+shows no upload prompt and the page never names a source path.
+/api/images/folder/scan lists the folder's FITS names recursively, without
+following links or junctions, skipping an archive inside it and refusing a
+folder inside the archive. /api/images/folder/ingest takes the token, scanned
+relative paths and the upload options as JSON; it refuses any path outside the
+folder before staging anything and reads each source in place through the same
+IngestRun staging, ordering and publication as an upload, so dedup, rollback
+and history behave identically. A source that cannot be opened fails alone.
+Source relative paths never become destination paths. The UI sends at most 96 files per ordinary request, or 24 with compression,
+and at most 512 MiB per upload batch (2 GiB per folder batch, which carries no
+file bytes) unless a larger single file needs its own request.
 The server retains its 1 GiB per-file, 24 GiB body and 24-worker ceilings.
 /api/images/ingest parses multipart incrementally (app/upload_stream.py): each
 file part streams with bounded buffering straight into its own archive stage

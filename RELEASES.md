@@ -1,5 +1,48 @@
 # Independent catalog release record
 
+## Native folder import — October 22, 2026
+
+- In the desktop window, Choose folder… opens the Windows folder dialog and
+  imports the folder's exposures in place. WebView2's "Upload N files to this
+  site?" confirmation no longer appears, and files are no longer copied
+  through the loopback socket. The browser fallback keeps the directory input.
+- The bridge registers the picked folder and gives the page an opaque token;
+  /api/images/folder/scan and /api/images/folder/ingest accept only that token
+  and relative paths inside the folder. Links and junctions are not followed,
+  an archive inside the folder is skipped, a folder inside the archive is
+  refused, and a source that cannot be opened fails on its own.
+- Upload and folder imports share one IngestRun for staging, ordered
+  publication, dedup and history.
+- Imports no longer read every newly published file back under the archive
+  lock. Each same-size exposure used to trigger a serialized full SHA-256 of the
+  previous one, which left the disk idle between bursts. An uncompressed
+  publication now seeds the process-local negative cache with the digest of the
+  bytes it wrote, after removing the stage hard link and settling the file's
+  change-journal version. Any later change still forces a read, and positive
+  duplicates still rehash.
+- Folder batches may hold 2 GiB instead of the upload limit of 512 MiB, so the
+  publication pipeline drains less often.
+
+Measured with a developer benchmark on the NVMe archive drive (144 synthetic
+52 MB exposures, source files cached, instrumented source server): folder
+import went from 29.0 s to 10.5 s, and to 7.0 s uninstrumented with 2 GiB
+batches; upload import went from 44.3 s to 36.0 s. Process CPU for the folder
+import fell from 49 to 31 seconds. Cold source reads were not measured; the
+user reported the rebuilt executable faster on their own capture folder.
+
+Validation on Windows with Python 3.12: before the performance change, the
+full suite ran 1018 passed and 5 skipped, and the user confirmed a folder
+import through the native dialog in the executable by hand. After it, the full
+suite ran 1019 passed, 5 skipped and 1 failed: test_import_profile still
+expected a fresh import to read archive files back. That expectation was
+updated and the module then passed 3 of 3. Two read-count expectations in
+test_ingest_performance changed for the same reason (11 to 0, and 13 to 10
+with a three-entry cache), and two seeding tests were added. check_js.py,
+check_encoding.py and check_dom_ids.py passed. build.ps1 -AllowDirty built
+0.1.0-g3344eede-dirty and check_browser.py --desktop passed 27 of 27. The
+browser checks cannot open the native dialog. No release was staged or
+published.
+
 ## Redesign follow-ups — October 21, 2026
 
 - Sorting objects by integration uses light integration, the figure the

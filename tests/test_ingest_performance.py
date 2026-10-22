@@ -130,9 +130,10 @@ def test_negative_candidates_use_safe_versions_and_edits_invalidate(tmp_path, mo
     monkeypatch.setattr(ingest, '_fingerprint_file', measured)
     results = [upload(db, archive, exposure(index), name=f'{index}.fit') for index in range(12)]
     assert all(result['ok'] for result in results)
-    # Without a durable version (no change journal), Windows rehashes between
+    # Published bytes seed the cache, so durable versions need no negative
+    # reads. Without one (no change journal), Windows rehashes between
     # unpinned requests; timestamps alone can collide.
-    assert len(reads) == (11 if durable_versions(tmp_path) or os.name != 'nt' else 66)
+    assert len(reads) == (0 if durable_versions(tmp_path) or os.name != 'nt' else 66)
     path = archive / results[0]['stored']
     info = path.stat()
     actual = exposure(40)
@@ -218,10 +219,12 @@ def test_bounded_negative_cache_and_conservative_reads_above_capacity(tmp_path, 
     for index in range(8):
         assert upload(db, archive, exposure(index))['ok']
     # Without a durable version (e.g. no change journal on a CI volume), handle-
-    # lifetime versions cannot be reused, so nothing is cached at all.
+    # lifetime versions cannot be reused, so nothing is cached at all. With one,
+    # the first three publications fill the frozen cache; later uploads read
+    # each uncached earlier file (1 + 2 + 3 + 4).
     durable = durable_versions(tmp_path)
     assert len(db._ingest_fingerprints) == (3 if durable else 0)
-    assert len(reads) == (13 if durable or os.name != 'nt' else 28)
+    assert len(reads) == (10 if durable or os.name != 'nt' else 28)
 
 
 def test_known_compressed_duplicate_does_not_need_encoder(tmp_path, monkeypatch):
@@ -339,3 +342,36 @@ def test_native_tool_cache_revalidates_changed_executable_with_restored_mtime(tm
     os.utime(executable, ns=(before.st_atime_ns, before.st_mtime_ns))
     with pytest.raises(ValueError, match='integrity check'):
         compression.tools()
+
+
+def test_published_bytes_are_not_reread_for_later_negative_lookups(tmp_path, monkeypatch):
+    if not durable_versions(tmp_path):
+        pytest.skip('volume has no durable file versions')
+    db, archive, _ = library(tmp_path, count=0)
+    original, reads = ingest._fingerprint_file, []
+    def measured(path, *args):
+        reads.append(path)
+        return original(path, *args)
+    monkeypatch.setattr(ingest, '_fingerprint_file', measured)
+    stored = [upload(db, archive, exposure(i), name=f'light-{i}.fit') for i in range(4)]
+    assert all(result['ok'] and not result.get('skipped') for result in stored)
+    # Same-size negatives use the digest of the bytes this process wrote.
+    assert reads == []
+    assert not list(archive.glob('.nightseam-import-*'))
+    # A positive still reads the actual archived bytes before skipping.
+    again = upload(db, archive, exposure(2), name='again.fit')
+    assert again['skipped'] and again['id'] == stored[2]['id']
+    assert archive / stored[2]['stored'] in reads
+
+
+def test_published_file_changed_later_is_read_again(tmp_path):
+    if not durable_versions(tmp_path):
+        pytest.skip('volume has no durable file versions')
+    db, archive, _ = library(tmp_path, count=0)
+    first = upload(db, archive, exposure(0), name='light-0.fit')
+    replacement = exposure(1)
+    assert first['ok'] and len(replacement) == len(exposure(0))
+    # An external tool replaces the published bytes, keeping the size.
+    (archive / first['stored']).write_bytes(replacement)
+    result = upload(db, archive, replacement, name='light-1.fit')
+    assert result['ok'] and result['skipped'] and result['id'] == first['id']

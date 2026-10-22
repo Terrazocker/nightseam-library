@@ -16,7 +16,7 @@ import time
 import webbrowser
 from pathlib import Path
 
-from app import paths
+from app import local_import, paths
 from app.database import Database
 from app.server import create_app
 from app.version import app_version
@@ -134,6 +134,7 @@ class JsApi:
 
     def __init__(self):
         self._window = None
+        self._last_import_folder = ""
 
     def bind_window(self, window) -> None:
         self._window = window
@@ -152,6 +153,22 @@ class JsApi:
 
     def pick_archive_dir(self, current: str = "") -> str | None:
         """Open a native folder-picker dialog for the image archive path."""
+        return self._pick_folder(current)
+
+    def pick_import_folder(self) -> dict | None:
+        """Pick a folder to import from in place.
+
+        The page receives an opaque token for the server's folder import, not
+        a path it could later substitute; the name is for display only.
+        """
+        picked = self._pick_folder(self._last_import_folder)
+        token = picked and local_import.register(picked)
+        if not token:
+            return None
+        self._last_import_folder = picked
+        return {"token": token, "name": Path(picked).name or picked}
+
+    def _pick_folder(self, current: str = "") -> str | None:
         import webview
         try:
             win = webview.windows[0]

@@ -50,8 +50,10 @@ def test_profile_real_private_http_import_excludes_audits_and_cleans_up(tmp_path
     counters = result['profile']['counters']
     assert counters['incoming_sha256_bytes'] == 5 * profile.bench.FILE_BYTES
     assert counters['incoming_sha256_streams'] == counters['sql_commit'] == 5
-    assert counters['archive_hashes_completed'] > 0
-    assert counters['archive_sha256_bytes'] == counters['completed_archive_bytes']
+    # Same-size files this import published are known from the bytes written;
+    # a fresh import reads none of them back.
+    assert counters.get('archive_hashes_completed', 0) == 0
+    assert counters.get('archive_sha256_bytes', 0) == counters.get('completed_archive_bytes', 0)
     assert result['profile']['phases']['database_commit']['calls'] == 5
 
 
