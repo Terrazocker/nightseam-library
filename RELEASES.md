@@ -1,5 +1,30 @@
 # Independent catalog release record
 
+## Hardware SHA-256 on Windows — October 22, 2026
+
+- Content hashing (import copies, archive fingerprints, deep health scans,
+  trash verification and library copies) now goes through app/digests.py. It
+  uses Windows CNG once that reproduces hashlib's known-answer digests,
+  including a copied state, and otherwise hashlib. Python's bundled OpenSSL
+  3.0.16 hashed at 673 MB/s on the Ryzen 5 5600X test machine because it does
+  not use the CPU's SHA extensions; CNG hashed at 2244 MB/s with identical
+  digests. Short identity hashes stay on hashlib.
+
+Measured with the same developer benchmark (144 synthetic 52 MB exposures,
+source files cached, uninstrumented, 2 GiB folder batches): folder import went
+from 5.2–5.4 s to 4.5–4.9 s, and process CPU fell from about 28 to 16–17
+seconds.
+
+Validation on Windows with Python 3.12: three tests that inject cancellation
+or mutation through the hash constructor now patch digests.sha256 instead of
+hashlib.sha256, and the profiler counts bytes through the same binding. Six
+new digest tests cover equivalence for every buffer type, copy, finishing,
+concurrency and the fallback. The full suite ran 1033 passed and 5 skipped;
+check_encoding.py passed. build.ps1 -AllowDirty built 0.1.0-gde3edea1-dirty
+and check_browser.py --desktop passed 27 of 27, and the user confirmed imports
+working in that executable. Which implementation the packaged executable
+selected was not inspected directly. No release was staged or published.
+
 ## Native folder import — October 22, 2026
 
 - In the desktop window, Choose folder… opens the Windows folder dialog and

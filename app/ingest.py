@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from itertools import chain
 
+from . import digests
 from . import fits as fitsio
 from . import imglib
 from . import fits_metadata
@@ -278,7 +279,7 @@ def _fingerprint_file(path: Path, cancel_event=None) -> tuple[str, int, int] | N
     """Hash current bytes, refusing files that change during the read."""
     try:
         before = path.stat()
-        digest = hashlib.sha256()
+        digest = digests.sha256()
         with path.open("rb") as source:
             while chunk := source.read(_COPY_CHUNK):
                 _check_reindex_cancelled(cancel_event)
@@ -821,7 +822,7 @@ async def ingest_one(db: Database, catalog: list[dict], archive: Path,
 
     stage = prepared = None
     working = False
-    digest = hashlib.sha256()
+    digest = digests.sha256()
     try:
         archive = await _archive_io(archive.resolve)
         stage = await _archive_io(_prepare_stage, archive, on_cancel=_remove_stage)

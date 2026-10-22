@@ -41,7 +41,12 @@ process, whose digest was computed over exactly the bytes written to the stage.
 Publication removes the stage hard link and lets the first handle close before
 capturing the durable version (both advance the USN), so files just imported are
 not read back serially under the archive lock. Positive duplicate
-matches always rehash. Import offers individual files or a recursive directory
+matches always rehash. Content SHA-256 (import copies, archive fingerprints,
+deep health scans, trash verification and library copies) goes through
+app/digests.py. It uses Windows CNG once that reproduces hashlib's
+known-answer digests, and otherwise hashlib. Python's bundled OpenSSL does not
+use the CPU's SHA extensions, while CNG does (about 3x on a Ryzen 5 5600X), and
+hashing is the import's CPU ceiling. Short identity hashes stay on hashlib. Import offers individual files or a recursive directory
 selection. In the browser fallback the directory comes through a directory
 input and uploads like files. In the native window, Choose folder… opens the
 Windows folder dialog through JsApi.pick_import_folder, which registers the

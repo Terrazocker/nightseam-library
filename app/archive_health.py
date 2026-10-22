@@ -18,7 +18,7 @@ from pathlib import Path
 from .paths import safe_join, safe_rel
 from .fits_metadata import is_fits_name
 from .discovery_spool import DiscoverySpool
-from . import imglib
+from . import digests, imglib
 
 log = logging.getLogger(__name__)
 MAX_FINDINGS = 10_000
@@ -140,7 +140,7 @@ def _inspect(root, relative, identity, deep, checkpoint, read_progress):
             raise UnstableFile("The path changed while opening it; it was not read.")
         observed = None
         if deep:
-            digest = hashlib.sha256()
+            digest = digests.sha256()
             while True:
                 checkpoint()
                 chunk = source.read(1024 * 1024)

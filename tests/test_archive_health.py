@@ -344,7 +344,7 @@ def test_cancellation_and_mutation_during_hash_are_not_verified(library, monkeyp
         def update(self, data): self.hash.update(data); event.set()
         def hexdigest(self): return self.hash.hexdigest()
     before = snapshot(db)
-    monkeypatch.setattr(archive_health.hashlib, "sha256", CancelAfterChunk)
+    monkeypatch.setattr(archive_health.digests, "sha256", CancelAfterChunk)
     result = audit(db, "deep", event)
     assert result["status"] == "cancelled" and result["verified"] == result["processed"] == 0
     assert result["bytes_read"] == 1024 * 1024 and snapshot(db) == before
@@ -352,7 +352,7 @@ def test_cancellation_and_mutation_during_hash_are_not_verified(library, monkeyp
         def __init__(self): self.hash = original()
         def update(self, data): self.hash.update(data); target.write_bytes(b"changed")
         def hexdigest(self): return self.hash.hexdigest()
-    monkeypatch.setattr(archive_health.hashlib, "sha256", MutatingHash)
+    monkeypatch.setattr(archive_health.digests, "sha256", MutatingHash)
     assert audit(db, "deep")["finding_counts"] == {"unstable": 1}
 
 
@@ -371,7 +371,7 @@ def test_mutation_during_hash_with_restored_size_and_mtime_is_unstable(library, 
             os.utime(target, ns=(info.st_atime_ns, info.st_mtime_ns))
         def hexdigest(self): return self.hash.hexdigest()
 
-    monkeypatch.setattr(archive_health.hashlib, "sha256", MutatingHash)
+    monkeypatch.setattr(archive_health.digests, "sha256", MutatingHash)
     report = audit(db, "deep")
     assert report["verified"] == 0 and report["finding_counts"] == {"unstable": 1}
 
