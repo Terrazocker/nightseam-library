@@ -1,5 +1,84 @@
 # Independent catalog release record
 
+## Redesign follow-ups — October 21, 2026
+
+- Sorting objects by integration uses light integration, the figure the
+  workspace shows; it previously used total exposure including calibration.
+  The option is now labeled Light integration.
+- Empty-library Import actions lock with other archive actions; a click that
+  races an operation explains why nothing started.
+- Recent imports group history rows by archive session folder: one entry per
+  night with its date and frames per type, instead of one per frame type.
+- The Fast/Safe switch appears only once compression on import is checked.
+- Arrow keys, Home and End move through the object list and the session
+  table with selection following focus; clicking an object keeps focus on it.
+- Between 1100 and 1279px the rails are slimmer, cells tighter and the row
+  time range moves to the inspector, so the session table fits without
+  horizontal scrolling from 1100px up. Overnight ranges read "17:49–04:22
+  +1d", and calibration buttons share one row.
+- The `--viz-type-*` tokens are the only object-type palette; skymap.js no
+  longer carries its own table (asterism changes from amber-orange to teal to
+  stay distinct from open clusters). viztheme.js and themes.css keep only the
+  ten canvas roles the Sky Map draws with (72 tokens became 18) and drop the
+  unused planner moon-marker helper.
+- Six historical plans and the pre-redesign mockups move to docs/archive/
+  with an index; nothing outside the archive referenced them.
+
+Validation: on Linux with Python 3.13 the full suite ran 995 passed and 9
+skipped in 231.14 seconds; check_js.py, check_dom_ids.py and
+check_encoding.py passed. The packaged browser checks under the same source
+stand-in (Chromium 141) passed 26 of 27; desktop-catalog-support-report again
+failed only its package-metadata assertion because pywebview cannot be
+installed in that environment. Windows and the native window were not run.
+No release was staged or published.
+
+## Workbench interface redesign — October 21, 2026
+
+DESIGN.md is rewritten around explicit principles (library-first workflow, one
+primary action per view, progressive disclosure, WCAG 2.2 AA) and the
+catalog interface follows it:
+
+- Header: one 48px bar holds the name, the view tabs (Library, Import, Sky
+  Map), the primary Import action and a Tools menu (WAI-ARIA menu button) for
+  Reindex folders, Archive health, Export library, Copy library and the
+  support report, with the version. Dialogs opened from the menu return focus
+  to it. The separate 60px tab row and six equal-weight link-colored toolbar
+  buttons are gone.
+- Library: the selected object's name is the view title, with a Last session
+  metric. Session rows show date, session kind and local time range,
+  right-aligned tabular counts with receding zeros and a short folder action.
+  The inspector groups frames, filter chips and folders, and its actions into
+  Open session folder, Add calibration frames and Storage; the storage change
+  that cannot apply is disabled with its reason. An empty library shows one
+  onboarding state with Import actions; rails show inline notices.
+- Import: drop target and actions first, the archive destination with a
+  Change link, an explicit Auto frame type (previously Lights looked selected
+  while headers decided), compression, then Archive settings. Import
+  progress adds a bar beside the existing counters.
+- Styles: themes.css now holds every token (surfaces, lines, text tiers,
+  accent, link, status, type scale, 4px spacing, radii, density) plus the
+  unchanged --viz-* canvas roles. style.css is one ordered component sheet
+  (the two files total 1,161 lines, down from 1,950), without
+  !important layering apart from .hidden/[hidden] and reduced motion.
+  Control edges meet 3:1 and every text tier 4.5:1; red text uses a lighter
+  --bad-text. Increased-contrast and forced-colors preferences are honored.
+- CATALOG_IMPORT_GUIDE.md, DEVELOPMENT.md, README.md and the Windows manual
+  acceptance steps name the new locations. The browser checks reach menu
+  actions through a `tool()` harness helper and expect focus on Tools after
+  closing a dialog opened from it.
+
+Validation: on Linux with Python 3.13 the full suite ran 995 passed and 9
+skipped in 217.52 seconds; check_js.py, check_dom_ids.py and
+check_encoding.py passed. The packaged browser checks ran with Chromium 141
+(`check_browser.py --desktop --channel chromium`) against a source stand-in
+for the executable (frozen flags, data beside the copied stand-in in gate
+scratch, assets from the checkout), not a built bundle: 26 of 27 passed.
+desktop-catalog-support-report failed only its frozen package-metadata
+assertion (pywebview's wheel could not be built in that environment); its
+menu and download steps passed before it. The unchanged code gave the same
+result under that stand-in. Windows and the native window were not run. No
+release was staged or published.
+
 ## Retired planner harness and stylesheet rules — October 19, 2026
 
 The browser harness keeps only the packaged catalog target. Removed: the

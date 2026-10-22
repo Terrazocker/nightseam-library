@@ -10,28 +10,41 @@ let _selectedLibraryObject = null;
 let _selectedLibrarySession = 0;
 let _importFrameOverride = null;
 
-function emptyStateMarkup(icon, heading, lines, className = "") {
+function emptyStateMarkup(icon, heading, lines, className = "", actions = "") {
   const text = (Array.isArray(lines) ? lines : [lines]).filter(Boolean);
   const descriptions = text.length
     ? `<p>${text.map((line) => `<span>${esc(line)}</span>`).join("")}</p>` : "";
   const extra = className ? ` ${className}` : "";
-  return `<div class="empty-state${extra}">${catalogIcon(icon, "empty-icon")}<strong>${esc(heading)}</strong>${descriptions}</div>`;
+  const buttons = actions ? `<div class="empty-actions">${actions}</div>` : "";
+  return `<div class="empty-state${extra}">${catalogIcon(icon, "empty-icon")}<strong>${esc(heading)}</strong>${descriptions}${buttons}</div>`;
 }
 
+/* A compact one-line notice for secondary regions (rails, inspector). */
+function inlineNoticeMarkup(icon, heading, line, className = "") {
+  const extra = className ? ` ${className}` : "";
+  return `<div class="empty-state inline${extra}">${catalogIcon(icon, "empty-icon")}<div><strong>${esc(heading)}</strong>${line ? `<p>${esc(line)}</p>` : ""}</div></div>`;
+}
+
+const IMPORT_ACTIONS = '<button class="button primary" type="button" data-empty-import="files">Import exposures…</button>' +
+  '<button class="button" type="button" data-empty-import="folder">Import a folder…</button>';
+
+const FRAME_NAMES = { light: "Lights", dark: "Darks", flat: "Flats", bias: "Bias" };
+
 function syncFrameSelector() {
-  const defaultFrame = "light";
-  const chosenFrame = _impSession?.frame || _importFrameOverride || defaultFrame;
+  // An empty override means Auto: each exposure's header decides.
+  const chosenFrame = _impSession?.frame || _importFrameOverride || "";
   for (const button of document.querySelectorAll("[data-frame-override]")) {
     const active = button.dataset.frameOverride === chosenFrame;
     button.setAttribute("aria-pressed", String(active));
   }
   const help = $("#frameTypeHelp");
   if (help) {
+    const name = FRAME_NAMES[chosenFrame] || chosenFrame;
     help.textContent = _impSession
-      ? `${_impSession.frame} exposures will be attached to the selected object and session. Original capture dates are preserved.`
+      ? `${name} will be attached to the selected object and session. Original capture dates are preserved.`
       : _importFrameOverride
-      ? `${_importFrameOverride} exposures will override the recorded frame type for the next import. Click the selected type to use exposure metadata.`
-      : "Exposure metadata determines the frame type. Lights is the default when no frame type is recorded. Select a type to override the exposure metadata for the next import.";
+      ? `The next import is treated as ${name.toLowerCase()}, overriding each header. Choose Auto to read headers again.`
+      : "Auto reads the frame type from each exposure's header and treats unlabeled files as lights.";
   }
 }
 
@@ -65,11 +78,15 @@ function elapsedLabel(ms) {
 }
 
 function lockArchiveActions() {
-  const selectors = "#btnTopIngest, #btnIngest, #btnIngestFolder, #fitFolder, #btnTopReindex, #btnArcReindex, #btnTopExport, #btnTopCopy, #btnTopHealth, #btnClearResults, #btnArcSave, #btnArcBrowse, #arcDir, #siteLat, #siteLon, #btnSiteSave, #compressOnIngest, #ingestSafeMode, #libEditSave, [data-edit], [data-frame-override], [data-library-add], [data-rice-mode], [data-imp]";
+  const selectors = "#btnTopIngest, #btnIngest, #btnIngestFolder, #fitFolder, #btnTopReindex, #btnArcReindex, #btnTopExport, #btnTopCopy, #btnTopHealth, #btnClearResults, #btnArcSave, #btnArcBrowse, #arcDir, #siteLat, #siteLon, #btnSiteSave, #compressOnIngest, #ingestSafeMode, #libEditSave, [data-edit], [data-frame-override], [data-library-add], [data-rice-mode], [data-imp], [data-empty-import]";
   const controls = [...document.querySelectorAll(selectors)];
   const previous = controls.map(control => control.disabled);
   controls.forEach(control => { control.disabled = true; });
   return () => controls.forEach((control, i) => { control.disabled = previous[i]; });
+}
+
+export function archiveBusy() {
+  return Boolean(_archiveOperation);
 }
 
 export function beginArchiveHealth() {
@@ -100,7 +117,7 @@ function startImportActivity(total) {
   const progress = $("#ingestProgress");
   if (progress) {
     progress.hidden = false;
-    progress.innerHTML = '<span class="import-files"></span><span class="import-elapsed" aria-live="off"></span><span class="import-skipped" hidden></span><span class="import-restored" hidden></span><span class="import-failed" hidden></span><span class="import-pending" hidden></span><span class="import-request-error" hidden></span>';
+    progress.innerHTML = '<progress class="import-bar" aria-hidden="true"></progress><span class="import-files"></span><span class="import-elapsed" aria-live="off"></span><span class="import-skipped" hidden></span><span class="import-restored" hidden></span><span class="import-failed" hidden></span><span class="import-pending" hidden></span><span class="import-request-error" hidden></span>';
   }
   const busy = $("#busy");
   const clock = document.createElement("span");
@@ -124,6 +141,9 @@ function startImportActivity(total) {
     clock.textContent = `· ${elapsed}`;
     if (busy) busy.title = `${label} · ${elapsed} elapsed`;
     if (!progress) return;
+    const bar = progress.querySelector(".import-bar");
+    bar.max = Math.max(1, total);
+    bar.value = activity.processed;
     progress.querySelector(".import-files").textContent = `${activity.processed} / ${total} files processed`;
     progress.querySelector(".import-elapsed").textContent = `${elapsed} elapsed`;
     const skipped = progress.querySelector(".import-skipped");
@@ -302,8 +322,8 @@ function renderIngestResults(results) {
   if (!results.length) {
     if (clear) clear.hidden = true;
     if (summary) summary.textContent = "";
-    box.innerHTML = emptyStateMarkup("file", "Imported sessions appear here.",
-      "Files will be copied to your archive folder and added to the catalog.");
+    box.innerHTML = emptyStateMarkup("file", "No import in progress",
+      "Each file's outcome appears here while you import.");
     return;
   }
   const ok = results.filter(r => r.ok && !r.skipped && !r.restored).length;
@@ -346,30 +366,48 @@ function renderImports(list) {
   const box = $("#importHistory");
   if (!box) return;
   if (!list || !list.length) {
-    box.innerHTML = emptyStateMarkup("clock", "Recent imports appear here.",
-      "You can also add darks, flats, or bias to an existing session.");
+    box.innerHTML = emptyStateMarkup("clock", "No recent imports",
+      "Completed imports are listed here so you can add darks, flats or bias to their sessions.");
     return;
   }
-  box.innerHTML = list.map(b => {
-    const prefix = `${b.slug}/${b.session}/`.toLowerCase();
+  // History rows are per frame type; one capture session is one entry.
+  const groups = new Map();
+  for (const row of list) {
+    const key = `${row.slug}/${row.session}`.toLowerCase();
+    if (!groups.has(key)) groups.set(key, { slug: row.slug, session: row.session,
+      name: row.object_name || row.slug, first: null, frames: new Map() });
+    const group = groups.get(key);
+    if (row.first_obs && (!group.first || row.first_obs < group.first)) group.first = row.first_obs;
+    const frame = group.frames.get(row.frame) || { n: 0, exposure: 0 };
+    frame.n += Number(row.n_files) || 0;
+    frame.exposure += Number(row.total_exposure) || 0;
+    group.frames.set(row.frame, frame);
+  }
+  const frameOrder = (kind) => { const i = ["light", "dark", "flat", "bias"].indexOf(kind); return i < 0 ? 9 : i; };
+  box.innerHTML = [...groups.values()].map(g => {
+    const prefix = `${g.slug}/${g.session}/`.toLowerCase();
     const anchor = (S.library?.objects || []).flatMap(object => object.images || [])
       .find(image => Number.isSafeInteger(image.id) && image.id > 0 &&
         String(image.file || "").replaceAll("\\", "/").toLowerCase().startsWith(prefix));
     const anchorAttrs = anchor ? `data-imp-anchor="${anchor.id}"`
       : 'disabled title="This session is no longer available in the library."';
-    const dur = b.total_exposure > 0 ? ` \u00B7 ${fmtDur(b.total_exposure)}` : "";
-    const loc = `${esc(b.slug)}/${esc(b.session)}/${esc(b.frame)}s`;
+    const loc = `${esc(g.slug)}/${esc(g.session)}`;
+    const frames = [...g.frames].sort(([a], [b]) => frameOrder(a) - frameOrder(b)).map(([kind, f]) =>
+      `${FRAME_NAMES[kind] || kind} \u00D7 ${f.n}${f.exposure > 0 ? ` \u00B7 ${fmtDur(f.exposure)}` : ""}`);
+    const day = g.first ? fmtDT(g.first).split(" ")[0] : "";
     return `<div class="imp-item">
       <div class="imp-head">
-        <b>${esc(b.object_name || b.slug)}</b>
-        <span class="hint">${esc(b.session)} \u00B7 ${esc(b.frame)} \u00D7 ${b.n_files}${dur}</span>
+        <b>${esc(g.name)}</b>
+        ${day ? `<span class="imp-date mono">${esc(day)}</span>` : ""}
       </div>
-      <div class="imp-path mono" title="archive folder">${loc}</div>
-      <div class="imp-btns">
-        <button class="ghost" data-imp="dark" ${anchorAttrs}>+ darks</button>
-        <button class="ghost" data-imp="flat" ${anchorAttrs}>+ flats</button>
-        <button class="ghost" data-imp="bias" ${anchorAttrs}>+ bias</button>
-        <button class="ghost imp-open icon-button" data-open="${esc(b.slug)}/${esc(b.session)}" title="Open this session's folder" aria-label="Open this session's folder">${catalogIcon("folder")}</button>
+      <div class="imp-frames">${frames.map((text) => `<span>${esc(text)}</span>`).join("")}</div>
+      <div class="imp-path mono" title="Archive folder: ${loc}">${loc}</div>
+      <div class="imp-btns" role="group" aria-label="Add calibration exposures to this session">
+        <span class="imp-btns-label" aria-hidden="true">Add to session</span>
+        <button type="button" data-imp="dark" ${anchorAttrs}>+ Darks</button>
+        <button type="button" data-imp="flat" ${anchorAttrs}>+ Flats</button>
+        <button type="button" data-imp="bias" ${anchorAttrs}>+ Bias</button>
+        <button type="button" class="imp-open icon-button" data-open="${loc}" title="Open this session's folder" aria-label="Open this session's folder">${catalogIcon("folder")}</button>
       </div>
     </div>`;
   }).join("");
@@ -415,6 +453,13 @@ function fmtDur(sec) {
   return `${s}s`;
 }
 
+function clearSessionDetails(heading, line) {
+  $("#libraryFrameCount").textContent = "0 frames";
+  $("#librarySessionFacts").innerHTML = inlineNoticeMarkup("file", heading, line, "selected-session-empty");
+  $("#librarySessionActions").innerHTML = "";
+  $("#librarySessionActions").hidden = true;
+}
+
 export function renderLibrary() {
   if (!$("#libraryObjectList")) return;
   const L = S.library;
@@ -424,31 +469,33 @@ export function renderLibrary() {
     _selectedLibraryObject = null;
     _selectedLibrarySession = 0;
     renderLibraryObjectHeader(null, unit);
-    $("#libraryObjectList").innerHTML = emptyStateMarkup(
-      "folder", "No objects yet", "Import exposures to build your image library.",
-      "objects-empty-state");
+    $("#libraryObjectList").innerHTML = inlineNoticeMarkup(
+      "folder", "No objects yet", "Objects appear as you import.", "objects-empty-state");
     $("#librarySessions").innerHTML = `<tr><td colspan="8">${emptyStateMarkup(
-      "database", "No capture sessions yet", "Import exposures to build your image library.",
-      "session-empty-state")}</td></tr>`;
-    $("#librarySessionFacts").innerHTML = emptyStateMarkup("file",
-      "No session selected", ["Choose a capture session", "from the library to view details", "and frames."],
-      "selected-session-empty");
-    $("#librarySessionActions").innerHTML = "";
-    $("#librarySessionActions").hidden = true;
-    $("#libraryFrameCount").textContent = "0 frames";
+      "database", "Your library is empty",
+      ["Import FITS exposures to start your catalog.",
+       "They are grouped by object into capture sessions, one per night."],
+      "session-empty-state onboarding", _archiveOperation
+        ? IMPORT_ACTIONS.replaceAll("<button ", "<button disabled ") : IMPORT_ACTIONS)}</td></tr>`;
+    clearSessionDetails("No session selected", "Session details appear here after your first import.");
     $("#librarySessionCount").textContent = "0 sessions";
     $("#libObjectCount").textContent = "0 objects";
     return;
   }
   const sort = $("#libSort").value;
+  // "Integration time" means light integration, the figure the workspace
+  // shows; calibration exposure must not lift an object up the list.
+  const lightIntegration = new Map(sort === "integ" ? allObjects.map((o) =>
+    [o, libraryObjectRollup(o.sessions).lightExposure]) : []);
   allObjects.sort((a, b) => {
-    if (sort === "integ") return b.total_exposure - a.total_exposure;
+    if (sort === "integ") return lightIntegration.get(b) - lightIntegration.get(a)
+      || String(a.name || "").localeCompare(String(b.name || ""));
     if (sort === "sessions") return b.n_sessions - a.n_sessions;
     return String(a.name || "").localeCompare(String(b.name || ""));
   });
   const q = $("#libSearch").value.trim().toLocaleLowerCase();
   const objs = q ? allObjects.filter((o) =>
-    [o.name, o.designation, o.otype].some((x) => String(x || "").toLocaleLowerCase().includes(q))) : allObjects;
+    [o.name, o.designation, o.otype, TYPE_LABEL[o.otype]].some((x) => String(x || "").toLocaleLowerCase().includes(q))) : allObjects;
   const selected = objs.find((o) => o.name === _selectedLibraryObject) || objs[0] || null;
   if (selected?.name !== _selectedLibraryObject) {
     _selectedLibrarySession = 0;
@@ -460,36 +507,41 @@ export function renderLibrary() {
   }
   const selectedSession = selectedSessions[_selectedLibrarySession] || null;
   $("#libObjectCount").textContent = q
-    ? `${objs.length} of ${allObjects.length} objects` : `${allObjects.length} objects`;
+    ? `${objs.length} of ${allObjects.length} objects` : plural(allObjects.length, "object");
   $("#libraryObjectList").innerHTML = objs.length ? objs.map((o) => {
     const key = esc(o.name || "");
-    return `<button class="library-object${o.name === _selectedLibraryObject ? " active" : ""}" type="button" data-library-object="${key}" aria-pressed="${o.name === _selectedLibraryObject}">
-      <span><b>${esc(o.name || "?")}</b><small>${esc(o.designation || "no designation")}</small></span>
-      <small>${o.n_sessions} session${o.n_sessions === 1 ? "" : "s"}</small>
+    const active = o.name === _selectedLibraryObject;
+    const type = TYPE_LABEL[o.otype] || o.otype || "";
+    const detail = [o.designation && o.designation !== o.name ? o.designation : "", type].filter(Boolean).join(" · ");
+    return `<button class="library-object${active ? " active" : ""}" type="button" data-library-object="${key}" aria-pressed="${active}">
+      <span class="library-object-text"><b>${esc(o.name || "?")}</b><small>${esc(detail || "No designation")}</small></span>
+      <span class="library-object-count" title="${esc(plural(o.n_sessions, "capture session"))}">${Number(o.n_sessions) || 0}<span class="visually-hidden"> ${o.n_sessions === 1 ? "session" : "sessions"}</span></span>
     </button>`;
   }).join("") : '<p class="hint">No objects match this search.</p>';
   renderLibraryObjectHeader(selected, unit);
   if (!selected) {
     $("#librarySessions").innerHTML = `<tr><td colspan="8">${emptyStateMarkup(
-      "database", "No matching objects", "Adjust or clear the search to see capture sessions.",
+      "search", "No matching objects", "Adjust or clear the search to see capture sessions.",
       "session-empty-state")}</td></tr>`;
     $("#librarySessionCount").textContent = "0 sessions";
-    $("#libraryFrameCount").textContent = "0 frames";
-    $("#librarySessionFacts").innerHTML = emptyStateMarkup("file",
-      "No object selected", "Choose an object from the list to view its sessions and frames.",
-      "selected-session-empty");
-    $("#librarySessionActions").innerHTML = "";
-    $("#librarySessionActions").hidden = true;
+    clearSessionDetails("No object selected", "Choose an object to see its sessions.");
     return;
   }
   renderLibrarySessions(selected, selectedSessions, selectedSession);
 }
 
+function plural(count, noun) {
+  const n = Number(count) || 0;
+  return `${n.toLocaleString()} ${noun}${n === 1 ? "" : "s"}`;
+}
+
 function renderLibraryObjectHeader(object, unit) {
   const identity = $("#libraryHeroIdentity");
   if (!object) {
-    identity.innerHTML = '<h1>Library</h1><p class="hint">No object selected</p>';
-    $("#libSummary").innerHTML = libraryMetricHTML(null);
+    const empty = !(S.library?.objects || []).length;
+    identity.innerHTML = `<h1 class="object-title">Library</h1><p class="object-subtitle">${
+      empty ? "Nothing imported yet" : "No object selected"}</p>`;
+    $("#libSummary").innerHTML = empty ? "" : libraryMetricHTML(null);
     return;
   }
   const key = esc(object.name || "?");
@@ -497,10 +549,12 @@ function renderLibraryObjectHeader(object, unit) {
   const size = fmtSize(object.size_am, unit).replace(/[′″°]/g, "");
   const units = { arcmin: ["′", "arcminutes", "degrees"], deg: ["°", "degrees", "arcseconds"], arcsec: ["″", "arcseconds", "arcminutes"] };
   const [symbol, name, next] = units[unit] || units.arcmin;
-  identity.innerHTML = `<h1>Library</h1><div class="library-active-object"><strong>${key}</strong>
-    ${!object.object_id ? `<button class="ghost lib-edit" type="button" data-edit="${key}">Edit object</button>` : ""}
-    <button class="ghost lib-open icon-button" type="button" data-openobj="${key}" title="Open object folder" aria-label="Open object folder">${catalogIcon("folder")}</button></div>
-    <p class="library-object-description">${esc([object.designation, type].filter(Boolean).join(" · "))} · <span class="mono">Size ${esc(size)}<button class="library-size-unit" type="button" aria-label="Size units: ${name}. Switch to ${next}" title="Click to switch to ${next}">${symbol}</button></span></p>`;
+  const designation = object.designation && object.designation !== object.name ? object.designation : "";
+  identity.innerHTML = `<div class="object-heading library-active-object"><h1 class="object-title"><strong>${key}</strong></h1>
+    <div class="object-actions">
+    ${!object.object_id ? `<button class="button small lib-edit" type="button" data-edit="${key}">Edit</button>` : ""}
+    <button class="button small lib-open" type="button" data-openobj="${key}" title="Open this object's archive folder">${catalogIcon("folder")}<span>Open folder</span></button></div></div>
+    <p class="object-subtitle library-object-description">${esc([designation, type].filter(Boolean).join(" · "))} · <span class="mono">Size ${esc(size)}<button class="library-size-unit" type="button" aria-label="Size units: ${name}. Switch to ${next}" title="Switch to ${next}">${symbol}</button></span></p>`;
   $("#libSummary").innerHTML = libraryMetricHTML(object);
 }
 
@@ -520,12 +574,18 @@ function libraryObjectRollup(sessions) {
   return totals;
 }
 
+function lastSessionDay(sessions) {
+  const starts = (sessions || []).filter((s) => !s.undated && s.start).map((s) => s.start).sort();
+  return starts.length ? sessionWhen({ start: starts.at(-1), end: starts.at(-1) }).day : "—";
+}
+
 function libraryMetricHTML(object) {
   const total = libraryObjectRollup(object?.sessions || []);
   const fields = [
     ["Sessions", (object?.sessions || []).length.toLocaleString()],
     ["Images", (Number(object?.n_images) || 0).toLocaleString()],
     ["Light integration", fmtDur(total.lightExposure)],
+    ["Last session", lastSessionDay(object?.sessions)],
   ];
   return fields.map(([label, value]) =>
     `<div class="library-metric"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
@@ -557,10 +617,30 @@ function sessionFolderPaths(object, session) {
   return [...new Map(folders.map((folder) => [folder.toLowerCase(), folder])).values()];
 }
 
-function selectLibrarySession(index) {
+function selectLibrarySession(index, { reveal = false } = {}) {
   _selectedLibrarySession = index;
   renderLibrary();
-  $(`#librarySessions [data-select-session="${index}"]`)?.focus({ preventScroll: true });
+  const button = $(`#librarySessions [data-select-session="${index}"]`);
+  button?.focus({ preventScroll: true });
+  if (reveal) button?.closest("tr")?.scrollIntoView({ block: "nearest" });
+}
+
+/* Select an object and keep keyboard focus on its (re-rendered) button. */
+function selectLibraryObject(name, { reveal = false } = {}) {
+  _selectedLibraryObject = name;
+  _selectedLibrarySession = 0;
+  renderLibrary();
+  const button = [...document.querySelectorAll("#libraryObjectList [data-library-object]")]
+    .find((node) => node.dataset.libraryObject === name);
+  button?.focus({ preventScroll: true });
+  if (reveal) button?.scrollIntoView({ block: "nearest" });
+}
+
+/* Arrow keys, Home and End move through a list; selection follows focus. */
+function listStep(key, index, count) {
+  const steps = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: count - 1 };
+  if (!(key in steps) || !count) return null;
+  return Math.max(0, Math.min(count - 1, steps[key]));
 }
 
 function sessionCompression(session) {
@@ -576,67 +656,94 @@ function sessionCompression(session) {
   return { state, label, detail, icon: state === "uncompressed" ? "file" : state };
 }
 
+/* Split a session into a calendar day and a local time range. */
+function sessionWhen(session) {
+  if (session.undated) return { day: "No date recorded", time: "" };
+  const [startDay, startTime] = fmtDT(session.start).split(" ");
+  const [endDay, endTime] = fmtDT(session.end).split(" ");
+  if (!startTime) return { day: startDay, time: "" };
+  if (!endTime || (endDay === startDay && endTime === startTime)) return { day: startDay, time: startTime };
+  if (endDay === startDay) return { day: startDay, time: `${startTime}–${endTime}` };
+  // Overnight sessions end on the next calendar day; say so compactly.
+  const nextDay = Date.parse(`${endDay}T00:00Z`) - Date.parse(`${startDay}T00:00Z`) === 86400000;
+  return { day: startDay, time: nextDay
+    ? `${startTime}–${endTime} +1d` : `${startTime} – ${endDay.slice(5)} ${endTime}` };
+}
+
+function sessionTypeCount(session, needle) {
+  return Object.entries(session.types || {}).reduce((sum, [name, value]) =>
+    name.toLowerCase().includes(needle) ? sum + (Number(value.n) || 0) : sum, 0);
+}
+
+function sessionLightExposure(session) {
+  const entry = Object.entries(session.types || {}).find(([name]) => name.toLowerCase().includes("light"));
+  return Number(entry?.[1]?.exposure) || 0;
+}
+
+function folderButton(rel, label, className = "library-folder-link") {
+  return `<button class="${className}" type="button" data-open-library-folder="${esc(rel)}" title="Open ${esc(rel || "archive root")}">${catalogIcon("folder")}<span>${esc(label)}</span></button>`;
+}
+
 function renderLibrarySessions(object, sessions, activeSession) {
   const heading = $("#librarySessionsHeading");
   const count = $("#librarySessionCount");
   if (heading) heading.textContent = "Capture sessions";
-  if (count) count.textContent = `${sessions.length} sessions`;
+  if (count) count.textContent = plural(sessions.length, "session");
   const list = $("#librarySessions");
   if (!list) return;
   if (!sessions.length) {
     list.innerHTML = `<tr><td colspan="8">${emptyStateMarkup(
-      "database", "No capture sessions yet", "Import exposures to build your image library.",
+      "database", "No capture sessions", "This object has no recorded exposures.",
       "session-empty-state")}</td></tr>`;
-    $("#libraryFrameCount").textContent = "0 frames";
-    $("#librarySessionFacts").innerHTML = emptyStateMarkup("file",
-      "No session selected", ["Choose a capture session", "from the library to view details", "and frames."],
-      "selected-session-empty");
-    $("#librarySessionActions").innerHTML = "";
-    $("#librarySessionActions").hidden = true;
+    clearSessionDetails("No session selected", "");
     return;
   }
+  const cellCount = (n) => n ? String(n) : '<span class="zero">0</span>';
   list.innerHTML = sessions.map((s, i) => {
-    const when = `${s.label || "Session"} · ` + (s.undated ? "No date recorded" : `${fmtDT(s.start)} – ${fmtDT(s.end)}`);
+    const when = sessionWhen(s);
+    const title = `${s.label || "Session"} · ` + (s.undated ? "No date recorded" : `${fmtDT(s.start)} – ${fmtDT(s.end)}`);
     const compression = sessionCompression(s);
     const filters = Object.keys(s.filters || {}).filter((name) => name !== "?").join(" · ");
     const folders = sessionFolderPaths(object, s);
-    const typeCount = (needle) => Object.entries(s.types || {}).reduce((sum, [name, value]) =>
-      name.toLowerCase().includes(needle) ? sum + (Number(value.n) || 0) : sum, 0);
-    const folder = folders.length ? `<button class="library-folder-link" type="button" data-open-library-folder="${esc(folders[0])}" title="${esc(folders.join(" · ") || "Archive root")}">${esc(folders[0].split("/").slice(-2).join("/") || "Archive root")}${folders.length > 1 ? ` +${folders.length - 1}` : ""}</button>` : '<span class="hint">Not recorded</span>';
-    const lightEntry = Object.entries(s.types || {}).find(([name]) => name.toLowerCase().includes("light"));
-    const lightExposure = Number(lightEntry?.[1]?.exposure) || 0;
-    return `<tr class="library-session${sessions.indexOf(activeSession) === i ? " active" : ""}" data-library-session="${i}" tabindex="-1" aria-selected="${sessions.indexOf(activeSession) === i}">
-      <td><button class="session-select" type="button" data-select-session="${i}" title="${esc(when + ' · ' + compression.detail)}"><span class="session-compression" data-compression="${compression.state}" role="img" aria-label="${esc(compression.detail)}" title="${esc(compression.detail)}">${catalogIcon(compression.icon)}</span><span class="session-select-label">${esc(when)}</span></button></td>
-      <td class="mono">${typeCount("light")}</td><td class="mono">${typeCount("dark")}</td><td class="mono">${typeCount("flat")}</td><td class="mono">${typeCount("bias")}</td>
-      <td class="mono" title="Light frames only">${esc(fmtDur(lightExposure))}</td><td>${esc(filters || "—")}</td><td>${folder}</td></tr>`;
+    // Session folders carry long generated names; the full paths live in the
+    // tooltip and the inspector, so the row offers a short, stable action.
+    const folder = folders.length
+      ? `<button class="library-folder-link" type="button" data-open-library-folder="${esc(folders[0])}" title="${esc(folders.join(" · ") || "Archive root")}">${catalogIcon("folder")}<span>Open</span></button>`
+      : '<span class="zero">—</span>';
+    const lightExposure = sessionLightExposure(s);
+    const active = sessions.indexOf(activeSession) === i;
+    return `<tr class="library-session${active ? " active" : ""}" data-library-session="${i}" tabindex="-1" aria-selected="${active}">
+      <td><button class="session-select" type="button" data-select-session="${i}" title="${esc(title + ' · ' + compression.detail)}"><span class="session-compression" data-compression="${compression.state}" role="img" aria-label="${esc(compression.detail)}" title="${esc(compression.detail)}">${catalogIcon(compression.icon)}</span><span class="session-select-label"><span class="session-day">${esc(when.day)}</span>${s.label ? `<span class="session-kind">${esc(s.label)}</span>` : ""}<span class="session-time">${esc(when.time)}</span></span></button></td>
+      <td class="num">${cellCount(sessionTypeCount(s, "light"))}</td><td class="num">${cellCount(sessionTypeCount(s, "dark"))}</td><td class="num">${cellCount(sessionTypeCount(s, "flat"))}</td><td class="num">${cellCount(sessionTypeCount(s, "bias"))}</td>
+      <td class="num duration" title="Light frames only">${lightExposure ? esc(fmtDur(lightExposure)) : '<span class="zero">—</span>'}</td><td title="${esc(filters)}">${filters ? esc(filters) : '<span class="zero">—</span>'}</td><td>${folder}</td></tr>`;
   }).join("");
   if (!activeSession) {
-    $("#libraryFrameCount").textContent = "0 frames";
-    $("#librarySessionFacts").innerHTML = emptyStateMarkup("file",
-      "No session selected", ["Choose a session", "from the library to view details", "and frames."],
-      "selected-session-empty");
-    $("#librarySessionActions").innerHTML = "";
-    $("#librarySessionActions").hidden = true;
+    clearSessionDetails("No session selected", "Choose a capture session to see its frames and folders.");
     return;
   }
   const typeLabels = { light: "Lights", dark: "Darks", flat: "Flats", bias: "Bias" };
-  const typeRows = Object.entries(activeSession.types || {}).map(([kind, value]) =>
+  const typeOrder = (kind) => { const i = ["light", "dark", "flat", "bias"].indexOf(kind); return i < 0 ? 9 : i; };
+  const typeRows = Object.entries(activeSession.types || {}).sort(([a], [b]) => typeOrder(a) - typeOrder(b)).map(([kind, value]) =>
     `<div><span>${esc(typeLabels[kind] || kind)}</span><b>${Number(value.n) || 0} · ${esc(fmtDur(value.exposure))}</b></div>`).join("");
-  const lightEntry = Object.entries(activeSession.types || {}).find(([name]) => name.toLowerCase().includes("light"));
-  const lightExposure = Number(lightEntry?.[1]?.exposure) || 0;
-  const filterText = Object.keys(activeSession.filters || {}).map(esc).join(" · ");
+  const filterNames = Object.keys(activeSession.filters || {});
   const folders = sessionFolderPaths(object, activeSession);
   const compression = sessionCompression(activeSession);
-  $("#libraryFrameCount").textContent = `${activeSession.n_images} frames`;
-  $("#librarySessionFacts").innerHTML = `<p class="session-date">${esc(activeSession.undated ? "No date recorded" : `${fmtDT(activeSession.start)} – ${fmtDT(activeSession.end)}`)}</p>
-    <dl class="library-session-facts"><div><dt>Session</dt><dd>${esc(activeSession.label || "Session")}</dd></div>
+  const when = sessionWhen(activeSession);
+  const windowText = activeSession.session_start && activeSession.session_end
+    ? sessionWhen({ start: activeSession.session_start, end: activeSession.session_end }).time : "";
+  $("#libraryFrameCount").textContent = plural(activeSession.n_images, "frame");
+  $("#librarySessionFacts").innerHTML = `<p class="session-date"><strong>${esc(when.day)}</strong><span>${esc([activeSession.label || "Session", when.time].filter(Boolean).join(" · "))}</span></p>
+    <dl class="library-session-facts">
     <div><dt>Storage</dt><dd title="${esc(compression.detail)}">${esc(compression.label)}</dd></div>
-    ${activeSession.session_start && activeSession.session_end ? `<div><dt>Session window</dt><dd>${esc(fmtDT(activeSession.session_start))} – ${esc(fmtDT(activeSession.session_end))}</dd></div>` : ""}
+    ${windowText ? `<div><dt>Session window</dt><dd>${esc(windowText)}</dd></div>` : ""}
     <div><dt>Total exposure</dt><dd>${esc(fmtDur(activeSession.exposure))}</dd></div>
-    <div><dt>Light integration</dt><dd>${esc(fmtDur(lightExposure))}</dd></div></dl>
-    <div class="library-frame-rollup">${typeRows || '<p class="hint">No frame-type rollup recorded.</p>'}</div>
-    <p class="library-filter-rollup"><span class="hint">Filters</span><br>${filterText || "No filter recorded"}</p>
-    <div class="library-folder-rollup"><span class="hint">Archive folders</span><div class="library-archive-folders" role="group" aria-label="Archive folders">${folders.length ? folders.map((rel) => `<button class="library-folder-link" data-open-library-folder="${esc(rel)}" title="${esc(rel || "Archive root")}" type="button">${esc(rel || "Archive root")}</button>`).join("") : "Not recorded"}</div></div>`;
+    <div><dt>Light integration</dt><dd>${esc(fmtDur(sessionLightExposure(activeSession)))}</dd></div></dl>
+    <section><h3 class="section-label">Frames</h3><div class="library-frame-rollup">${typeRows || '<p class="hint">No frame types recorded.</p>'}</div></section>
+    <section class="library-filter-rollup"><h3 class="section-label">Filters</h3>${filterNames.length
+      ? `<div class="chip-list">${filterNames.map((name) => `<span class="chip">${esc(name === "?" ? "Unknown" : name)}</span>`).join("")}</div>`
+      : '<p class="hint">No filter recorded</p>'}</section>
+    <section class="library-folder-rollup"><h3 class="section-label">Archive folders</h3><div class="library-archive-folders" role="group" aria-label="Archive folders">${folders.length
+      ? folders.map((rel) => folderButton(rel, rel || "Archive root")).join("") : '<p class="hint">Not recorded</p>'}</div></section>`;
   const actions = $("#librarySessionActions");
   if (actions) {
     actions.hidden = false;
@@ -646,14 +753,26 @@ function renderLibrarySessions(object, sessions, activeSession) {
     const canTargetSession = Boolean(anchor);
     const targetAttrs = anchor ? `data-library-anchor="${anchor.id}"`
       : 'disabled title="Reload the library to select a recorded exposure for this session."';
-    actions.innerHTML = `<h3>Actions</h3><div class="btnrow">
-      <button class="ghost" type="button" data-library-add="dark" ${targetAttrs}>+ Darks</button>
-      <button class="ghost" type="button" data-library-add="flat" ${targetAttrs}>+ Flats</button>
-      <button class="ghost" type="button" data-library-add="bias" ${targetAttrs}>+ Bias</button>
-      <button class="ghost" type="button" data-open-library-folder="${esc(rel)}" ${folders.length ? "" : "disabled"}>Open folder</button>
-      <button class="ghost" type="button" data-rice-mode="compress" data-rice-ids="${(activeSession.image_ids || []).join(',')}" ${targetAttrs}>Compress losslessly</button>
-      <button class="ghost" type="button" data-rice-mode="uncompress" data-rice-ids="${(activeSession.image_ids || []).join(',')}" ${targetAttrs}>Uncompress</button>
-      </div>${canTargetSession ? "" : '<p class="hint">Reload the library before adding calibration exposures.</p>'}`;
+    const ids = (activeSession.image_ids || []).join(",");
+    // Offer only the storage change that applies; mixed or unknown offers both.
+    const riceAttrs = (mode, title) => {
+      if (!anchor) return targetAttrs;
+      const done = compression.state === (mode === "compress" ? "compressed" : "uncompressed");
+      return done ? `disabled title="Every exposure in this session is already ${mode === "compress" ? "compressed" : "uncompressed"}."`
+        : `${targetAttrs} title="${title}"`;
+    };
+    actions.innerHTML = `<button class="button" type="button" data-open-library-folder="${esc(rel)}" ${folders.length ? "" : "disabled"}>${catalogIcon("folder")}<span>Open session folder</span></button>
+      <div><h3 class="section-label" id="sessionCalibrationLabel">Add calibration frames</h3>
+      <div class="button-row even" role="group" aria-labelledby="sessionCalibrationLabel">
+      <button class="button" type="button" data-library-add="dark" ${targetAttrs}>+ Darks</button>
+      <button class="button" type="button" data-library-add="flat" ${targetAttrs}>+ Flats</button>
+      <button class="button" type="button" data-library-add="bias" ${targetAttrs}>+ Bias</button>
+      </div></div>
+      <div><h3 class="section-label" id="sessionStorageLabel">Storage · lossless Rice</h3>
+      <div class="button-row even" role="group" aria-labelledby="sessionStorageLabel">
+      <button class="button" type="button" data-rice-mode="compress" data-rice-ids="${ids}" ${riceAttrs("compress", "Convert to lossless Rice-compressed FITS")}>Compress</button>
+      <button class="button" type="button" data-rice-mode="uncompress" data-rice-ids="${ids}" ${riceAttrs("uncompress", "Restore ordinary FITS files")}>Uncompress</button>
+      </div></div>${canTargetSession ? "" : '<p class="hint">Reload the library before adding calibration exposures.</p>'}`;
     if (_archiveOperation) actions.querySelectorAll('[data-library-add], [data-rice-mode]').forEach(button => { button.disabled = true; });
   }
 }
@@ -701,12 +820,12 @@ export function bindArchive() {
   _bound = true;
   document.querySelectorAll("[data-frame-override]").forEach((button) => {
     button.addEventListener("click", () => {
-      const requested = button.dataset.frameOverride;
-      _importFrameOverride = _importFrameOverride === requested ? null : requested;
+      _importFrameOverride = button.dataset.frameOverride || null;
       syncFrameSelector();
     });
   });
   syncFrameSelector();
+  renderIngestResults([]);
 
   const mode = $("#ingestSafeMode"), modeGroup = $("#ingestCompressionMode");
   const modeInfo = $("#ingestModeInfo"), modeTip = $("#ingestModeTip");
@@ -731,8 +850,12 @@ export function bindArchive() {
     }, 180);
   };
   const syncMode = () => {
-    mode.disabled = Boolean(_archiveOperation) || !$("#compressOnIngest").checked;
+    const compress = $("#compressOnIngest").checked;
+    mode.disabled = Boolean(_archiveOperation) || !compress;
     modeGroup.dataset.mode = mode.checked ? "safe" : "fast";
+    // Verification only matters once compression is chosen.
+    modeGroup.hidden = !compress;
+    if (!compress) { pinnedInfo = false; showModeInfo(false); }
   };
   $("#compressOnIngest").addEventListener("change", syncMode);
   mode.addEventListener("change", syncMode);
@@ -927,9 +1050,16 @@ export function bindArchive() {
   $("#libraryObjectList").addEventListener("click", (e) => {
     const button = e.target.closest("[data-library-object]");
     if (!button) return;
-    _selectedLibraryObject = button.dataset.libraryObject;
-    _selectedLibrarySession = 0;
-    renderLibrary();
+    selectLibraryObject(button.dataset.libraryObject);
+  });
+  $("#libraryObjectList").addEventListener("keydown", (e) => {
+    const button = e.target.closest("[data-library-object]");
+    if (!button) return;
+    const buttons = [...$("#libraryObjectList").querySelectorAll("[data-library-object]")];
+    const next = listStep(e.key, buttons.indexOf(button), buttons.length);
+    if (next === null) return;
+    e.preventDefault();
+    selectLibraryObject(buttons[next].dataset.libraryObject, { reveal: true });
   });
   $("#librarySessions").addEventListener("click", (e) => {
     const folder = e.target.closest("[data-open-library-folder]");
@@ -940,9 +1070,17 @@ export function bindArchive() {
   });
   $("#librarySessions").addEventListener("keydown", (e) => {
     const row = e.target.closest("tr[data-library-session]");
-    if (!row || e.target.closest("[data-open-library-folder]") || !["Enter", " "].includes(e.key)) return;
+    if (!row || e.target.closest("[data-open-library-folder]")) return;
+    const index = Number(row.dataset.librarySession) || 0;
+    if (["Enter", " "].includes(e.key)) {
+      e.preventDefault();
+      selectLibrarySession(index);
+      return;
+    }
+    const next = listStep(e.key, index, $("#librarySessions").querySelectorAll("tr[data-library-session]").length);
+    if (next === null) return;
     e.preventDefault();
-    selectLibrarySession(Number(row.dataset.librarySession) || 0);
+    selectLibrarySession(next, { reveal: true });
   });
   $("#librarySessionRail").addEventListener("click", (e) => {
     const folderButton = e.target.closest("[data-open-library-folder]");

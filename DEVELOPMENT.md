@@ -8,7 +8,7 @@ project reads source, databases, build outputs or versions from the other.
 
 main.py hosts the local FastAPI application in app/server.py and opens the
 catalog shell. The client is vanilla ES-module JavaScript and CSS, with no npm
-or bundler. static/catalog.html owns Library, Import Exposures and the fixed
+or bundler. static/catalog.html owns Library, Import and the fixed
 archive Sky Map. Native pywebview/Windows chrome provides window behavior.
 The retired planning shell (sites, rigs, panoramas, custom-target editing) was
 removed on October 10, 2026; existing databases that still carry those tables
@@ -231,8 +231,8 @@ The client captures it once per action and passes compress=true on every multipa
 chunk, including calibration uploads. The API defaults to false independently.
 The accessible Fast/Safe sliding switch defaults to Fast in the UI and supplies
 compression_mode=fast/safe on every chunk. Omitted API mode defaults to Safe for
-existing clients. Mode selection is disabled when compression is off and locked
-during archive operations. A hover/focus/tap info tooltip explains the difference.
+existing clients. Mode selection is hidden and disabled when compression is off
+and locked during archive operations. A hover/focus/tap info tooltip explains the difference.
 After original-byte dedup, supported integer uploads are encoded into a second
 private stage using the shared compression.encode_verified helper. Safe mode
 requires funpack -C to restore exact full-file SHA-256/size; Fast skips decoding
@@ -504,7 +504,7 @@ two MiB; the report explicitly includes retained sample records and does not
 claim to rule out native leaks from RSS. Resource and byte/lease/cancellation
 failures remain fatal. Each population has fresh owned scratch.
 
-The toolbar's **Support report** downloads a local JSON attachment. It contains
+**Tools › Download support report** downloads a local JSON attachment. It contains
 application/Python/OS/selected package versions, bundled FITS utility integrity,
 browser/native capability flags and numeric Chromium version. At most 25 warning
 or error categories from the current process are included. Raw messages,

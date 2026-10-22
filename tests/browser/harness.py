@@ -57,6 +57,16 @@ def all_checks():
     return list(_TESTS)
 
 
+def tool(page, selector: str):
+    """Locator for a Tools menu item, opening the menu first when it is closed.
+
+    Archive maintenance, export and support actions live in the header's Tools
+    menu; a check reaches them the way a user does."""
+    if page.locator("#toolsMenu").is_hidden():
+        page.locator("#btnTools").click()
+    return page.locator(selector)
+
+
 # ---------------------------------------------------------------- helpers
 
 

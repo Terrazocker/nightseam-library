@@ -206,6 +206,14 @@ export function initFocusTrap() {
   });
 }
 
+/* Return focus after a dialog closes. An opener inside a closed menu cannot
+   take focus, so the button that owns the menu receives it instead. */
+export function restoreFocus(target, fallback = null) {
+  const menu = target?.closest?.('[role="menu"]');
+  const next = menu ? document.getElementById(menu.getAttribute("aria-labelledby")) : target;
+  (next?.isConnected && !next.disabled ? next : fallback)?.focus();
+}
+
 /* Keyboard activation for click-only controls (role=button on a div). */
 export function bindKeyboardClick(el, fn) {
   if (!el) return;

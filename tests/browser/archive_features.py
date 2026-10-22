@@ -1,7 +1,7 @@
 """Browser acceptance for health workflows and session FITS previews."""
 import json
 
-from harness import check
+from harness import check, tool
 
 
 @check("desktop-catalog-archive-health", "catalog")
@@ -27,10 +27,10 @@ def health_scan(c):
         route.fulfill(json=report)
     c.page.route("**/api/library/health**", route_handler)
     c.goto("/catalog.html"); c.wait_hidden("#busy")
-    c.page.locator("#btnTopHealth").click(); c.page.locator("#healthQuick").click()
+    tool(c.page, "#btnTopHealth").click(); c.page.locator("#healthQuick").click()
     c.page.wait_for_function("() => !document.querySelector('#healthCancel').disabled")
     c.expect(c.page.locator("#btnTopIngest").is_disabled(), "active scans must lock conflicting actions")
-    c.page.locator("#healthClose").click(); c.page.locator("#btnTopHealth").click()
+    c.page.locator("#healthClose").click(); tool(c.page, "#btnTopHealth").click()
     c.page.locator("#healthCancel").click()
     c.page.wait_for_function("() => !document.querySelector('#healthQuick').disabled")
     c.expect("partial" in c.page.locator("#healthStatus").inner_text(), "cancelled results must say partial")
@@ -49,8 +49,8 @@ def health_scan(c):
         c.page.set_viewport_size({"width": width, "height": 800})
         c.expect(c.page.evaluate("() => { const panel=document.querySelector('#archiveHealthModal .modal-box'); return panel.scrollWidth <= panel.clientWidth+1; }"), "health dialog must fit width")
     c.page.keyboard.press("Escape")
-    c.expect_eq(c.page.evaluate("() => document.activeElement.id"), "btnTopHealth", "closing restores opener focus")
-    c.page.locator("#btnTopHealth").click(); c.page.locator("#healthQuick").click()
+    c.expect_eq(c.page.evaluate("() => document.activeElement.id"), "btnTools", "closing restores focus to the menu that opened it")
+    tool(c.page, "#btnTopHealth").click(); c.page.locator("#healthQuick").click()
     c.page.wait_for_function("() => !document.querySelector('#healthCancel').disabled")
     hold_cancel = True
     with c.page.expect_request(lambda request: request.url.endswith("/cancel")): c.page.locator("#healthCancel").click()
@@ -67,9 +67,9 @@ def health_scan(c):
     c.page.locator("#healthQuick").click()
     c.page.wait_for_function("() => !document.querySelector('#healthCancel').disabled")
     c.goto("/catalog.html"); c.wait_hidden("#busy"); hold_latest = True
-    with c.page.expect_request(lambda request: request.url.endswith("/api/library/health")): c.page.locator("#btnTopHealth").click()
+    with c.page.expect_request(lambda request: request.url.endswith("/api/library/health")): tool(c.page, "#btnTopHealth").click()
     c.page.locator("#healthClose").click()
-    with c.page.expect_request(lambda request: request.url.endswith("/api/library/health")): c.page.locator("#btnTopHealth").click()
+    with c.page.expect_request(lambda request: request.url.endswith("/api/library/health")): tool(c.page, "#btnTopHealth").click()
     c.page.evaluate("() => 0")
     c.expect_eq(len(held_latest), 2, "both open requests must be held")
     held_latest[1].fulfill(json=report)
@@ -92,7 +92,7 @@ def health_acknowledgements(c):
             requests.append(route.request.post_data_json); pending.append(route); report["acknowledging"] = True
         else: route.fulfill(json=report)
     c.page.route("**/api/library/health**", handler)
-    c.goto("/catalog.html"); c.wait_hidden("#busy"); c.page.locator("#btnTopHealth").click()
+    c.goto("/catalog.html"); c.wait_hidden("#busy"); tool(c.page, "#btnTopHealth").click()
     deletion = c.page.get_by_role("button", name="Acknowledge deletion", exact=True); deletion.wait_for()
     c.page.once("dialog", lambda dialog: dialog.dismiss()); deletion.click()
     c.expect_eq(len(requests), 0, "cancelled confirmation must not mutate")
@@ -106,7 +106,7 @@ def health_acknowledgements(c):
         c.expect_eq(requests[-1], {"image_id": 101 + index, "action": action, "confirmed": True}, "action must bind selected finding")
         c.expect("No files will be deleted" in messages[0] if index == 0 else "new integrity baseline" in messages[0], "confirmation must explain consequences")
         c.expect(c.page.locator("#healthQuick").is_disabled(), "acknowledgement must serialize scans")
-        c.page.locator("#healthClose").click(); c.page.locator("#btnTopHealth").click()
+        c.page.locator("#healthClose").click(); tool(c.page, "#btnTopHealth").click()
         report["findings"][index].update(acknowledged_at="2026-10-13T12:00:00Z", acknowledgement=action)
         report.update(acknowledging=False, acknowledged_count=index + 1)
         pending.pop().fulfill(json=report)
@@ -147,7 +147,7 @@ def health_session_deletions(c):
         confirmations.append(dialog.message)
         dialog.accept()
     c.page.route('**/api/library/health**', handler)
-    c.goto('/catalog.html'); c.wait_hidden('#busy'); c.page.locator('#btnTopHealth').click()
+    c.goto('/catalog.html'); c.wait_hidden('#busy'); tool(c.page, '#btnTopHealth').click()
     buttons = c.page.get_by_role('button', name='Acknowledge session', exact=True)
     buttons.nth(1).wait_for(state='visible')  # Opening precedes the async report render.
     c.expect_eq(buttons.count(), 2, 'deletions group by object and session')

@@ -50,7 +50,7 @@ Configure and verify a private empty archive before any upload.
    it must keep the same image record, class, session and stored location.
 5. Close the window normally and confirm that the app and its WebView descendants
    exit and the private listener closes. Reopen and confirm the saved placement.
-6. Activate **Support report** with the keyboard in the native window. Save the
+6. Open **Tools** and activate **Download support report** with the keyboard in the native window. Save the
    JSON through WebView2's download UI, inspect versions/tool integrity and confirm
    it contains no archive paths or exposure names. Cancel a second download and
    confirm the catalog remains usable. CI covers the packaged browser download;
@@ -67,7 +67,7 @@ Use the private test account/archive above and real display settings. Record
 monitor resolutions, scaling, working areas and which monitor is primary.
 
 1. At 100%, 125% and 150% OS scaling, open the app, resize small/large, maximize
-   and restore. Toolbar actions, tabs and selected-session controls must remain
+   and restore. Header actions, the Tools menu, tabs and selected-session controls must remain
    reachable; text, icons and caption buttons must be clear and correctly aligned.
 2. At each fixed scaling level, changing window size must change workspace rather
    than proportionally magnifying interface density.
