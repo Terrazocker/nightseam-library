@@ -32,6 +32,13 @@ failed only its package-metadata assertion because pywebview cannot be
 installed in that environment. Windows and the native window were not run.
 No release was staged or published.
 
+Windows validation, October 22, 2026: build.ps1 -AllowDirty (no v0.1.0 tag
+exists) compiled dist/NightSeam.exe as 0.1.0-gc60b3ffb from c60b3ff, keeping
+the previous executable as a backup; check_js.py passed. check_browser.py
+--desktop against that executable, with a private data copy and a verified
+private archive, passed 27 of 27 including desktop-catalog-support-report.
+The native-window acceptance was not run. No release was staged or published.
+
 ## Workbench interface redesign — October 21, 2026
 
 DESIGN.md is rewritten around explicit principles (library-first workflow, one
