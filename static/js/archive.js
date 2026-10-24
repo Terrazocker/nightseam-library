@@ -321,15 +321,28 @@ async function ingestFiles(files, frame, session, sessionAnchorId, source = "fil
   await loadLibrary();
 }
 
-async function importPickedFolder(bridge) {
+// The Windows window's Browse… or, in the Linux browser build, the desktop
+// folder dialog run by the server. Resolves to a path, null when cancelled,
+// or undefined when no dialog exists here.
+export async function chooseFolderPath(purpose, current) {
+  const bridge = window.pywebview?.api;
+  if (typeof bridge?.pick_archive_dir === "function") return await bridge.pick_archive_dir(current);
+  if (!S.cfg?.folder_dialog) return undefined;
+  const chosen = await api("/api/folder-dialog", { method: "POST", timeout: 0, silent: true,
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ purpose, current }) });
+  return chosen.path || null;
+}
+
+// `pick` resolves to {token, name}, or null when the dialog is cancelled.
+async function importPickedFolder(pick) {
   let picked;
   try {
-    picked = await bridge.pick_import_folder();
+    picked = await pick();
   } catch (err) {
-    toast("The folder dialog could not open.", "err", 6000);
+    toast(`The folder dialog could not open${err?.message ? `: ${err.message}` : "."}`, "err", 6000);
     return;
   }
-  if (!picked) return;
+  if (!picked?.token) return;
   if (_archiveOperation) {
     toast("Wait for the current archive operation to finish.", "info", 4000);
     return;
@@ -953,13 +966,17 @@ export function bindArchive() {
 
   // archive folder
   $("#btnArcBrowse").addEventListener("click", async () => {
-    const bridge = window.pywebview && window.pywebview.api;
-    if (!bridge || typeof bridge.pick_archive_dir !== "function") {
-      toast("Folder dialog is only available in the native window - type the path instead.",
-            "err", 6000);
+    let dir;
+    try {
+      dir = await chooseFolderPath("archive", $("#arcDir").value.trim());
+    } catch (err) {
+      toast(`The folder dialog could not open: ${err.message}`, "err", 6000);
       return;
     }
-    const dir = await bridge.pick_archive_dir($("#arcDir").value.trim());
+    if (dir === undefined) {
+      toast("No folder dialog is available here - type the path instead.", "err", 6000);
+      return;
+    }
     if (dir) {
       $("#arcDir").value = dir;
       $("#btnArcSave").click();
@@ -1045,10 +1062,13 @@ export function bindArchive() {
     _impSession = null;
     syncFrameSelector();
     $(".calibration-target")?.remove();
-    // The native window reads the folder in place: no WebView2 upload prompt
-    // and no copy of every file through the loopback socket.
+    // The Windows window and the Linux desktop dialog read the folder in
+    // place: no browser upload prompt and no copy of every file through the
+    // loopback socket. Other browsers upload the folder's files.
     const bridge = window.pywebview?.api;
-    if (typeof bridge?.pick_import_folder === "function") importPickedFolder(bridge);
+    if (typeof bridge?.pick_import_folder === "function") importPickedFolder(() => bridge.pick_import_folder());
+    else if (S.cfg?.folder_dialog) importPickedFolder(() => api("/api/images/folder/pick",
+      { method: "POST", timeout: 0, silent: true }));
     else $("#fitFolder").click();
   });
   $("#fitFolder").addEventListener("change", e => {

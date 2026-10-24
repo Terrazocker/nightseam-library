@@ -1676,7 +1676,7 @@ def desktop_catalog_only_launch(c):
         fallback_page.locator("#catalog-tab-import").click()
         fallback_page.locator("#btnArcBrowse").click()
         fallback_page.locator("#toasts .toast").filter(
-            has_text="Folder dialog is only available in the native window").wait_for()
+            has_text="No folder dialog is available here").wait_for()
         c.expect(not fallback_errors,
                  f"browser fallback should operate without native calls: {fallback_errors}")
     finally:

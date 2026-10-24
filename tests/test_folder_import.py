@@ -226,3 +226,48 @@ def test_closing_mid_import_leaves_no_stages(tmp_path, capture, monkeypatch):
     # Shutdown cancelled the job and drained it: no stage or journal remains.
     assert not list(archive.glob(".nightseam-import-*"))
     assert len(db.images()) <= len(rels)
+
+
+def test_linux_dialog_hands_the_page_a_token(client, capture, monkeypatch):
+    starts = []
+    monkeypatch.setattr(server, "folder_dialog_available", lambda: True)
+    monkeypatch.setattr(server, "pick_folder_dialog", lambda title, start: starts.append(start) or str(capture))
+    assert client.get("/api/state").json()["folder_dialog"] is True
+    picked = client.post("/api/images/folder/pick").json()
+    assert picked["name"] == "capture" and "path" not in picked
+    assert local_import.folder(picked["token"]) == capture.resolve()
+    assert ingest(client, picked["token"], ["test42.fts"]).status == "completed"
+    # The next dialog opens where the last one ended.
+    client.post("/api/images/folder/pick")
+    assert starts == [None, str(capture)]
+
+
+def test_linux_dialog_cancel_absence_and_failure(client, monkeypatch):
+    monkeypatch.setattr(server, "folder_dialog_available", lambda: False)
+    assert client.get("/api/state").json()["folder_dialog"] is False
+    assert client.post("/api/images/folder/pick").status_code == 409
+    monkeypatch.setattr(server, "folder_dialog_available", lambda: True)
+    monkeypatch.setattr(server, "pick_folder_dialog", lambda *args: None)
+    assert client.post("/api/images/folder/pick").json() == {"cancelled": True}
+    def broken(*args):
+        raise OSError(5, "The folder dialog failed")
+    monkeypatch.setattr(server, "pick_folder_dialog", broken)
+    r = client.post("/api/images/folder/pick")
+    assert r.status_code == 500 and "folder dialog failed" in r.json()["detail"]
+
+
+def test_linux_dialog_returns_paths_for_archive_and_destination(client, tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(server, "folder_dialog_available", lambda: True)
+    monkeypatch.setattr(server, "pick_folder_dialog",
+                        lambda title, start: calls.append((title, start)) or str(tmp_path / "backup"))
+    r = client.post("/api/folder-dialog", json={"purpose": "destination", "current": str(tmp_path)})
+    assert r.json() == {"path": str(tmp_path / "backup")}
+    assert calls[-1] == ("Choose a destination folder", str(tmp_path))
+    client.post("/api/folder-dialog", json={"purpose": "archive", "current": "  "})
+    assert calls[-1] == ("Choose the archive folder", None)
+    monkeypatch.setattr(server, "pick_folder_dialog", lambda *args: None)
+    assert client.post("/api/folder-dialog", json={"purpose": "archive"}).json() == {"cancelled": True}
+    assert client.post("/api/folder-dialog", json={"purpose": "elsewhere"}).status_code == 422
+    monkeypatch.setattr(server, "folder_dialog_available", lambda: False)
+    assert client.post("/api/folder-dialog", json={"purpose": "archive"}).status_code == 409

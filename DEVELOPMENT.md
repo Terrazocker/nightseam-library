@@ -34,11 +34,12 @@ includes an opaque handle lifetime in NTFS/ReFS versions: timestamps can collide
 after rapid same-size writes with restored mtime. Its durable() version adds the
 volume's change-journal id and the file's USN, which every closed writer
 advances, so independent handles reuse a measured digest only while that is
-unchanged. On Windows these journal-backed entries are also stored in the
-fingerprint_versions table, so a restart reuses them while the version is
-unchanged; that table is a discardable cache, never an integrity baseline, and
-POSIX versions stay in memory only. Without an active change journal they
-always rehash.
+unchanged. These entries are also stored in the fingerprint_versions table, so
+a restart reuses them while the version is unchanged; that table is a
+discardable cache, never an integrity baseline. POSIX versions (device, inode,
+size, mtime and ctime) persist too: any write or utime call changes ctime, and a
+stale entry could only miss a duplicate, never skip a new file, because
+positives rehash. Without an active change journal Windows always rehashes.
 Unsupported filesystems/open writers disable memoization. Only measured bytes
 populate the cache: an earlier read, or an uncompressed publication by this
 process, whose digest was computed over exactly the bytes written to the stage.
@@ -59,7 +60,16 @@ selection. In the browser fallback the directory comes through a directory
 input and uploads like files. In the native window, Choose folder… opens the
 Windows folder dialog through JsApi.pick_import_folder, which registers the
 folder in app/local_import.py and returns only an opaque token, so WebView2
-shows no upload prompt and the page never names a source path.
+shows no upload prompt and the page never names a source path. The Linux
+browser build has no such bridge, so when /api/state reports folder_dialog,
+POST /api/images/folder/pick runs zenity (or kdialog) from
+app/folder_opener.py, without the bundle's libraries and without a shell, and
+returns the same token; one dialog runs at a time and the next opens where the
+last ended. POST /api/folder-dialog serves the archive and copy-destination
+Browse… buttons through the same dialog and returns the chosen path, since those
+fields hold paths the user saves; static/js/archive.js chooseFolderPath prefers
+the Windows bridge. Without a display or either tool the directory input
+remains and those fields take a typed path.
 /api/images/folder/scan lists the folder's FITS names recursively, without
 following links or junctions, skipping an archive inside it and refusing a
 folder inside the archive. POST /api/images/folder/jobs takes the token, all

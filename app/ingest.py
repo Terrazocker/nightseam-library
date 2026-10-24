@@ -465,8 +465,9 @@ def _dedup_fingerprint(db, path, incoming, cancel_event=None):
     Only actual byte reads, or this process's own publication of bytes it
     hashed while writing, populate this bounded cache, keyed by durable file
     versions (POSIX fstat/ctime, or Windows file id, timestamps and
-    change-journal USN). Windows entries also persist across restarts because
-    every closed writer advances the USN and journal recreation changes its id.
+    change-journal USN). Entries also persist across restarts: on Windows every
+    closed writer advances the USN and journal recreation changes its id, and
+    on POSIX any write or utime call changes ctime.
     Stored image hashes and size/mtime alone never authorize skipping an upload.
     Callers serialize it with archive_lock.
     """
@@ -501,9 +502,11 @@ def _cached_negative(db, path, durable, incoming):
 
 
 def _durable_key(durable):
-    # Only journal-backed Windows versions are trusted across a restart. A zero
+    # Windows versions are journal-backed; POSIX ones are device, inode, size,
+    # mtime and ctime, which any write or utime call changes. A stale entry can
+    # only miss a duplicate (positives rehash), never skip a new file. A zero
     # cache limit turns fingerprint caching off; a positive one bounds memory.
-    if durable is None or os.name != 'nt' or not _FINGERPRINT_CACHE_LIMIT:
+    if durable is None or not _FINGERPRINT_CACHE_LIMIT:
         return None
     return json.dumps([part.hex() if isinstance(part, bytes) else part for part in durable])
 

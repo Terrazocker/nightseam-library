@@ -221,12 +221,11 @@ def test_bounded_negative_cache_and_conservative_reads_above_capacity(tmp_path, 
         assert upload(db, archive, exposure(index))['ok']
     # Without a durable version (e.g. no change journal on a CI volume), handle-
     # lifetime versions cannot be reused, so nothing is cached at all. With one,
-    # the first three publications fill the frozen memory cache. On Windows the
-    # persisted versions cover the rest; elsewhere later uploads read each
-    # uncached earlier file (1 + 2 + 3 + 4).
+    # the first three publications fill the frozen memory cache and the
+    # persisted versions cover the rest.
     durable = durable_versions(tmp_path)
     assert len(db._ingest_fingerprints) == (3 if durable else 0)
-    assert len(reads) == ((0 if os.name == 'nt' else 10) if durable or os.name != 'nt' else 28)
+    assert len(reads) == (0 if durable or os.name != 'nt' else 28)
 
 
 def test_known_compressed_duplicate_does_not_need_encoder(tmp_path, monkeypatch):
@@ -383,8 +382,8 @@ def test_published_file_changed_later_is_read_again(tmp_path):
 
 
 def test_unchanged_archive_is_not_reread_after_restart(tmp_path, monkeypatch):
-    if os.name != 'nt' or not durable_versions(tmp_path):
-        pytest.skip('restart reuse needs Windows change-journal versions')
+    if not durable_versions(tmp_path):
+        pytest.skip('restart reuse needs durable file versions')
     db, archive, _ = library(tmp_path, count=0)
     stored = [upload(db, archive, exposure(i), name=f'light-{i}.fit') for i in range(4)]
     db.conn.close()

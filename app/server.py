@@ -28,7 +28,7 @@ from starlette.concurrency import run_in_threadpool
 from .archive_health import ArchiveHealthManager
 from .compression import CompressionManager, recover as recover_compression
 from .database import Database
-from .folder_opener import open_folder
+from .folder_opener import folder_dialog_available, open_folder, pick_folder_dialog
 from .archive_trash import recover_pending, pending_current
 from .imglib import CatalogResolver, name_key
 from .ingest import (ArchiveRenameRecoveryError, ReindexCancelled, DedupBatch, _archive_io,
@@ -168,6 +168,11 @@ class FolderOpenIn(BaseModel):
 
 class FolderScanIn(BaseModel):
     folder: str = Field(max_length=64)  # token from the native folder picker
+
+
+class FolderDialogIn(BaseModel):
+    purpose: Literal['archive', 'destination']
+    current: str = Field('', max_length=4096)  # where the dialog starts, if it exists
 
 
 class FolderJobIn(FolderScanIn):
@@ -345,6 +350,7 @@ def create_app(db: Database) -> FastAPI:
             "image_dir": db.image_dir(),
             "size_unit": db.setting("size_unit", "arcmin"),
             "observing_site": db.setting("observing_site"),
+            "folder_dialog": folder_dialog_available(),
         }
 
     @app.post("/api/settings")
@@ -724,6 +730,44 @@ def create_app(db: Database) -> FastAPI:
             await job.drain(exc)
             raise
         return {"results": await job.finish()}
+
+    folder_dialog = {'lock': threading.Lock(), 'last': None}
+
+    async def show_folder_dialog(title, start):
+        """The Linux desktop's folder dialog for the browser UI; one at a time."""
+        if not folder_dialog_available():
+            raise HTTPException(409, 'No folder dialog is available here. Install zenity or kdialog, or type the path.')
+        if not folder_dialog['lock'].acquire(blocking=False):
+            raise HTTPException(409, 'A folder dialog is already open.')
+        try:
+            return await run_in_threadpool(pick_folder_dialog, title, start)
+        except OSError as exc:
+            raise HTTPException(500, str(exc)) from None
+        finally:
+            folder_dialog['lock'].release()
+
+    @app.post("/api/images/folder/pick")
+    async def api_folder_pick():
+        """Pick a folder to import, as the Windows window's bridge does.
+
+        Returns an opaque token, so the page never names a source path.
+        """
+        chosen = await show_folder_dialog('Choose a folder to import', folder_dialog['last'])
+        token = chosen and local_import.register(chosen)
+        if not token:
+            return {'cancelled': True}
+        folder_dialog['last'] = chosen
+        return {'token': token, 'name': Path(chosen).name or chosen}
+
+    @app.post("/api/folder-dialog")
+    async def api_folder_dialog(body: FolderDialogIn):
+        """Pick the archive folder or a copy destination, as the window's Browse… does.
+
+        These fields hold paths the user saves, so the chosen path is returned.
+        """
+        title = 'Choose the archive folder' if body.purpose == 'archive' else 'Choose a destination folder'
+        chosen = await show_folder_dialog(title, body.current.strip() or None)
+        return {'path': chosen} if chosen else {'cancelled': True}
 
     def picked_folder(token):
         root = local_import.folder(token)

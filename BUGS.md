@@ -1,5 +1,19 @@
 # Current NightSeam Catalog findings
 
+## Same-tick rewrites keep POSIX file versions under WSL2 — October 24, 2026 (open)
+
+Under WSL2 (kernel 6.6.87, ext4), 184 of 200 immediate same-size rewrites with a
+restored mtime left size, mtime, ctime and inode unchanged: the kernel records
+change times in coarse ticks. test_native_tool_cache_revalidates_changed_
+executable_with_restored_mtime[linux-x64] therefore fails there on both main
+and the folder-import branch, while GitHub's Linux runner passes it; the native
+tool cache can keep a stale validation for such a rewrite. POSIX durable
+versions, and so the persisted dedup fingerprints, share the weakness: a file
+rewritten with the same size within one tick of its recorded version keeps a
+stale entry. That can only miss a duplicate, never skip a new file, because
+positive matches always rehash. Not fixed: Python exposes no change counter
+(statx change cookie) to strengthen POSIX versions.
+
 ## Device and control-character archive names refused imports — October 19, 2026 (fixed)
 
 An unresolved FITS OBJECT such as NUL or COM1, an upload named con.fits or
