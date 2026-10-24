@@ -1,11 +1,13 @@
 """Folder import from the native picker: scan and in-place ingest by token."""
 
 import os
+import threading
+import time
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app import local_import
+from app import local_import, server
 from app.database import Database
 from app.server import create_app
 from _util import m31_fits, unresolved_fits
@@ -34,8 +36,31 @@ def scan(client, token):
     return client.post("/api/images/folder/scan", json={"folder": token})
 
 
+class Finished:
+    status_code = 200
+
+    def __init__(self, results, status):
+        self.results, self.status = results, status
+
+    def json(self):
+        return {"results": self.results, "status": self.status}
+
+
 def ingest(client, token, files, **options):
-    return client.post("/api/images/folder/ingest", json={"folder": token, "files": files, **options})
+    """Start a folder job and poll it to the end, as the page does."""
+    r = client.post("/api/images/folder/jobs", json={"folder": token, "files": files, **options})
+    if r.status_code != 202:
+        return r
+    job, results = r.json(), []
+    deadline = time.monotonic() + 30
+    while True:
+        state = client.get(f"/api/images/folder/jobs/{job['id']}", params={"since": len(results)}).json()
+        results += state["results"]
+        if state["status"] != "running":
+            assert state["done"] == state["total"] == len(results) == len(files)
+            return Finished(results, state["status"])
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
 
 
 def test_scan_lists_fits_exposures_in_subfolders(client, capture):
@@ -145,7 +170,104 @@ def test_register_refuses_non_folders(tmp_path):
     assert local_import.register(tmp_path / "missing") is None
 
 
-def test_request_size_matches_upload_chunks(client, capture):
+def test_empty_file_list_is_refused(client, capture):
+    assert ingest(client, local_import.register(capture), []).status_code == 422
+
+
+def test_window_refills_and_keeps_selection_order(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "FOLDER_IMPORT_WINDOW", 2)
+    root = tmp_path / "many"
+    root.mkdir()
+    for i in range(7):
+        (root / f"m31_{i}.fit").write_bytes(m31_fits(60.0 + i))
+    token = local_import.register(root)
+    rels = [f["rel"] for f in scan(client, token).json()["files"]]
+    result = ingest(client, token, rels)
+    assert result.status == "completed"
+    assert [r["file"] for r in result.results] == rels
+    assert all(r["ok"] and not r.get("skipped") for r in result.results)
+    ids = [r["id"] for r in result.results]
+    assert ids == sorted(ids)
+
+
+def test_second_job_is_refused_while_one_runs(client, capture, monkeypatch):
+    release = threading.Event()
+    opened = local_import.LocalExposure.open_source
+    def held(self):
+        assert release.wait(10)
+        return opened(self)
+    monkeypatch.setattr(local_import.LocalExposure, "open_source", held)
     token = local_import.register(capture)
-    r = ingest(client, token, ["test42.fts"] * 97)
-    assert r.status_code == 422
+    first = client.post("/api/images/folder/jobs", json={"folder": token, "files": ["test42.fts"]})
+    assert first.status_code == 202 and first.json()["status"] == "running"
+    second = client.post("/api/images/folder/jobs", json={"folder": token, "files": ["test42.fts"]})
+    assert second.status_code == 409
+    release.set()
+    deadline = time.monotonic() + 10
+    while client.get(f"/api/images/folder/jobs/{first.json()['id']}").json()["status"] == "running":
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    assert ingest(client, token, ["night2/M31_120.FITS"]).status == "completed"
+
+
+def test_closing_mid_import_leaves_no_stages(tmp_path, capture, monkeypatch):
+    opened = local_import.LocalExposure.open_source
+    def slow(self):
+        time.sleep(0.3)
+        return opened(self)
+    monkeypatch.setattr(local_import.LocalExposure, "open_source", slow)
+    archive = tmp_path / "archive"
+    db = Database(tmp_path / "closing.db")
+    with TestClient(create_app(db)) as c:
+        c.post("/api/settings", json={"image_dir": str(archive)})
+        token = local_import.register(capture)
+        rels = [f["rel"] for f in scan(c, token).json()["files"]]
+        assert c.post("/api/images/folder/jobs", json={"folder": token, "files": rels}).status_code == 202
+    # Shutdown cancelled the job and drained it: no stage or journal remains.
+    assert not list(archive.glob(".nightseam-import-*"))
+    assert len(db.images()) <= len(rels)
+
+
+def test_linux_dialog_hands_the_page_a_token(client, capture, monkeypatch):
+    starts = []
+    monkeypatch.setattr(server, "folder_dialog_available", lambda: True)
+    monkeypatch.setattr(server, "pick_folder_dialog", lambda title, start: starts.append(start) or str(capture))
+    assert client.get("/api/state").json()["folder_dialog"] is True
+    picked = client.post("/api/images/folder/pick").json()
+    assert picked["name"] == "capture" and "path" not in picked
+    assert local_import.folder(picked["token"]) == capture.resolve()
+    assert ingest(client, picked["token"], ["test42.fts"]).status == "completed"
+    # The next dialog opens where the last one ended.
+    client.post("/api/images/folder/pick")
+    assert starts == [None, str(capture)]
+
+
+def test_linux_dialog_cancel_absence_and_failure(client, monkeypatch):
+    monkeypatch.setattr(server, "folder_dialog_available", lambda: False)
+    assert client.get("/api/state").json()["folder_dialog"] is False
+    assert client.post("/api/images/folder/pick").status_code == 409
+    monkeypatch.setattr(server, "folder_dialog_available", lambda: True)
+    monkeypatch.setattr(server, "pick_folder_dialog", lambda *args: None)
+    assert client.post("/api/images/folder/pick").json() == {"cancelled": True}
+    def broken(*args):
+        raise OSError(5, "The folder dialog failed")
+    monkeypatch.setattr(server, "pick_folder_dialog", broken)
+    r = client.post("/api/images/folder/pick")
+    assert r.status_code == 500 and "folder dialog failed" in r.json()["detail"]
+
+
+def test_linux_dialog_returns_paths_for_archive_and_destination(client, tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(server, "folder_dialog_available", lambda: True)
+    monkeypatch.setattr(server, "pick_folder_dialog",
+                        lambda title, start: calls.append((title, start)) or str(tmp_path / "backup"))
+    r = client.post("/api/folder-dialog", json={"purpose": "destination", "current": str(tmp_path)})
+    assert r.json() == {"path": str(tmp_path / "backup")}
+    assert calls[-1] == ("Choose a destination folder", str(tmp_path))
+    client.post("/api/folder-dialog", json={"purpose": "archive", "current": "  "})
+    assert calls[-1] == ("Choose the archive folder", None)
+    monkeypatch.setattr(server, "pick_folder_dialog", lambda *args: None)
+    assert client.post("/api/folder-dialog", json={"purpose": "archive"}).json() == {"cancelled": True}
+    assert client.post("/api/folder-dialog", json={"purpose": "elsewhere"}).status_code == 422
+    monkeypatch.setattr(server, "folder_dialog_available", lambda: False)
+    assert client.post("/api/folder-dialog", json={"purpose": "archive"}).status_code == 409

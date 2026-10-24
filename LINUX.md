@@ -2,8 +2,14 @@
 
 The portable Linux x86_64 bundle includes Python, the local JavaScript engine,
 catalog assets and verified native FITS compression tools. It opens the catalog
-in your installed browser. GTK/Qt native windows and their folder pickers are
-not bundled. Browser launching and the **Open folder** action use `xdg-open`
+in your installed browser. GTK/Qt native windows are not bundled. **Choose
+folder…** uses the desktop's `zenity` or `kdialog` folder dialog when either is
+installed (for example `sudo apt install zenity`), and then imports the folder
+in place as one continuous run. The same dialog serves **Browse…** for the
+archive folder and the library copy destination. Without them, folder import
+falls back to the browser's folder upload, which asks to confirm the upload,
+and those fields take a typed path. Browser launching and the
+**Open folder** action use `xdg-open`
 from `xdg-utils`. If it is unavailable, open the logged local URL manually;
 the folder action reports the missing requirement. Desktop programs receive
 the system library path rather than the frozen application's bundled libraries.

@@ -1,6 +1,6 @@
 /* Manual session Rice conversion and portable library copies. */
 import { $, api, restoreFocus } from "./util.js";
-import { beginCompression, loadLibrary } from "./archive.js";
+import { beginCompression, chooseFolderPath, loadLibrary } from "./archive.js";
 
 let selection = null, job = null, release = null, timer = null, opener = null;
 let inertState = [], starting = false;
@@ -212,9 +212,9 @@ export function bindCompression() {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
   });
   $("#compressionBrowse").addEventListener("click", async () => {
-    if (!window.pywebview?.api?.pick_archive_dir) { status("Enter an absolute destination path above."); $("#compressionPath").focus(); return; }
     try {
-      const path = await window.pywebview.api.pick_archive_dir($("#compressionPath").value);
+      const path = await chooseFolderPath("destination", $("#compressionPath").value);
+      if (path === undefined) { status("Enter an absolute destination path above."); $("#compressionPath").focus(); return; }
       if (path) $("#compressionPath").value = path;
     } catch (error) { status(`Could not choose destination: ${error.message}`); }
   });

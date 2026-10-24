@@ -11,6 +11,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import wraps
@@ -27,7 +28,7 @@ from starlette.concurrency import run_in_threadpool
 from .archive_health import ArchiveHealthManager
 from .compression import CompressionManager, recover as recover_compression
 from .database import Database
-from .folder_opener import open_folder
+from .folder_opener import folder_dialog_available, open_folder, pick_folder_dialog
 from .archive_trash import recover_pending, pending_current
 from .imglib import CatalogResolver, name_key
 from .ingest import (ArchiveRenameRecoveryError, ReindexCancelled, DedupBatch, _archive_io,
@@ -47,7 +48,9 @@ log = logging.getLogger(__name__)
 # amortize archive verification without increasing the previous body/worker
 # budgets. Individual exposures remain capped at 1 GiB in app/ingest.py.
 MAX_FILES_PER_REQUEST = 96
-_ARCHIVE_WRITES = ('/api/images/ingest', '/api/images/folder/ingest',
+# Files a folder import keeps staging ahead of publication.
+FOLDER_IMPORT_WINDOW = 48
+_ARCHIVE_WRITES = ('/api/images/ingest', '/api/images/folder/jobs',
                    '/api/library/reindex', '/api/library/edit')
 _MAX_REQUEST_BYTES = {
     "/api/images/ingest": 24 * (1 << 30),
@@ -167,8 +170,13 @@ class FolderScanIn(BaseModel):
     folder: str = Field(max_length=64)  # token from the native folder picker
 
 
-class FolderImportIn(FolderScanIn):
-    files: list[str] = Field(min_length=1, max_length=MAX_FILES_PER_REQUEST)  # relative to the folder
+class FolderDialogIn(BaseModel):
+    purpose: Literal['archive', 'destination']
+    current: str = Field('', max_length=4096)  # where the dialog starts, if it exists
+
+
+class FolderJobIn(FolderScanIn):
+    files: list[str] = Field(min_length=1, max_length=local_import.MAX_FOLDER_FILES)  # relative to the folder
     frame: str = ''
     session: str = ''
     run_id: str = ''
@@ -223,6 +231,10 @@ def create_app(db: Database) -> FastAPI:
             await run_in_threadpool(recover_pending, db, health.stopping.is_set)
             yield
         finally:
+            for job in list(folder_jobs.values()):
+                if job.task is not None and not job.task.done():
+                    job.task.cancel()
+                    await asyncio.gather(job.task, return_exceptions=True)
             await run_in_threadpool(compression.shutdown)
             await run_in_threadpool(health.shutdown)
     app = FastAPI(title="NightSeam", version=APP_VERSION, docs_url=None,
@@ -338,6 +350,7 @@ def create_app(db: Database) -> FastAPI:
             "image_dir": db.image_dir(),
             "size_unit": db.setting("size_unit", "arcmin"),
             "observing_site": db.setting("observing_site"),
+            "folder_dialog": folder_dialog_available(),
         }
 
     @app.post("/api/settings")
@@ -591,6 +604,7 @@ def create_app(db: Database) -> FastAPI:
             self.turns.append(asyncio.Event())
             self.admitted.append(asyncio.Event())
             self.tasks.append(asyncio.create_task(self._import(len(self.tasks), source)))
+            return self.tasks[-1]
 
         async def _import(self, index, source):
             options, turns, admitted = self.options, self.turns, self.admitted
@@ -717,6 +731,44 @@ def create_app(db: Database) -> FastAPI:
             raise
         return {"results": await job.finish()}
 
+    folder_dialog = {'lock': threading.Lock(), 'last': None}
+
+    async def show_folder_dialog(title, start):
+        """The Linux desktop's folder dialog for the browser UI; one at a time."""
+        if not folder_dialog_available():
+            raise HTTPException(409, 'No folder dialog is available here. Install zenity or kdialog, or type the path.')
+        if not folder_dialog['lock'].acquire(blocking=False):
+            raise HTTPException(409, 'A folder dialog is already open.')
+        try:
+            return await run_in_threadpool(pick_folder_dialog, title, start)
+        except OSError as exc:
+            raise HTTPException(500, str(exc)) from None
+        finally:
+            folder_dialog['lock'].release()
+
+    @app.post("/api/images/folder/pick")
+    async def api_folder_pick():
+        """Pick a folder to import, as the Windows window's bridge does.
+
+        Returns an opaque token, so the page never names a source path.
+        """
+        chosen = await show_folder_dialog('Choose a folder to import', folder_dialog['last'])
+        token = chosen and local_import.register(chosen)
+        if not token:
+            return {'cancelled': True}
+        folder_dialog['last'] = chosen
+        return {'token': token, 'name': Path(chosen).name or chosen}
+
+    @app.post("/api/folder-dialog")
+    async def api_folder_dialog(body: FolderDialogIn):
+        """Pick the archive folder or a copy destination, as the window's Browse… does.
+
+        These fields hold paths the user saves, so the chosen path is returned.
+        """
+        title = 'Choose the archive folder' if body.purpose == 'archive' else 'Choose a destination folder'
+        chosen = await show_folder_dialog(title, body.current.strip() or None)
+        return {'path': chosen} if chosen else {'cancelled': True}
+
     def picked_folder(token):
         root = local_import.folder(token)
         if root is None:
@@ -734,15 +786,79 @@ def create_app(db: Database) -> FastAPI:
         except OSError as exc:
             raise HTTPException(400, f"Cannot read folder {root}: {exc.strerror or exc}") from None
 
-    @app.post("/api/images/folder/ingest")
-    @serialize_ingest
-    async def api_ingest_folder(body: FolderImportIn):
-        """Import a picked folder's exposures by their scanned relative paths.
+    class FolderJob:
+        """One continuous folder import that the page polls for results.
+
+        A folder request carries no file bytes, so one job takes the whole
+        folder and keeps a fixed window of files staging while earlier ones
+        publish. Batches drained that pipeline at every boundary, which left a
+        cold source disk idle between bursts.
+        """
+        def __init__(self, sources):
+            self.id = uuid.uuid4().hex
+            self.sources = sources
+            self.results = []
+            self.status = 'running'
+            self.task = None
+
+        def snapshot(self, since=0):
+            return {'id': self.id, 'status': self.status, 'total': len(self.sources),
+                    'done': len(self.results), 'results': self.results[since:]}
+
+        async def run(self, run):
+            pending = deque()
+            upcoming = iter(self.sources)
+
+            def admit():
+                source = next(upcoming, None)
+                if source is not None:
+                    pending.append(run.add(source))
+            try:
+                try:
+                    for _ in range(FOLDER_IMPORT_WINDOW):
+                        admit()
+                    while pending:
+                        self.results.append(await pending.popleft())
+                        admit()
+                except BaseException as exc:
+                    run.refuse()
+                    await run.drain(exc)
+                    # Files that finished before the stop keep their outcome.
+                    for task in pending:
+                        if task.done() and not task.cancelled() and task.exception() is None:
+                            self.results.append(task.result())
+                        else:
+                            break
+                    raise
+                await run.finish()
+                self.status = 'completed'
+            except asyncio.CancelledError:
+                self.status = 'cancelled'
+                self.stopped('Not imported because NightSeam was closing.')
+                raise
+            except Exception:
+                log.exception('Folder import failed')
+                self.status = 'failed'
+                self.stopped('Not imported because the folder import stopped; refresh the library before retrying.')
+            finally:
+                ingest_admission.release()
+
+        def stopped(self, error):
+            for source in self.sources[len(self.results):]:
+                self.results.append({'file': source.filename, 'ok': False, 'unattempted': True, 'error': error})
+
+    folder_jobs = {}
+
+    @app.post("/api/images/folder/jobs", status_code=202)
+    async def api_folder_job_start(body: FolderJobIn):
+        """Start importing a picked folder's scanned files in one continuous run.
 
         Upload staging and publication rules apply unchanged; source files are
-        only read.
+        only read. Poll the job for per-file results in selection order.
         """
         root = picked_folder(body.folder)
+        if any(job.status == 'running' for job in folder_jobs.values()):
+            raise HTTPException(409, 'A folder import is already running.')
         archive = Path(db.image_dir())
         try:
             sources = await run_in_threadpool(
@@ -751,17 +867,31 @@ def create_app(db: Database) -> FastAPI:
             raise HTTPException(400, str(exc)) from None
         fields = {name: value for name, value in body.model_dump(exclude={'folder', 'files'}).items()
                   if value is not None}
-        fields['file_count'] = len(sources)
-        job = IngestRun()
+        run = IngestRun()
+        # The job holds import admission for its whole run, as a request does.
+        await ingest_admission.acquire()
         try:
-            await job.start(fields)
-            for source in sources:
-                job.add(source)
+            await run.start(fields)
         except BaseException as exc:
-            job.refuse()
-            await job.drain(exc)
+            run.refuse()
+            await run.drain(exc)
+            ingest_admission.release()
             raise
-        return {"results": await job.finish()}
+        # Every source is known up front; nothing waits for more of a body.
+        run.body_done.set()
+        job = FolderJob(sources)
+        for old in [key for key, value in folder_jobs.items() if value.status != 'running'][:-3]:
+            del folder_jobs[old]
+        folder_jobs[job.id] = job
+        job.task = asyncio.create_task(job.run(run))
+        return job.snapshot()
+
+    @app.get("/api/images/folder/jobs/{job_id}")
+    async def api_folder_job(job_id: str, since: int = Query(0, ge=0)):
+        job = folder_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, 'Folder import not found in this application instance.')
+        return job.snapshot(since)
 
     @app.get("/api/library/imports")
     def api_library_imports():

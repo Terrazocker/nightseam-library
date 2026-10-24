@@ -1,5 +1,88 @@
 # Independent catalog release record
 
+## Folder import and restart cache on Linux — October 24, 2026
+
+- The Linux browser build had no folder path except the browser's directory
+  upload. When /api/state reports folder_dialog (a display plus zenity or
+  kdialog), Choose folder… now asks the server to show that dialog: POST
+  /api/images/folder/pick runs it without the bundle's libraries and without a
+  shell, one at a time, and returns the same opaque token as the Windows
+  window. The folder then imports in place as one continuous job. Without a
+  display or either tool, the directory upload remains.
+- **Browse…** for the archive folder and the library copy destination uses the
+  same dialog through POST /api/folder-dialog, which returns the chosen path.
+  The archive field's placeholder no longer shows a Windows path.
+- POSIX durable versions (device, inode, size, mtime and ctime) now persist in
+  fingerprint_versions as Windows journal versions do, so the first import
+  after a restart no longer rereads the same-size archive on Linux.
+- Linux needs no hashing change: Ubuntu's OpenSSL 3.5.5 already hashed SHA-256
+  at 2184 MB/s on one core of the Ryzen 5 5600X test machine under WSL2.
+
+Measured under WSL2 (Ubuntu 26.04, Python 3.14, synthetic 52 MB exposures):
+a cold 480-file folder took 117–119 s as browser upload batches on main and
+53–60 s as a folder job on this branch. Importing 144 files after a restart,
+with 144 archived, took 46.1 s with 144 archive reads on main (upload) and
+19.7 s with none on this branch.
+
+Validation: on Windows the full suite ran 1049 passed and 5 skipped;
+build.ps1 -AllowDirty built 0.1.0-g10606e3c-dirty and check_browser.py
+--desktop passed 27 of 27, its browser-fallback check expecting the new
+platform-neutral "No folder dialog is available here" toast. Under WSL2, 955
+tests passed; the failures and errors needed Node.js, which that
+environment lacks, except test_native_tool_cache_revalidates_changed_
+executable_with_restored_mtime[linux-x64], which fails identically on main
+there (see BUGS.md: same-tick rewrites keep POSIX file versions). End to end
+under WSL2, the branch server with a private data store and archive opened the
+zenity dialog from the catalog page; the user picked a 40-file test folder,
+which imported 40 of 40 in about two seconds, recorded 40 fingerprint rows,
+left no stages and kept the sources. The same way, the archive Browse… dialog
+saved the folder the user picked as the archive, and the copy-destination
+Browse… filled in its pick without starting a copy. No release was staged or
+published.
+
+## Continuous folder import and restart-proof dedup cache — October 24, 2026
+
+- A folder chosen in the desktop window imports as one job instead of batches.
+  POST /api/images/folder/jobs validates every scanned path, then keeps 48
+  files staging while earlier ones publish; the page polls
+  GET /api/images/folder/jobs/{id}?since=N and counts each file as it lands.
+  A second job is refused while one runs, and shutdown cancels and drains a
+  running job without leaving stages. The per-batch folder endpoint is gone;
+  uploads keep their batches.
+- On Windows, dedup fingerprints measured or written under a change-journal
+  version are stored in a new fingerprint_versions table, so the first import
+  after a restart no longer rereads every same-size archive file. The row for
+  a new publication commits in the same transaction as its image and history.
+  A zero cache limit turns all fingerprint caching off. Positive duplicates
+  still rehash, and any change to a file invalidates its row.
+
+Measured with the developer benchmark on the Ryzen 5 5600X test machine
+(synthetic 52 MB exposures). A cold 480-file folder took 26.4 s in 2 GiB
+batches and 15.3–15.8 s as a job; windows of 24 and 48 performed alike, and 96
+was erratic. Importing 144 files after a restart, with 144 already archived,
+went from 14.8 s and 144 archive reads to 6.6 s and none.
+
+Validation on Windows with Python 3.12: the persisted cache first broke 13
+batch-admission and stress tests that disable caching with a zero limit; the
+persisted tier now honors that limit. Read-count expectations changed where
+they described cache contents (a restart simulation now also clears the
+table), and tests were added for restart reuse, offline changes, window
+refill order, refusing a second job and shutdown mid-import. The full suite ran
+1037 passed and 5 skipped; check_js.py, check_dom_ids.py and check_encoding.py
+passed. build.ps1 -AllowDirty built 0.1.0-ga2b8efea-dirty and
+check_browser.py --desktop passed 27 of 27; the browser checks cannot open the
+native dialog, and the user confirmed a folder import in that executable by
+hand. No release was staged or published.
+
+Pull-request CI then failed on the Windows runner, whose volume has no change
+journal. There, every untrusted read deleted and committed a cache row: the
+profile import counted 11 commits instead of 5, and the HTTP lifecycle test
+timed out because that commit waited on another connection's write lock before
+the import could publish. Cache rows are now queued and written only inside the
+next import transaction, and the delete path is gone. The lifecycle test passed
+locally with durable versions forced off, and the cache, import, stress and
+admission modules passed 72 of 72.
+
 ## Hardware SHA-256 on Windows — October 22, 2026
 
 - Content hashing (import copies, archive fingerprints, deep health scans,

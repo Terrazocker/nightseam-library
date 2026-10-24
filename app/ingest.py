@@ -10,7 +10,9 @@ from __future__ import annotations
 import logging
 import asyncio
 import hashlib
+import json
 import os
+import sqlite3
 import re
 import shutil
 import tempfile
@@ -461,10 +463,12 @@ def _dedup_fingerprint(db, path, incoming, cancel_event=None):
     """Avoid rereading unchanged negative candidates; positives are rehashed.
 
     Only actual byte reads, or this process's own publication of bytes it
-    hashed while writing, populate this bounded, process-local cache, keyed by
-    durable file versions (POSIX fstat/ctime, or Windows file id, timestamps and
-    change-journal USN). Stored DB hashes and size/mtime alone never authorize
-    skipping an upload.
+    hashed while writing, populate this bounded cache, keyed by durable file
+    versions (POSIX fstat/ctime, or Windows file id, timestamps and
+    change-journal USN). Entries also persist across restarts: on Windows every
+    closed writer advances the USN and journal recreation changes its id, and
+    on POSIX any write or utime call changes ctime.
+    Stored image hashes and size/mtime alone never authorize skipping an upload.
     Callers serialize it with archive_lock.
     """
     with pinned_version(path) as version:
@@ -488,17 +492,51 @@ def _cached_negative(db, path, durable, incoming):
     """Reuse an earlier actual read only for a different digest at the same durable version."""
     cache = getattr(db, '_ingest_fingerprints', None)
     cached = cache.get(path) if durable is not None and cache else None
+    if cached is None:
+        cached = _stored_fingerprint(db, path, durable)
     if cached and cached[0] == durable and cached[1][0] != incoming:
-        cache.move_to_end(path)
+        if cache and path in cache:
+            cache.move_to_end(path)
         return cached[1]
     return None
+
+
+def _durable_key(durable):
+    # Windows versions are journal-backed; POSIX ones are device, inode, size,
+    # mtime and ctime, which any write or utime call changes. A stale entry can
+    # only miss a duplicate (positives rehash), never skip a new file. A zero
+    # cache limit turns fingerprint caching off; a positive one bounds memory.
+    if durable is None or not _FINGERPRINT_CACHE_LIMIT:
+        return None
+    return json.dumps([part.hex() if isinstance(part, bytes) else part for part in durable])
+
+
+def _stored_fingerprint(db, path, durable):
+    """A digest measured by an earlier run, while its durable version is unchanged."""
+    key, lookup = _durable_key(durable), getattr(db, 'fingerprint_version', None)
+    if key is None or lookup is None:
+        return None
+    try:
+        stored = lookup(os.path.normcase(str(path)))
+    except sqlite3.Error:
+        return None
+    if stored is None or stored[0] != key:
+        return None
+    entry = durable, tuple(stored[1:])
+    cache = getattr(db, '_ingest_fingerprints', None)
+    if cache is None:
+        cache = db._ingest_fingerprints = OrderedDict()
+    if len(cache) < _FINGERPRINT_CACHE_LIMIT:
+        cache[path] = entry
+    return entry
 
 
 def _remember_fingerprint(db, path, durable, measured, unchanged):
     cache = getattr(db, '_ingest_fingerprints', None)
     if cache is None:
         cache = db._ingest_fingerprints = OrderedDict()
-    if durable is not None and measured and unchanged:
+    trusted = durable is not None and measured and unchanged
+    if trusted:
         # Freeze admission at the bound rather than evicting on a full
         # ascending scan, which would make every subsequent scan thrash.
         if path in cache or len(cache) < _FINGERPRINT_CACHE_LIMIT:
@@ -506,15 +544,37 @@ def _remember_fingerprint(db, path, durable, measured, unchanged):
             cache.move_to_end(path)
     else:
         cache.pop(path, None)
+    key = _durable_key(durable) if trusted else None
+    if key is not None and hasattr(db, 'store_fingerprint_versions'):
+        # Written by the next import transaction, never under the archive lock
+        # on its own: a busy database must not stall duplicate checks. A stale
+        # row needs no delete, since only an identical durable version matches.
+        pending = db.__dict__.setdefault('_pending_fingerprints', {})
+        if len(pending) < _FINGERPRINT_CACHE_LIMIT:
+            pending[os.path.normcase(str(path))] = key, tuple(measured)
 
 
-def _remember_published(db, path, digest, size):
-    """Seed the negative cache with the bytes this import just wrote.
+def _persist_fingerprints(db):
+    """Store queued fingerprints inside the caller's import transaction."""
+    pending = getattr(db, '_pending_fingerprints', None)
+    if not pending:
+        return
+    rows = [(path, key, *measured) for path, (key, measured) in pending.items()]
+    pending.clear()
+    try:
+        db.store_fingerprint_versions(rows)
+    except sqlite3.Error:
+        log.warning("ingest: could not store %d fingerprints", len(rows))
+
+
+def _published_version(path, digest, size):
+    """(durable version, fingerprint) of bytes this import just wrote, or None.
 
     The digest was computed over exactly the bytes written to the stage that
     became `path`; the durable version is captured under the same archive lock
-    that published it. Any later change advances that version, so the entry
-    then misses and the file is read again. Positives still always rehash.
+    that published it. Any later change advances that version, so a cache entry
+    made from it then misses and the file is read again. Positives still always
+    rehash.
     """
     try:
         # NTFS records the rename's journal entry and change time when the
@@ -523,13 +583,12 @@ def _remember_published(db, path, digest, size):
             pass
         with pinned_version(path) as version:
             if version is None or version() is None:
-                return
+                return None
             durable = _durable_version(version)
             info = path.stat()
-            if info.st_size == size:
-                _remember_fingerprint(db, path, durable, (digest, size, info.st_mtime_ns), True)
+            return (durable, (digest, size, info.st_mtime_ns)) if info.st_size == size else None
     except OSError:
-        pass
+        return None
 
 
 def _known_duplicate(db, archive, digest, size, enforce_root, session_target, frame, dedup_batch=None,
@@ -1131,10 +1190,16 @@ def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
             stat = target.stat()
             try:
                 checkpoint()
+                published = None
                 if mapping:
                     verify_publication(target, (stored_digest, stored_size))
                     # Restore to the sanitized, collision-resolved archive name.
                     mapping['original_name'] = target.name[:-3]
+                else:
+                    # The stage is a hard link to the published file; dropping
+                    # it changes the file's journal version, so it goes first.
+                    _remove_stage(publish_stage)
+                    published = _published_version(target, stored_digest, stored_size)
                 with db.import_unit():
                     img_id = db.add_image({
                         **metadata,
@@ -1163,12 +1228,11 @@ def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
                     }
                     if on_import is not None:
                         on_import(result, archive)
+                    if published is not None:
+                        _remember_fingerprint(db, target, *published, True)
+                    # Queued rows commit or roll back with the image.
+                    _persist_fingerprints(db)
                 committed = True
-                if not mapping:
-                    # The stage is a hard link to the published file; dropping
-                    # it changes the file's journal version, so it goes first.
-                    _remove_stage(publish_stage)
-                    _remember_published(db, target, stored_digest, stored_size)
             except BaseException:
                 target.unlink(missing_ok=True)
                 raise
