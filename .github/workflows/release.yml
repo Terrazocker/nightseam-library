@@ -88,7 +88,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build the executable and stage the release ZIP
         run: |
-          $build = if ($env:RELEASE_BUILD -eq 'true') { @() } else { @('-AllowDirty') }
+          # A hashtable binds the script switch; an array would pass it as text.
+          $build = @{ AllowDirty = $env:RELEASE_BUILD -ne 'true' }
           $stage = if ($env:RELEASE_BUILD -eq 'true') { @() } else { @('--allow-dirty') }
           & ./build.ps1 @build 2>&1 | Tee-Object -FilePath logs/release-windows-build.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
