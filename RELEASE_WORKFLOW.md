@@ -20,17 +20,46 @@ build a clean 0.1.0 release. Source validation can use check_release.py with
    record actual validation in RELEASES.md.
 3. Run relevant tests while editing, the full suite at completion, check_js.py
    and the source release guard. Tests/scratch stay in ignored logs/.
-4. Commit the reviewed changes, create a new vVERSION tag at the clean commit,
-   and compile with the platform builder below. Never retag. Existing executable replacement
-   requires its verified backup and must respect an open application.
+4. Merge the reviewed changes into main, then push a new vVERSION tag at that
+   merged commit. Never retag. The release workflow below compiles and gates
+   both platforms; local builds with the platform builders remain possible.
+   Existing executable replacement requires its verified backup and must
+   respect an open application.
 5. Run packaged check_browser.py --desktop on a private executable/data copy.
    Complete the platform-specific runtime and distribution gates below. Keep
    checksums/version/member validation and the private-data exclusion intact.
 
+## GitHub release automation
+
+`.github/workflows/release.yml` runs when a `v*` tag is pushed. It refuses a
+tag that differs from `v` + VERSION or that is not on main, then on fresh
+runners:
+
+- Windows (windows-2022): the full suite, `build.ps1` and `make_release.py`
+  without `-AllowDirty`, the packaged browser and native-window gates, and a
+  final `check_release.py` proving the ZIP still holds the gated executable.
+- Linux (ubuntu-22.04): `build_linux.py`, the restricted-PATH smoke, the three
+  pinned clean offline systems and the packaged browser gate.
+
+It then creates a **draft** GitHub release named after the tag with these
+files, each version producing its own names:
+
+- `NightSeam-Catalog-VERSION-windows-x64.zip` and its `.sha256`
+- `NightSeam-Catalog-VERSION-linux-x86_64.tar.gz` and its `.sha256`
+
+Gate evidence and `build-info.json` stay as workflow artifacts on the run.
+A draft is visible only to repository collaborators. Complete the manual
+Windows and Linux acceptance on the drafted archives, then publish the draft
+from the GitHub Releases page; that click is the explicit publication
+authorization. Pull requests touching the release path, and manual runs from
+the Actions tab, are dry runs that build and gate the same way with
+`-g<commit>` versions and keep only workflow artifacts.
+
 ## Windows distribution
 
 Build with `build.ps1`, run `check_release.py --no-stage`, then
-`make_release.py` and the full release guard. These executable/ZIP gates are
+`make_release.py` (which stages `NightSeam-Catalog-VERSION-windows-x64.zip`)
+and the full release guard. These executable/ZIP gates are
 Windows-specific. Follow [Windows manual acceptance](docs/windows-manual-acceptance.md)
 for clean disconnected VM and physical display checks; CI cannot complete all
 of those interactive checks.
@@ -75,6 +104,7 @@ merged by pull request. CI (`.github/workflows/windows-validation.yml`) runs the
 Linux and Windows suites, both packaged builds and the browser gates on every
 pull request and push to main, plus a weekly scheduled run with the packaged
 import benchmark. Optional benchmarks are started manually from the Actions tab.
+Pushed release tags create draft releases through `.github/workflows/release.yml` (above).
 A GitHub repository and executable release publication are distinct choices.
 Upload only verified platform archives and their checksums/manifests when authorized.
 Never commit source data/, dist/data/, logs/, executable backups or credentials.

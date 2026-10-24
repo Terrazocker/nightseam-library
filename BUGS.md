@@ -1,5 +1,12 @@
 # Current NightSeam Catalog findings
 
+## Browser-gate teardown test failed once under full-suite load — October 24, 2026 (open)
+
+test_teardown_owns_descendants_after_the_launcher_exits failed in one full
+Windows source run (1048 passed) and passed when rerun alone, both on main and
+on the release-automation branch. The failure is load-dependent; its cause is
+not yet identified.
+
 ## Same-tick rewrites keep POSIX file versions under WSL2 — October 24, 2026 (open)
 
 Under WSL2 (kernel 6.6.87, ext4), 184 of 200 immediate same-size rewrites with a

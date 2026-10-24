@@ -1,5 +1,24 @@
 # Independent catalog release record
 
+## Draft GitHub releases from release tags — October 24, 2026
+
+- `.github/workflows/release.yml` builds both platform archives when a `v*`
+  tag is pushed. It refuses a tag that differs from `v` + VERSION or that is
+  not on main. It reruns the Windows suite and the packaged gates on the
+  actual artifacts, then attaches them to a draft release. Publishing stays a
+  manual click after the manual acceptance checks.
+- The Windows ZIP is now `NightSeam-Catalog-VERSION-windows-x64.zip`, with a
+  `.sha256` beside it in the Linux format. Linux keeps
+  `NightSeam-Catalog-VERSION-linux-x86_64.tar.gz` and its `.sha256`.
+- A Linux tarball built at a clean release tag no longer says it is a
+  development artifact. Off-tag and dirty builds still do.
+
+Local Windows validation: the release and Linux package tests passed (11), as
+did check_js and the encoding guard. The full source suite passed 1048 with 5
+skipped; one browser-gate teardown test failed under load and passed alone (see
+BUGS.md). The workflow itself has not run yet; the pull request's dry run is
+its first execution.
+
 ## Folder import and restart cache on Linux — October 24, 2026
 
 - The Linux browser build had no folder path except the browser's directory
