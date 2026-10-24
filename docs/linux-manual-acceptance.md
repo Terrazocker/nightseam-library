@@ -9,8 +9,8 @@ the OS release, architecture, glibc version, desktop session (X11/Wayland),
 browser/file-manager versions, package version and tarball/executable SHA-256.
 Use the same tarball that passed CI and verify its adjacent `.sha256` file.
 
-Python and Node are unnecessary on the test machine. Install the system browser
-and `xdg-utils` first. Prepare only synthetic FITS fixtures with independent
+Python and Node are unnecessary on the test machine. Install the system browser,
+`xdg-utils` and `zenity` (or `kdialog`) first. Prepare only synthetic FITS fixtures with independent
 original hashes; retain the originals outside the test archive. On a development
 machine, `tests/browser/fits_fixtures.py` provides `compressed_gate_image(False)`.
 Do not copy user exposures or a profile into the test package.
@@ -30,6 +30,8 @@ Record each result as passed, failed (with evidence), or not_run:
 | Open folder | The file manager opens precisely the configured archive, including literal spaces/metacharacters. | not_run |
 | Rice round trip | Import synthetic FITS with Safe compression; uncompress through the UI and verify the restored file's original SHA-256. | not_run |
 | Duplicate | Reimport the same bytes under a new name; identity, original classification/location and image count remain unchanged. | not_run |
+| Folder import | **Choose folder…** opens the zenity/kdialog dialog; the picked synthetic folder imports in place with per-file progress and no browser upload confirmation; its files stay unchanged. | not_run |
+| Folder Browse… | The archive **Browse…** saves the picked folder as the archive; the library-copy destination **Browse…** fills its field without starting a copy. Without zenity/kdialog both take typed paths and folder import falls back to the browser upload. | not_run |
 | Downloads | Export CSV and save a support report through the real browser; inspect versions/tool integrity and check that the support report omits archive paths/exposure names. | not_run |
 | Keyboard/accessibility | Navigate menus/dialogs/import controls, verify focus restoration and progress announcements with an actual screen reader. | not_run |
 | Browser-tab close | Closing a tab leaves the server available; reopening its logged URL works. | not_run |

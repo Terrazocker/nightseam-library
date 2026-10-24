@@ -86,6 +86,13 @@ restarting, importing 144 more read no archive files back and took 6.6 seconds
 instead of 14.8. Remaining: volumes without an active change journal, and
 non-Windows systems, still read the same-size population once per start.
 
+Update, October 24, 2026 (Linux): POSIX durable versions now persist as well.
+Under WSL2, importing 144 files after a restart with 144 archived went from
+46.1 seconds and 144 archive reads (main, browser upload) to 19.7 seconds and
+none. Remaining: Windows volumes without an active change journal still read
+the same-size population once per start, and coarse POSIX timestamps can hide
+same-tick rewrites (see the WSL2 entry above).
+
 ## Session compression blocked by stacked or deleted exposures — October 18, 2026 (fixed)
 
 A floating point stack previously refused the entire session conversion. Deleting

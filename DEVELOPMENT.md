@@ -98,13 +98,15 @@ option, too many files, malformed body) publishes nothing. A disconnect or
 refusal stops further publication; files already published remain, as with
 any interrupted request. Worker slots are granted in file order after a file's
 bytes are staged, so later parts keep arriving while earlier files publish.
-A request-scoped DedupBatch pins up to 4,096 earlier
-same-size files and their directory lineage, validating their negative hashes
-once per batch. Preparation captures only root identity; existing and newly
-published files enter that index lazily when an upload
-first encounters them as candidates: their current archive bytes are hashed under
-live file/directory pins, with lexical path and root identity validation. No upload
-or database digest alone admits a candidate. The index retains its root identity
+A DedupBatch scoped to one upload request or folder job pins up to 4,096
+earlier same-size files and their directory lineage, validating their negative
+hashes once per batch. Preparation captures only root identity; existing and
+newly published files enter that index lazily when an import first encounters
+them as candidates, under live file/directory pins with lexical path and root
+identity validation. Their digest comes from the fingerprint cache while the
+durable version is unchanged (files this process published are known from the
+bytes written), otherwise from hashing current archive bytes. No database
+digest alone admits a candidate. The index retains its root identity
 even when initially empty and acquires its lease on the first successful admission.
 Positive matches still rehash; failed admission and the 4,096-file bound retain
 individual checks. Cancellation reaches both admission and fallback reads, and
