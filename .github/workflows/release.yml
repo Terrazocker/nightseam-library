@@ -90,7 +90,7 @@ jobs:
         run: |
           # A hashtable binds the script switch; an array would pass it as text.
           $build = @{ AllowDirty = $env:RELEASE_BUILD -ne 'true' }
-          $stage = if ($env:RELEASE_BUILD -eq 'true') { @() } else { @('--allow-dirty') }
+          $stage = @(if ($env:RELEASE_BUILD -ne 'true') { '--allow-dirty' })
           & ./build.ps1 @build 2>&1 | Tee-Object -FilePath logs/release-windows-build.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & .venv-build/Scripts/python.exe scripts/make_release.py @stage 2>&1 | Tee-Object -FilePath logs/release-windows-stage.log
@@ -114,7 +114,7 @@ jobs:
       # The gates ran the staged executable; prove the ZIP still holds those bytes.
       - name: Re-check the staged ZIP and write its checksum
         run: |
-          $stage = if ($env:RELEASE_BUILD -eq 'true') { @() } else { @('--allow-dirty') }
+          $stage = @(if ($env:RELEASE_BUILD -ne 'true') { '--allow-dirty' })
           & .venv-build/Scripts/python.exe scripts/check_release.py @stage 2>&1 | Tee-Object -FilePath logs/release-windows-guard.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $zip = @(Get-Item dist/release/NightSeam-Catalog-*-windows-x64.zip)
