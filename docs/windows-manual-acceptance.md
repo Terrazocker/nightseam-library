@@ -55,6 +55,9 @@ Configure and verify a private empty archive before any upload.
    it contains no archive paths or exposure names. Cancel a second download and
    confirm the catalog remains usable. CI covers the packaged browser download;
    native Save As interaction requires this separate check.
+7. Import a synthetic folder through **Choose folder…**. The Windows folder dialog
+   opens, no "Upload N files" confirmation appears, progress advances per file,
+   and the source files remain unchanged. The browser gate cannot open this dialog.
 
 Record the network-disconnected interval, tool/runtime errors, hashes and results.
 If WebView2 is absent, record the strict native startup failure separately; a
