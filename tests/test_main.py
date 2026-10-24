@@ -206,7 +206,7 @@ def test_source_shutdown_interrupts_active_acknowledgement(tmp_path, monkeypatch
         while health.snapshot()["status"] == "running":
             assert time.monotonic() < deadline; time.sleep(.01)
         assert health.snapshot()["status"] == "completed"
-        monkeypatch.setattr(archive_health.hashlib, "sha256", SlowHash)
+        monkeypatch.setattr(archive_health.digests, "sha256", SlowHash)
         def request():
             try:
                 outcome["response"] = httpx.post(

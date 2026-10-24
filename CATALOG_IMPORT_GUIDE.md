@@ -94,7 +94,10 @@ copied catalog's archive location to its new `images` folder before using it.
    type to override it for the next import.
 4. Use **Choose files…**, the header's **Import**, or drop FITS exposures into
    the drop area. **Choose folder…** searches the selected folder and all
-   its subfolders for supported exposures, ignoring other files. Existing
+   its subfolders for supported exposures, ignoring other files. In the
+   desktop window it opens the Windows folder dialog and reads the files in
+   place, so no browser upload confirmation appears; an archive folder inside
+   the selected folder is skipped. Existing
    exposures are checked by complete contents and skipped even if renamed;
    different contents with the same filename are imported separately.
    Supported names are `.fit`, `.fits`, `.fts`, tiled `.fz`
@@ -102,8 +105,9 @@ copied catalog's archive location to its new `images` folder before using it.
    original location; imported copies preserve the complete original bytes.
 5. Watch **files processed / total** and **elapsed time**. Counts advance after
    each batch returns: up to 96 files normally, or 24 with compression enabled.
-   Batches also stay within 512 MiB, except that a larger individual exposure
-   is sent alone (the per-file limit is 1 GiB). Elapsed time keeps updating during
+   Batches also stay within 512 MiB (2 GiB for a folder read in place by the
+   desktop window), except that a larger individual exposure is sent alone (the
+   per-file limit is 1 GiB). Elapsed time keeps updating during
    a batch. A failure counter appears when a returned file result fails.
 6. Review **Import results**, then open **Library** to inspect the objects and
    capture sessions. Final progress remains visible until another import or
@@ -319,17 +323,21 @@ fingerprint so imports recognize the updated contents. Cached hash matches are
 always verified against the actual archived bytes.
 
 Import prepares files concurrently while publishing them in selection order.
-Each file is written straight into the archive while it uploads, without a
-temporary copy, and earlier files in a batch publish while later ones arrive.
+Each file is written straight into the archive while it uploads, or while it is
+read from a folder chosen in the desktop window, without a temporary copy, and
+earlier files in a batch publish while later ones arrive.
 Rice uploads use batches of up to 24 files, with preparation bounded by available
-CPU cores. Plain uploads use batches of up to 96, bounded by 512 MiB. Temporary preparation
+CPU cores. Plain uploads use batches of up to 96, bounded by 512 MiB; folder
+batches may reach 2 GiB. On Windows, SHA-256 uses the system's hardware-accelerated
+implementation when it is available. Temporary preparation
 does not hold the archive lock; publication and catalog commits remain serialized.
 The object matcher is reused across chunks until the catalog changes. On local
 NTFS/ReFS with an active change journal, unchanged nonmatching files use a
 process-local hash cache guarded by file identity, native change time and the
 journal's per-file change number, which detects edits with restored modification
-times. After the first import in a session has read the same-size archive files
-once, later batches and imports skip rereading them. Other filesystems, and
+times. Files imported in the current session are known from the bytes written,
+and older same-size archive files are read once; later batches and imports skip
+rereading either. Other filesystems, and
 volumes without a change journal, fall back to reading current bytes.
 Actual duplicate matches are always rehashed before an upload is skipped. Each
 request pins up to 4,096 earlier same-size candidates against writes/renames and

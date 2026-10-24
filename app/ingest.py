@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from itertools import chain
 
+from . import digests
 from . import fits as fitsio
 from . import imglib
 from . import fits_metadata
@@ -66,8 +67,9 @@ class DedupBatch:
     admitting newly published files lazily when they become candidates.
     Open writers, unsupported versions and candidates above the handle bound
     retain the conservative individual checks. Positive matches always rehash.
-    No database hash alone admits an entry; an earlier actual read in this
-    process may, while its durable change-journal version is unchanged.
+    No database hash alone admits an entry; an earlier actual read or
+    publication of the written bytes in this process may, while its durable
+    change-journal version is unchanged.
     """
     def __init__(self):
         self.stack = ExitStack()
@@ -103,8 +105,9 @@ class DedupBatch:
         """Measure a candidate and retain stable negative proof within this request.
 
         Caller owns the batch's archive lock. Only Windows writer-excluding pins
-        qualify. The first lookup of a newly committed file hashes actual archive
-        bytes, never the upload or database digest; positives continue to rehash.
+        qualify. A file not published by this process is hashed from actual
+        archive bytes on first lookup, never from a database digest; positives
+        continue to rehash.
         Failed admission retains no new directory/file handles.
         """
         if (self.root is not None and self.db is db and
@@ -276,7 +279,7 @@ def _fingerprint_file(path: Path, cancel_event=None) -> tuple[str, int, int] | N
     """Hash current bytes, refusing files that change during the read."""
     try:
         before = path.stat()
-        digest = hashlib.sha256()
+        digest = digests.sha256()
         with path.open("rb") as source:
             while chunk := source.read(_COPY_CHUNK):
                 _check_reindex_cancelled(cancel_event)
@@ -457,7 +460,8 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
 def _dedup_fingerprint(db, path, incoming, cancel_event=None):
     """Avoid rereading unchanged negative candidates; positives are rehashed.
 
-    Only actual byte reads populate this bounded, process-local cache, keyed by
+    Only actual byte reads, or this process's own publication of bytes it
+    hashed while writing, populate this bounded, process-local cache, keyed by
     durable file versions (POSIX fstat/ctime, or Windows file id, timestamps and
     change-journal USN). Stored DB hashes and size/mtime alone never authorize
     skipping an upload.
@@ -502,6 +506,30 @@ def _remember_fingerprint(db, path, durable, measured, unchanged):
             cache.move_to_end(path)
     else:
         cache.pop(path, None)
+
+
+def _remember_published(db, path, digest, size):
+    """Seed the negative cache with the bytes this import just wrote.
+
+    The digest was computed over exactly the bytes written to the stage that
+    became `path`; the durable version is captured under the same archive lock
+    that published it. Any later change advances that version, so the entry
+    then misses and the file is read again. Positives still always rehash.
+    """
+    try:
+        # NTFS records the rename's journal entry and change time when the
+        # first handle after it closes; capture from the next, settled handle.
+        with pinned_version(path):
+            pass
+        with pinned_version(path) as version:
+            if version is None or version() is None:
+                return
+            durable = _durable_version(version)
+            info = path.stat()
+            if info.st_size == size:
+                _remember_fingerprint(db, path, durable, (digest, size, info.st_mtime_ns), True)
+    except OSError:
+        pass
 
 
 def _known_duplicate(db, archive, digest, size, enforce_root, session_target, frame, dedup_batch=None,
@@ -794,7 +822,7 @@ async def ingest_one(db: Database, catalog: list[dict], archive: Path,
 
     stage = prepared = None
     working = False
-    digest = hashlib.sha256()
+    digest = digests.sha256()
     try:
         archive = await _archive_io(archive.resolve)
         stage = await _archive_io(_prepare_stage, archive, on_cancel=_remove_stage)
@@ -1136,6 +1164,11 @@ def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
                     if on_import is not None:
                         on_import(result, archive)
                 committed = True
+                if not mapping:
+                    # The stage is a hard link to the published file; dropping
+                    # it changes the file's journal version, so it goes first.
+                    _remove_stage(publish_stage)
+                    _remember_published(db, target, stored_digest, stored_size)
             except BaseException:
                 target.unlink(missing_ok=True)
                 raise

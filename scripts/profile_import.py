@@ -25,6 +25,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from app import digests
 from scripts import bench_windows_import as bench
 harness = bench.harness
 
@@ -148,7 +149,7 @@ class HashProxy:
         self.measurements = measurements
 
     def sha256(self, *args, **kwargs):
-        result = CountingHash(hashlib.sha256(*args, **kwargs), self.measurements)
+        result = CountingHash(digests.sha256(*args, **kwargs), self.measurements)
         data = args[0] if args else kwargs.get('string')
         if data is not None:
             result.count(data)
@@ -160,8 +161,8 @@ class HashProxy:
 
 def instrument(measurements):
     from app import archive_trash, compression, database, fits_metadata, imglib, ingest, paths
-    # Replace module bindings, not the process-global hashlib/sqlite3 modules.
-    ingest.hashlib = HashProxy(measurements)
+    # Replace module bindings, not the process-global digest/sqlite3 modules.
+    ingest.digests = HashProxy(measurements)
     class Connection(sqlite3.Connection):
         def commit(self):
             with measurements.phase('database_commit'):

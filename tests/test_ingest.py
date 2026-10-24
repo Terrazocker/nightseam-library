@@ -1364,7 +1364,7 @@ def test_reindex_hash_checks_cancellation_between_chunks(dedup_store, monkeypatc
     target.write_bytes(_capture(b"pixel" * (1 << 19)))
     before = db.images()
     cancelled = threading.Event()
-    original = ingest.hashlib.sha256
+    original = ingest.digests.sha256
     class StopDigest:
         def __init__(self):
             self.digest = original()
@@ -1373,7 +1373,7 @@ def test_reindex_hash_checks_cancellation_between_chunks(dedup_store, monkeypatc
             cancelled.set()
         def hexdigest(self):
             raise AssertionError("cancellation must stop before completing digest")
-    monkeypatch.setattr(ingest.hashlib, "sha256", StopDigest)
+    monkeypatch.setattr(ingest.digests, "sha256", StopDigest)
     with pytest.raises(ingest.ReindexCancelled):
         ingest.reindex_library(db, archive, cancelled)
     assert db.images() == before

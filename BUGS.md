@@ -27,6 +27,15 @@ work for Python's GIL (about 140 MB/s per request here). Each publication also
 scans every same-size catalog row in Python, which grows with the archive.
 Windows' write-back cache still flushes in bursts by design.
 
+Update, October 22, 2026: most remaining idle time was a serialized read-back.
+Each same-size publication fully hashed the previously published file under the
+archive lock, about 120 ms per 52 MB exposure. That read-back is gone, desktop
+folder imports read sources in place in 2 GiB batches, and content hashing uses
+Windows CNG. A private 144 × 52 MB folder import fell from 29.0 to 4.5–4.9
+seconds, and the same set uploaded from 44.3 to 36.0 seconds. Remaining: each
+batch boundary still drains the pipeline (one continuous request measured about
+13% faster), and write-back flush bursts are unchanged.
+
 ## Every import request rereads the same-size archive on Windows — October 18, 2026 (mitigated)
 
 Proving an upload is not a duplicate requires current bytes of every same-size
@@ -43,6 +52,12 @@ first import after each application start still reads the same-size population
 once. Volumes without an active change journal (or not NTFS/ReFS) keep full
 rereads. Positive matches and restored-mtime edits are still verified against
 current bytes.
+
+Update, October 22, 2026: a newly published uncompressed file now seeds the
+cache with the digest of the bytes written, so it is no longer read once after
+publication. Remaining: the first import after each start still reads earlier
+same-size exposures once, and volumes without durable versions still read
+every published file back (the Windows CI runner's volume behaves this way).
 
 ## Session compression blocked by stacked or deleted exposures — October 18, 2026 (fixed)
 

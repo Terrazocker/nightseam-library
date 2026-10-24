@@ -21,6 +21,7 @@ from contextlib import closing, ExitStack
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 
+from . import digests
 from . import fits_metadata as fits
 from .archive_health import _contained, _inspect
 from .archive_trash import _move, _mkdir, _parent, _transaction, PinnedParents
@@ -501,7 +502,7 @@ def convert(db, mode, anchor_id, image_ids, cancel, publish, destination=None, c
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with _parent(work_root if converted else root, temporary if converted else relative, work_identity if converted else identity):
                     with (output if converted else source).open('rb') as src, target.open('xb') as dst:
-                        digest = hashlib.sha256()
+                        digest = digests.sha256()
                         while chunk := src.read(1 << 20):
                             checkpoint()
                             dst.write(chunk)
@@ -512,7 +513,7 @@ def convert(db, mode, anchor_id, image_ids, cancel, publish, destination=None, c
                     raise ValueError('Library-copy verification failed.')
                 # Re-read the destination, independently of the write stream.
                 with target.open('rb') as verify:
-                    digest = hashlib.sha256()
+                    digest = digests.sha256()
                     while chunk := verify.read(1 << 20):
                         checkpoint()
                         digest.update(chunk)

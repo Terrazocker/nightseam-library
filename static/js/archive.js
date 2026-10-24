@@ -66,6 +66,9 @@ export function applyArchiveUI() {
 const BATCH = 96;
 const COMPRESSED_BATCH = 24;
 const MAX_BATCH_BYTES = 512 * 1024 * 1024;
+// Folder requests carry no file bytes; larger batches drain the server's
+// publication pipeline less often while progress still advances every few seconds.
+const FOLDER_BATCH_BYTES = 2 * 1024 * 1024 * 1024;
 let _archiveOperation = null;
 let _reindexErrorNotice = null;
 
@@ -182,10 +185,10 @@ function startImportActivity(total) {
   return activity;
 }
 
-const importChunks = function* (files, maxFiles) {
+const importChunks = function* (files, maxFiles, maxBytes) {
   let chunk = [], bytes = 0;
   for (const file of files) {
-    if (chunk.length && (chunk.length >= maxFiles || bytes + file.size > MAX_BATCH_BYTES)) {
+    if (chunk.length && (chunk.length >= maxFiles || bytes + file.size > maxBytes)) {
       yield chunk;
       chunk = [];
       bytes = 0;
@@ -197,7 +200,9 @@ const importChunks = function* (files, maxFiles) {
   if (chunk.length) yield chunk;
 };
 
-async function ingestFiles(files, frame, session, sessionAnchorId, source = "files") {
+// `folder` is a native-picker token: files are then scan entries the server
+// reads in place, named by their path relative to that folder.
+async function ingestFiles(files, frame, session, sessionAnchorId, source = "files", folder = null) {
   if (_archiveOperation) {
     toast("Wait for the current archive operation to finish.", "info", 4000);
     return;
@@ -225,23 +230,34 @@ async function ingestFiles(files, frame, session, sessionAnchorId, source = "fil
   const activity = startImportActivity(list.length);
   try {
     let submitted = 0;
-    for (const chunk of importChunks(list, batchSize)) {
+    for (const chunk of importChunks(list, batchSize, folder ? FOLDER_BATCH_BYTES : MAX_BATCH_BYTES)) {
       submitted += chunk.length;
-      // The server streams parts as they arrive: options and the declared
-      // file count must precede the files so each file can publish once ready.
-      const fd = new FormData();
-      if (selectedFrame) fd.append("frame", selectedFrame);
-      if (session) fd.append("session", session);
-      if (sessionAnchorId) fd.append("session_anchor_id", sessionAnchorId);
-      fd.append("run_id", runId);
-      fd.append("compress", String(compress));
-      fd.append("compression_mode", compressionMode);
-      fd.append("file_count", String(chunk.length));
-      for (const f of chunk) fd.append("files", f);
+      let request;
+      if (folder) {
+        request = ["/api/images/folder/ingest", { method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folder, files: chunk.map(f => f.rel),
+            frame: selectedFrame || "", session: session || "",
+            session_anchor_id: sessionAnchorId || null, run_id: runId,
+            compress, compression_mode: compressionMode }) }];
+      } else {
+        // The server streams parts as they arrive: options and the declared
+        // file count must precede the files so each file can publish once ready.
+        const fd = new FormData();
+        if (selectedFrame) fd.append("frame", selectedFrame);
+        if (session) fd.append("session", session);
+        if (sessionAnchorId) fd.append("session_anchor_id", sessionAnchorId);
+        fd.append("run_id", runId);
+        fd.append("compress", String(compress));
+        fd.append("compression_mode", compressionMode);
+        fd.append("file_count", String(chunk.length));
+        for (const f of chunk) fd.append("files", f);
+        request = ["/api/images/ingest", { method: "POST", body: fd }];
+      }
       let res;
       try {
         // FITS batches can take longer than the helper's generic 30s timeout.
-        res = await api("/api/images/ingest", { method: "POST", body: fd, timeout: 0 });
+        res = await api(request[0], { ...request[1], timeout: 0 });
         if (!Array.isArray(res.results)) throw new Error("Invalid import response");
       } catch (err) {
         for (const f of chunk) results.push({ file: f.name, ok: false,
@@ -277,6 +293,40 @@ async function ingestFiles(files, frame, session, sessionAnchorId, source = "fil
     }
   }
   await loadLibrary();
+}
+
+async function importPickedFolder(bridge) {
+  let picked;
+  try {
+    picked = await bridge.pick_import_folder();
+  } catch (err) {
+    toast("The folder dialog could not open.", "err", 6000);
+    return;
+  }
+  if (!picked) return;
+  if (_archiveOperation) {
+    toast("Wait for the current archive operation to finish.", "info", 4000);
+    return;
+  }
+  _archiveOperation = "folder";
+  const unlock = lockArchiveActions();
+  setBusy(true, `Reading ${picked.name}...`);
+  let scan;
+  try {
+    scan = await api("/api/images/folder/scan", { method: "POST", timeout: 0,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folder: picked.token }) });
+  } catch (err) {
+    return;                                 // api() already toasted
+  } finally {
+    setBusy(false);
+    unlock();
+    _archiveOperation = null;
+  }
+  if (scan.archive_skipped) toast("Your archive folder is inside this folder; its files were skipped.", "info", 6000);
+  if (scan.unreadable_folders) toast(`${scan.unreadable_folders} subfolder${scan.unreadable_folders === 1 ? "" : "s"} could not be read and ${scan.unreadable_folders === 1 ? "was" : "were"} skipped.`, "err", 8000);
+  const files = scan.files.map(f => ({ name: f.rel.split("/").pop(), size: f.size, rel: f.rel }));
+  await ingestFiles(files, undefined, undefined, undefined, "folder", picked.token);
 }
 
 export async function exportLibrary() {
@@ -969,7 +1019,11 @@ export function bindArchive() {
     _impSession = null;
     syncFrameSelector();
     $(".calibration-target")?.remove();
-    $("#fitFolder").click();
+    // The native window reads the folder in place: no WebView2 upload prompt
+    // and no copy of every file through the loopback socket.
+    const bridge = window.pywebview?.api;
+    if (typeof bridge?.pick_import_folder === "function") importPickedFolder(bridge);
+    else $("#fitFolder").click();
   });
   $("#fitFolder").addEventListener("change", e => {
     // Snapshot before resetting so the same directory can be selected again.
