@@ -41,8 +41,10 @@ runners:
 - Linux (ubuntu-22.04): `build_linux.py`, the restricted-PATH smoke, the three
   pinned clean offline systems and the packaged browser gate.
 
-It then creates a **draft** GitHub release named after the tag with these
-files, each version producing its own names:
+It then creates a **draft** GitHub release named after the tag. Its body is
+the RELEASES.md section headed `## VERSION — date`; a tag without that
+section is refused. The draft carries these files, each version producing its
+own names:
 
 - `NightSeam-Catalog-VERSION-windows-x64.zip` and its `.sha256`
 - `NightSeam-Catalog-VERSION-linux-x86_64.tar.gz` and its `.sha256`

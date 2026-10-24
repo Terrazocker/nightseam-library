@@ -48,6 +48,25 @@ jobs:
             fi
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      # The draft's body is the RELEASES.md section headed "## VERSION — date".
+      - name: Extract the release notes for VERSION
+        run: |
+          version=$(tr -d '[:space:]' < VERSION)
+          mkdir -p notes
+          awk -v v="$version" 'index($0, "## " v " ") == 1 { found = 1; next } found && /^## / { exit } found' RELEASES.md > notes/release-notes.md
+          if ! grep -q '[^[:space:]]' notes/release-notes.md; then
+            if [ "$GITHUB_REF_TYPE" = tag ]; then
+              echo "::error::RELEASES.md has no '## $version — date' section"; exit 1
+            fi
+            echo "::warning::RELEASES.md has no '## $version — date' section yet"
+          fi
+          head -n 5 notes/release-notes.md
+      - name: Retain the release notes
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes-${{ github.sha }}
+          path: notes/release-notes.md
+          if-no-files-found: error
 
   windows:
     needs: verify
@@ -242,4 +261,4 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" release/NightSeam-Catalog-* \
             --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-            --title "NightSeam Catalog $VERSION" --generate-notes
+            --title "NightSeam Catalog $VERSION" --notes-file release/release-notes.md
