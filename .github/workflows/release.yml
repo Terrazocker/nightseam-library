@@ -1,0 +1,245 @@
+name: Catalog release
+
+# A pushed vX.Y.Z tag builds both platform archives from the clean tagged
+# commit, gates the actual artifacts and attaches them to a draft release.
+# Publishing the draft stays a manual step after the manual acceptance checks.
+# Pull requests touching the release path and manual runs are dry runs:
+# they build and gate the same way but only keep workflow artifacts.
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - build.ps1
+      - scripts/build_linux.py
+      - scripts/check_release.py
+      - scripts/make_release.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-release-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: version
+        name: Require the tag to match VERSION on a commit merged into main
+        run: |
+          version=$(tr -d '[:space:]' < VERSION)
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match VERSION $version"; exit 1
+            fi
+            if ! git merge-base --is-ancestor HEAD origin/main; then
+              echo "::error::Tag $GITHUB_REF_NAME is not on main; release only merged commits"; exit 1
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: verify
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      RELEASE_BUILD: ${{ github.ref_type == 'tag' }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Require the release tag at the checked-out commit
+        if: github.ref_type == 'tag'
+        run: |
+          if (-not (@(git tag --points-at HEAD) -contains $env:GITHUB_REF_NAME)) { throw "HEAD does not carry $env:GITHUB_REF_NAME" }
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Prepare pinned application environment
+        run: |
+          New-Item -ItemType Directory -Path logs -Force | Out-Null
+          python -m venv .venv-build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-build/Scripts/python.exe -m pip install -r requirements-build-lock.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-build/Scripts/python.exe scripts/check_build_dependencies.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Full suite including Windows contracts
+        run: |
+          & .venv-build/Scripts/python.exe -m pytest tests/ -q -rs --tb=short 2>&1 | Tee-Object -FilePath logs/release-windows-tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build the executable and stage the release ZIP
+        run: |
+          # A hashtable binds the script switch; an array would pass it as text.
+          $build = @{ AllowDirty = $env:RELEASE_BUILD -ne 'true' }
+          $stage = @(if ($env:RELEASE_BUILD -ne 'true') { '--allow-dirty' })
+          & ./build.ps1 @build 2>&1 | Tee-Object -FilePath logs/release-windows-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-build/Scripts/python.exe scripts/make_release.py @stage 2>&1 | Tee-Object -FilePath logs/release-windows-stage.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prepare separate browser environment
+        run: |
+          python -m venv .venv-browser
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-browser/Scripts/python.exe -m pip install playwright==1.62.0 Pillow==12.3.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-browser/Scripts/python.exe -m playwright install chrome
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Packaged catalog browser gate with private data and archive
+        run: |
+          & .venv-browser/Scripts/python.exe scripts/check_browser.py --desktop --channel chrome --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/release-windows-browser.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Packaged native WinForms and WebView2 smoke
+        run: |
+          & .venv-browser/Scripts/python.exe scripts/check_native_window.py --restricted-runtime --exe dist/NightSeam.exe 2>&1 | Tee-Object -FilePath logs/release-windows-native.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # The gates ran the staged executable; prove the ZIP still holds those bytes.
+      - name: Re-check the staged ZIP and write its checksum
+        run: |
+          $stage = @(if ($env:RELEASE_BUILD -ne 'true') { '--allow-dirty' })
+          & .venv-build/Scripts/python.exe scripts/check_release.py @stage 2>&1 | Tee-Object -FilePath logs/release-windows-guard.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $zip = @(Get-Item dist/release/NightSeam-Catalog-*-windows-x64.zip)
+          if ($zip.Count -ne 1) { throw "Expected one staged ZIP, found $($zip.Count)" }
+          $hash = (Get-FileHash -Algorithm SHA256 $zip[0].FullName).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$($zip[0].FullName).sha256", "$hash  $($zip[0].Name)`n")
+      - name: Retain the Windows release archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-windows-${{ github.sha }}
+          path: |
+            dist/release/NightSeam-Catalog-*-windows-x64.zip
+            dist/release/NightSeam-Catalog-*-windows-x64.zip.sha256
+          if-no-files-found: error
+      - name: Retain Windows release evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evidence-windows-${{ github.sha }}
+          path: |
+            logs/release-windows-*.log
+            tests/browser/artifacts/
+          if-no-files-found: warn
+
+  linux:
+    needs: verify
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/logs/playwright-linux
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Require the release tag at the checked-out commit
+        if: github.ref_type == 'tag'
+        run: git tag --points-at HEAD | grep -qxF "$GITHUB_REF_NAME"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Prepare pinned Linux package environment
+        run: |
+          mkdir -p logs
+          python -m venv .venv-build
+          .venv-build/bin/python -m pip install -r requirements-build-linux-lock.txt
+          .venv-build/bin/python -m pip check
+      - name: Build portable Linux x86_64 browser bundle
+        run: |
+          set -o pipefail
+          .venv-build/bin/python scripts/build_linux.py 2>&1 | tee logs/release-linux-build.log
+      - name: Validate the extracted frozen runtime with restricted PATH
+        run: |
+          set -o pipefail
+          packages=(dist/NightSeam-Catalog-*-linux-x86_64.tar.gz)
+          test "${#packages[@]}" -eq 1
+          .venv-build/bin/python scripts/check_linux_package.py --bundle "${packages[0]}" 2>&1 | tee logs/release-linux-smoke.log
+      - name: First launch in clean offline Linux systems
+        run: |
+          set -o pipefail
+          packages=(dist/NightSeam-Catalog-*-linux-x86_64.tar.gz)
+          images=(
+            'ubuntu:22.04@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956'
+            'ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac'
+            'debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587'
+          )
+          names=(ubuntu22 ubuntu24 debian12)
+          for i in "${!images[@]}"; do
+            .venv-build/bin/python scripts/check_linux_clean_system.py --bundle "${packages[0]}" --image "${images[$i]}" --output "logs/release-linux-clean-${names[$i]}.json" 2>&1 | tee "logs/release-linux-clean-${names[$i]}.log"
+          done
+      - name: Prepare separate Linux browser environment
+        run: |
+          python -m venv .venv-browser
+          .venv-browser/bin/python -m pip install playwright==1.62.0 Pillow==12.3.0
+          .venv-browser/bin/python -m playwright install --with-deps chromium
+      - name: Real browser checks against the fresh Linux executable
+        run: |
+          set -o pipefail
+          executables=(dist/NightSeam-Catalog-*-linux-x86_64/NightSeam)
+          test "${#executables[@]}" -eq 1
+          .venv-browser/bin/python scripts/check_browser.py --desktop --channel chromium --exe "${executables[0]}" 2>&1 | tee logs/release-linux-browser.log
+      - name: Retain the Linux release archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-${{ github.sha }}
+          path: |
+            dist/NightSeam-Catalog-*-linux-x86_64.tar.gz
+            dist/NightSeam-Catalog-*-linux-x86_64.tar.gz.sha256
+          if-no-files-found: error
+      - name: Retain Linux release evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evidence-linux-${{ github.sha }}
+          path: |
+            logs/release-linux-*.log
+            logs/release-linux-*.json
+            dist/NightSeam-Catalog-*-linux-x86_64/build-info.json
+            tests/browser/artifacts/
+          if-no-files-found: warn
+
+  draft_release:
+    needs: [verify, windows, linux]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: release-*-${{ github.sha }}
+          path: release
+          merge-multiple: true
+      - name: Verify the downloaded archives against their checksums
+        run: |
+          cd release
+          ls -l
+          sha256sum --check -- *.sha256
+      - name: Create the draft release with both archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/NightSeam-Catalog-* \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+            --title "NightSeam Catalog $VERSION" --generate-notes

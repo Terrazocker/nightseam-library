@@ -19,7 +19,7 @@ def main():
     version=build_version()
     stage=ROOT/"dist/release"
     stage.mkdir(parents=True,exist_ok=True)
-    target=stage/f"NightSeam-Catalog-{version}.zip"
+    target=stage/f"NightSeam-Catalog-{version}-windows-x64.zip"
     with zipfile.ZipFile(target,"w",zipfile.ZIP_DEFLATED) as archive:
         for relative in ["dist/NightSeam.exe","LICENSE","NOTICE"]:
             archive.write(ROOT/relative,Path(relative).name)

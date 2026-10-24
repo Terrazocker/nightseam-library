@@ -136,7 +136,8 @@ def build(args):
             'Opening archive folders also uses xdg-open from xdg-utils.\n'
             'GTK/Qt native-window mode is not bundled. Do not install into /usr/bin.\n'
             'See build-info.json for the actual bundled ELF glibc requirements.\n'
-            'This development artifact is not a public release.\n', encoding='utf-8')
+            + ('' if re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version)
+               else 'This development artifact is not a public release.\n'), encoding='utf-8')
         with tarfile.open(bundle, 'w:gz') as archive:
             archive.add(output, arcname=output.name)
         bundle.with_name(bundle.name + '.sha256').write_text(f'{sha256(bundle)}  {bundle.name}\n', encoding='utf-8')

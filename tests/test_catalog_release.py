@@ -16,7 +16,7 @@ def _package(tmp_path,extra=None):
     exe.write_bytes(b"tested catalog executable")
     (tmp_path/"LICENSE").write_bytes(b"license")
     (tmp_path/"NOTICE").write_bytes(b"notice")
-    archive=stage/"NightSeam-Catalog-0.1.0.zip"
+    archive=stage/"NightSeam-Catalog-0.1.0-windows-x64.zip"
     with zipfile.ZipFile(archive,"w") as packed:
         for name in ["NightSeam.exe","LICENSE","NOTICE"]:
             packed.write(exe if name=="NightSeam.exe" else tmp_path/name,name)
