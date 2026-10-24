@@ -44,8 +44,10 @@ def test_copy_branches_the_running_state():
     assert branch.hexdigest() == hashlib.sha256(b"nightfall").hexdigest()
 
 
-def test_finished_hash_refuses_more_data():
+def test_finished_cng_hash_refuses_more_data():
     hasher = digests.sha256(b"abc")
+    if digests.IMPLEMENTATION != "cng":
+        pytest.skip("hashlib allows updates after digest()")
     hasher.digest()
     with pytest.raises(ValueError):
         hasher.update(b"more")

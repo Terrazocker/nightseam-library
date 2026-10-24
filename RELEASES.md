@@ -25,6 +25,13 @@ and check_browser.py --desktop passed 27 of 27, and the user confirmed imports
 working in that executable. Which implementation the packaged executable
 selected was not inspected directly. No release was staged or published.
 
+Pull-request CI then failed two tests. On Linux, the hashlib fallback allows
+update() after digest(), so the refusal test now runs only when CNG is
+selected. On the Windows runner, the profile import read six published files
+back because that volume has no durable file versions, so the profile test now
+expects no read-back only where durable versions exist, matching the other
+read-count tests.
+
 ## Native folder import — October 22, 2026
 
 - In the desktop window, Choose folder… opens the Windows folder dialog and
