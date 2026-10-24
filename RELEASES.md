@@ -34,6 +34,15 @@ check_browser.py --desktop passed 27 of 27; the browser checks cannot open the
 native dialog, and the user confirmed a folder import in that executable by
 hand. No release was staged or published.
 
+Pull-request CI then failed on the Windows runner, whose volume has no change
+journal. There, every untrusted read deleted and committed a cache row: the
+profile import counted 11 commits instead of 5, and the HTTP lifecycle test
+timed out because that commit waited on another connection's write lock before
+the import could publish. Cache rows are now queued and written only inside the
+next import transaction, and the delete path is gone. The lifecycle test passed
+locally with durable versions forced off, and the cache, import, stress and
+admission modules passed 72 of 72.
+
 ## Hardware SHA-256 on Windows — October 22, 2026
 
 - Content hashing (import copies, archive fingerprints, deep health scans,

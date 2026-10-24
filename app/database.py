@@ -739,15 +739,11 @@ class Database:
                                     'WHERE path=?', (path,)).fetchone()
         return tuple(row) if row else None
 
-    def remember_fingerprint_version(self, path: str, durable: str | None, measured=None) -> None:
-        """Store a measured digest under its durable version, or forget the path."""
+    def store_fingerprint_versions(self, rows) -> None:
+        """Store (path, durable, sha256, size, mtime_ns) rows; joins an open import unit."""
         with self.lock:
             try:
-                if durable is None or measured is None:
-                    self.conn.execute('DELETE FROM fingerprint_versions WHERE path=?', (path,))
-                else:
-                    self.conn.execute('INSERT OR REPLACE INTO fingerprint_versions VALUES (?,?,?,?,?)',
-                                      (path, durable, *measured))
+                self.conn.executemany('INSERT OR REPLACE INTO fingerprint_versions VALUES (?,?,?,?,?)', rows)
                 if not getattr(self, '_import_unit', False):
                     self.conn.commit()
             except BaseException:

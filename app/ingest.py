@@ -541,13 +541,27 @@ def _remember_fingerprint(db, path, durable, measured, unchanged):
             cache.move_to_end(path)
     else:
         cache.pop(path, None)
-    remember = getattr(db, 'remember_fingerprint_version', None)
-    if remember is not None and os.name == 'nt' and _FINGERPRINT_CACHE_LIMIT:
-        key = _durable_key(durable) if trusted else None
-        try:
-            remember(os.path.normcase(str(path)), key, tuple(measured) if key else None)
-        except sqlite3.Error:
-            log.warning("ingest: could not store the fingerprint of %s", path)
+    key = _durable_key(durable) if trusted else None
+    if key is not None and hasattr(db, 'store_fingerprint_versions'):
+        # Written by the next import transaction, never under the archive lock
+        # on its own: a busy database must not stall duplicate checks. A stale
+        # row needs no delete, since only an identical durable version matches.
+        pending = db.__dict__.setdefault('_pending_fingerprints', {})
+        if len(pending) < _FINGERPRINT_CACHE_LIMIT:
+            pending[os.path.normcase(str(path))] = key, tuple(measured)
+
+
+def _persist_fingerprints(db):
+    """Store queued fingerprints inside the caller's import transaction."""
+    pending = getattr(db, '_pending_fingerprints', None)
+    if not pending:
+        return
+    rows = [(path, key, *measured) for path, (key, measured) in pending.items()]
+    pending.clear()
+    try:
+        db.store_fingerprint_versions(rows)
+    except sqlite3.Error:
+        log.warning("ingest: could not store %d fingerprints", len(rows))
 
 
 def _published_version(path, digest, size):
@@ -1212,8 +1226,9 @@ def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
                     if on_import is not None:
                         on_import(result, archive)
                     if published is not None:
-                        # The cache row commits or rolls back with the image.
                         _remember_fingerprint(db, target, *published, True)
+                    # Queued rows commit or roll back with the image.
+                    _persist_fingerprints(db)
                 committed = True
             except BaseException:
                 target.unlink(missing_ok=True)

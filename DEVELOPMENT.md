@@ -45,9 +45,11 @@ process, whose digest was computed over exactly the bytes written to the stage.
 Publication removes the stage hard link and lets the first handle close before
 capturing the durable version (both advance the USN), so files just imported are
 not read back serially under the archive lock. Positive duplicate
-matches always rehash. The publication's cache row is written inside the same
-import_unit transaction as its image and history, after the durable version is
-captured outside the database lock. Content SHA-256 (import copies, archive fingerprints,
+matches always rehash. Cache rows are queued in memory and written inside the
+next import_unit transaction, together with that publication's image, history
+and own row (its durable version is captured outside the database lock). A
+duplicate check therefore never takes the SQLite write lock, and a stale row
+needs no delete because only an identical durable version matches. Content SHA-256 (import copies, archive fingerprints,
 deep health scans, trash verification and library copies) goes through
 app/digests.py. It uses Windows CNG once that reproduces hashlib's
 known-answer digests, and otherwise hashlib. Python's bundled OpenSSL does not
