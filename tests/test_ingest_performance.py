@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import compression, file_version, ingest, server
+from app.database import Database
 from test_compression import exposure, library, no_stages
 from test_ingest_compression import upload
 from scripts import stress_dedup as stress
@@ -220,11 +221,12 @@ def test_bounded_negative_cache_and_conservative_reads_above_capacity(tmp_path, 
         assert upload(db, archive, exposure(index))['ok']
     # Without a durable version (e.g. no change journal on a CI volume), handle-
     # lifetime versions cannot be reused, so nothing is cached at all. With one,
-    # the first three publications fill the frozen cache; later uploads read
-    # each uncached earlier file (1 + 2 + 3 + 4).
+    # the first three publications fill the frozen memory cache. On Windows the
+    # persisted versions cover the rest; elsewhere later uploads read each
+    # uncached earlier file (1 + 2 + 3 + 4).
     durable = durable_versions(tmp_path)
     assert len(db._ingest_fingerprints) == (3 if durable else 0)
-    assert len(reads) == (10 if durable or os.name != 'nt' else 28)
+    assert len(reads) == ((0 if os.name == 'nt' else 10) if durable or os.name != 'nt' else 28)
 
 
 def test_known_compressed_duplicate_does_not_need_encoder(tmp_path, monkeypatch):
@@ -251,7 +253,10 @@ def test_http_batch_checks_earlier_files_once_and_detects_next_request_edits(tmp
             checks.append(path)
         return fingerprint(path, cancel)
     monkeypatch.setattr(ingest, '_fingerprint_file', measured)
+    # Forget every earlier measurement, including persisted ones.
     db._ingest_fingerprints.clear()
+    db.conn.execute('DELETE FROM fingerprint_versions')
+    db.conn.commit()
     with TestClient(server.create_app(db)) as client:
         result = client.post('/api/images/ingest', files=[
             ('files', (f'new-{index}.fit', exposure(index + 100))) for index in range(24)]).json()['results']
@@ -375,3 +380,29 @@ def test_published_file_changed_later_is_read_again(tmp_path):
     (archive / first['stored']).write_bytes(replacement)
     result = upload(db, archive, replacement, name='light-1.fit')
     assert result['ok'] and result['skipped'] and result['id'] == first['id']
+
+
+def test_unchanged_archive_is_not_reread_after_restart(tmp_path, monkeypatch):
+    if os.name != 'nt' or not durable_versions(tmp_path):
+        pytest.skip('restart reuse needs Windows change-journal versions')
+    db, archive, _ = library(tmp_path, count=0)
+    stored = [upload(db, archive, exposure(i), name=f'light-{i}.fit') for i in range(4)]
+    db.conn.close()
+    # A new process: an empty memory cache over the same database and archive.
+    db = Database(tmp_path / 'catalog.db')
+    original, reads = ingest._fingerprint_file, []
+    def measured(path, *args):
+        reads.append(path)
+        return original(path, *args)
+    monkeypatch.setattr(ingest, '_fingerprint_file', measured)
+    assert upload(db, archive, exposure(10), name='after-restart.fit')['ok']
+    assert reads == []
+    # A file changed while NightSeam was closed is read again and matched.
+    replacement = exposure(11)
+    (archive / stored[1]['stored']).write_bytes(replacement)
+    db.conn.close()
+    db = Database(tmp_path / 'catalog.db')
+    result = upload(db, archive, replacement, name='changed-offline.fit')
+    assert result['skipped'] and result['id'] == stored[1]['id']
+    assert archive / stored[1]['stored'] in reads
+    db.conn.close()

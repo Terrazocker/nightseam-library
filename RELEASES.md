@@ -1,5 +1,39 @@
 # Independent catalog release record
 
+## Continuous folder import and restart-proof dedup cache — October 24, 2026
+
+- A folder chosen in the desktop window imports as one job instead of batches.
+  POST /api/images/folder/jobs validates every scanned path, then keeps 48
+  files staging while earlier ones publish; the page polls
+  GET /api/images/folder/jobs/{id}?since=N and counts each file as it lands.
+  A second job is refused while one runs, and shutdown cancels and drains a
+  running job without leaving stages. The per-batch folder endpoint is gone;
+  uploads keep their batches.
+- On Windows, dedup fingerprints measured or written under a change-journal
+  version are stored in a new fingerprint_versions table, so the first import
+  after a restart no longer rereads every same-size archive file. The row for
+  a new publication commits in the same transaction as its image and history.
+  A zero cache limit turns all fingerprint caching off. Positive duplicates
+  still rehash, and any change to a file invalidates its row.
+
+Measured with the developer benchmark on the Ryzen 5 5600X test machine
+(synthetic 52 MB exposures). A cold 480-file folder took 26.4 s in 2 GiB
+batches and 15.3–15.8 s as a job; windows of 24 and 48 performed alike, and 96
+was erratic. Importing 144 files after a restart, with 144 already archived,
+went from 14.8 s and 144 archive reads to 6.6 s and none.
+
+Validation on Windows with Python 3.12: the persisted cache first broke 13
+batch-admission and stress tests that disable caching with a zero limit; the
+persisted tier now honors that limit. Read-count expectations changed where
+they described cache contents (a restart simulation now also clears the
+table), and tests were added for restart reuse, offline changes, window
+refill order, refusing a second job and shutdown mid-import. The full suite ran
+1037 passed and 5 skipped; check_js.py, check_dom_ids.py and check_encoding.py
+passed. build.ps1 -AllowDirty built 0.1.0-ga2b8efea-dirty and
+check_browser.py --desktop passed 27 of 27; the browser checks cannot open the
+native dialog, and the user confirmed a folder import in that executable by
+hand. No release was staged or published.
+
 ## Hardware SHA-256 on Windows — October 22, 2026
 
 - Content hashing (import copies, archive fingerprints, deep health scans,

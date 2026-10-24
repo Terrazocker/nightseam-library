@@ -36,6 +36,12 @@ seconds, and the same set uploaded from 44.3 to 36.0 seconds. Remaining: each
 batch boundary still drains the pipeline (one continuous request measured about
 13% faster), and write-back flush bursts are unchanged.
 
+Update, October 24, 2026: desktop folder imports now run as one continuous job
+that keeps 48 files staging while earlier ones publish, so batch boundaries no
+longer drain the pipeline. With a cold 480 × 52 MB source the 2 GiB batches took
+26.4 seconds and the job 15.3–15.8 seconds. Remaining: uploads still go in
+batches, and write-back flush bursts are unchanged.
+
 ## Every import request rereads the same-size archive on Windows — October 18, 2026 (mitigated)
 
 Proving an upload is not a duplicate requires current bytes of every same-size
@@ -58,6 +64,13 @@ cache with the digest of the bytes written, so it is no longer read once after
 publication. Remaining: the first import after each start still reads earlier
 same-size exposures once, and volumes without durable versions still read
 every published file back (the Windows CI runner's volume behaves this way).
+
+Update, October 24, 2026: on Windows the measured digests are also stored in
+the catalog database under their durable version, so a restart reuses them
+while the file is unchanged. After importing 144 × 52 MB exposures and
+restarting, importing 144 more read no archive files back and took 6.6 seconds
+instead of 14.8. Remaining: volumes without an active change journal, and
+non-Windows systems, still read the same-size population once per start.
 
 ## Session compression blocked by stacked or deleted exposures — October 18, 2026 (fixed)
 

@@ -160,6 +160,15 @@ CREATE TABLE IF NOT EXISTS image_trash (
     trashed_at TEXT NOT NULL,
     recovery_error TEXT
 );
+-- Discardable dedup cache: a digest is reused only while the file's durable
+-- NTFS/ReFS version (file id, times, change-journal id and USN) is unchanged.
+CREATE TABLE IF NOT EXISTS fingerprint_versions (
+    path TEXT PRIMARY KEY,
+    durable TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    mtime_ns INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS import_batches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
@@ -721,6 +730,29 @@ class Database:
                 self.conn.commit()
             except BaseException:
                 self.conn.rollback()
+                raise
+
+    def fingerprint_version(self, path: str):
+        """(durable, sha256, size, mtime_ns) last measured for an archive path."""
+        with self.lock:
+            row = self.conn.execute('SELECT durable, sha256, size, mtime_ns FROM fingerprint_versions '
+                                    'WHERE path=?', (path,)).fetchone()
+        return tuple(row) if row else None
+
+    def remember_fingerprint_version(self, path: str, durable: str | None, measured=None) -> None:
+        """Store a measured digest under its durable version, or forget the path."""
+        with self.lock:
+            try:
+                if durable is None or measured is None:
+                    self.conn.execute('DELETE FROM fingerprint_versions WHERE path=?', (path,))
+                else:
+                    self.conn.execute('INSERT OR REPLACE INTO fingerprint_versions VALUES (?,?,?,?,?)',
+                                      (path, durable, *measured))
+                if not getattr(self, '_import_unit', False):
+                    self.conn.commit()
+            except BaseException:
+                if not getattr(self, '_import_unit', False):
+                    self.conn.rollback()
                 raise
 
     def set_image_fingerprint(self, img_id: int, digest: str,

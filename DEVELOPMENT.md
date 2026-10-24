@@ -27,21 +27,27 @@ are reported; catalog rows and baselines stay intact. Integrity, permission and
 publication failures retain the complete rollback contract. Library copy and
 uncompression still require their selected sources to be present.
 Dedup comparisons measure same-size originals even if their database digest
-differs: external restores can preserve size and mtime. A bounded process-local
+differs: external restores can preserve size and mtime. A bounded in-memory
 negative-match memo avoids repeated full reads behind durable file versions:
 identity and ctime on POSIX. app/file_version.py pins Windows writers/renames and
 includes an opaque handle lifetime in NTFS/ReFS versions: timestamps can collide
 after rapid same-size writes with restored mtime. Its durable() version adds the
 volume's change-journal id and the file's USN, which every closed writer
 advances, so independent handles reuse a measured digest only while that is
-unchanged. Without an active change journal they always rehash.
+unchanged. On Windows these journal-backed entries are also stored in the
+fingerprint_versions table, so a restart reuses them while the version is
+unchanged; that table is a discardable cache, never an integrity baseline, and
+POSIX versions stay in memory only. Without an active change journal they
+always rehash.
 Unsupported filesystems/open writers disable memoization. Only measured bytes
 populate the cache: an earlier read, or an uncompressed publication by this
 process, whose digest was computed over exactly the bytes written to the stage.
 Publication removes the stage hard link and lets the first handle close before
 capturing the durable version (both advance the USN), so files just imported are
 not read back serially under the archive lock. Positive duplicate
-matches always rehash. Content SHA-256 (import copies, archive fingerprints,
+matches always rehash. The publication's cache row is written inside the same
+import_unit transaction as its image and history, after the durable version is
+captured outside the database lock. Content SHA-256 (import copies, archive fingerprints,
 deep health scans, trash verification and library copies) goes through
 app/digests.py. It uses Windows CNG once that reproduces hashlib's
 known-answer digests, and otherwise hashlib. Python's bundled OpenSSL does not
@@ -54,14 +60,20 @@ folder in app/local_import.py and returns only an opaque token, so WebView2
 shows no upload prompt and the page never names a source path.
 /api/images/folder/scan lists the folder's FITS names recursively, without
 following links or junctions, skipping an archive inside it and refusing a
-folder inside the archive. /api/images/folder/ingest takes the token, scanned
-relative paths and the upload options as JSON; it refuses any path outside the
-folder before staging anything and reads each source in place through the same
-IngestRun staging, ordering and publication as an upload, so dedup, rollback
-and history behave identically. A source that cannot be opened fails alone.
-Source relative paths never become destination paths. The UI sends at most 96 files per ordinary request, or 24 with compression,
-and at most 512 MiB per upload batch (2 GiB per folder batch, which carries no
-file bytes) unless a larger single file needs its own request.
+folder inside the archive. POST /api/images/folder/jobs takes the token, all
+scanned relative paths and the upload options as JSON. It refuses any path
+outside the folder before staging anything, then runs one continuous job that
+holds import admission and keeps FOLDER_IMPORT_WINDOW (48) files staging while
+earlier ones publish, through the same IngestRun staging, ordering and
+publication as an upload, so dedup, rollback and history behave identically.
+Batches drained that pipeline at every boundary; on a cold source the job
+measured about 42% faster. The page polls GET /api/images/folder/jobs/{id}
+?since=N for per-file results in selection order. A second job is refused
+while one runs, and shutdown cancels and drains a running job. A source that
+cannot be opened fails alone. Source relative paths never become destination
+paths. For uploads the UI sends at most 96 files per request, or 24 with
+compression, and at most 512 MiB per batch unless a larger single file needs
+its own request.
 The server retains its 1 GiB per-file, 24 GiB body and 24-worker ceilings.
 /api/images/ingest parses multipart incrementally (app/upload_stream.py): each
 file part streams with bounded buffering straight into its own archive stage

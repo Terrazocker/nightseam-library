@@ -66,9 +66,7 @@ export function applyArchiveUI() {
 const BATCH = 96;
 const COMPRESSED_BATCH = 24;
 const MAX_BATCH_BYTES = 512 * 1024 * 1024;
-// Folder requests carry no file bytes; larger batches drain the server's
-// publication pipeline less often while progress still advances every few seconds.
-const FOLDER_BATCH_BYTES = 2 * 1024 * 1024 * 1024;
+const FOLDER_POLL_MS = 400;
 let _archiveOperation = null;
 let _reindexErrorNotice = null;
 
@@ -185,10 +183,10 @@ function startImportActivity(total) {
   return activity;
 }
 
-const importChunks = function* (files, maxFiles, maxBytes) {
+const importChunks = function* (files, maxFiles) {
   let chunk = [], bytes = 0;
   for (const file of files) {
-    if (chunk.length && (chunk.length >= maxFiles || bytes + file.size > maxBytes)) {
+    if (chunk.length && (chunk.length >= maxFiles || bytes + file.size > MAX_BATCH_BYTES)) {
       yield chunk;
       chunk = [];
       bytes = 0;
@@ -199,6 +197,47 @@ const importChunks = function* (files, maxFiles, maxBytes) {
   }
   if (chunk.length) yield chunk;
 };
+
+function countResults(activity, batch) {
+  const confirmed = batch.filter(result => !result.unconfirmed && !result.unattempted);
+  activity.processed += confirmed.length;
+  activity.skipped += batch.filter(result => result.ok && result.skipped).length;
+  activity.restored += batch.filter(result => result.ok && result.restored).length;
+  activity.failed += confirmed.filter(result => !result.ok).length;
+  activity.unconfirmed += batch.filter(result => result.unconfirmed).length;
+  activity.update();
+}
+
+// A picked folder imports as one continuous server job: files keep staging
+// while earlier ones publish, and outcomes arrive per file, in order.
+async function importFolderJob(folder, list, options, activity, results) {
+  let job;
+  try {
+    job = await api("/api/images/folder/jobs", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folder, files: list.map(f => f.rel), ...options }) });
+  } catch (err) {
+    return;                                 // api() already toasted; nothing started
+  }
+  for (let misses = 0; ;) {
+    await new Promise(resolve => setTimeout(resolve, FOLDER_POLL_MS));
+    let state;
+    try {
+      state = await api(`/api/images/folder/jobs/${job.id}?since=${results.length}`, { silent: true });
+      misses = 0;
+    } catch (err) {
+      if (++misses < 10) continue;
+      const lost = list.slice(results.length).map(f => ({ file: f.name, ok: false, unconfirmed: true,
+        error: "Lost contact with the folder import; file outcome unconfirmed" }));
+      results.push(...lost);
+      countResults(activity, lost);
+      return;
+    }
+    results.push(...state.results);
+    countResults(activity, state.results);
+    if (state.status !== "running") return;
+  }
+}
 
 // `folder` is a native-picker token: files are then scan entries the server
 // reads in place, named by their path relative to that folder.
@@ -230,34 +269,27 @@ async function ingestFiles(files, frame, session, sessionAnchorId, source = "fil
   const activity = startImportActivity(list.length);
   try {
     let submitted = 0;
-    for (const chunk of importChunks(list, batchSize, folder ? FOLDER_BATCH_BYTES : MAX_BATCH_BYTES)) {
+    const chunks = folder ? [] : importChunks(list, batchSize);
+    if (folder) await importFolderJob(folder, list, { frame: selectedFrame || "", session: session || "",
+      session_anchor_id: sessionAnchorId || null, run_id: runId,
+      compress, compression_mode: compressionMode }, activity, results);
+    for (const chunk of chunks) {
       submitted += chunk.length;
-      let request;
-      if (folder) {
-        request = ["/api/images/folder/ingest", { method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ folder, files: chunk.map(f => f.rel),
-            frame: selectedFrame || "", session: session || "",
-            session_anchor_id: sessionAnchorId || null, run_id: runId,
-            compress, compression_mode: compressionMode }) }];
-      } else {
-        // The server streams parts as they arrive: options and the declared
-        // file count must precede the files so each file can publish once ready.
-        const fd = new FormData();
-        if (selectedFrame) fd.append("frame", selectedFrame);
-        if (session) fd.append("session", session);
-        if (sessionAnchorId) fd.append("session_anchor_id", sessionAnchorId);
-        fd.append("run_id", runId);
-        fd.append("compress", String(compress));
-        fd.append("compression_mode", compressionMode);
-        fd.append("file_count", String(chunk.length));
-        for (const f of chunk) fd.append("files", f);
-        request = ["/api/images/ingest", { method: "POST", body: fd }];
-      }
+      // The server streams parts as they arrive: options and the declared
+      // file count must precede the files so each file can publish once ready.
+      const fd = new FormData();
+      if (selectedFrame) fd.append("frame", selectedFrame);
+      if (session) fd.append("session", session);
+      if (sessionAnchorId) fd.append("session_anchor_id", sessionAnchorId);
+      fd.append("run_id", runId);
+      fd.append("compress", String(compress));
+      fd.append("compression_mode", compressionMode);
+      fd.append("file_count", String(chunk.length));
+      for (const f of chunk) fd.append("files", f);
       let res;
       try {
         // FITS batches can take longer than the helper's generic 30s timeout.
-        res = await api(request[0], { ...request[1], timeout: 0 });
+        res = await api("/api/images/ingest", { method: "POST", body: fd, timeout: 0 });
         if (!Array.isArray(res.results)) throw new Error("Invalid import response");
       } catch (err) {
         for (const f of chunk) results.push({ file: f.name, ok: false,
@@ -267,13 +299,7 @@ async function ingestFiles(files, frame, session, sessionAnchorId, source = "fil
         break;
       }
       results.push(...res.results);
-      const confirmed = res.results.filter(result => !result.unconfirmed && !result.unattempted);
-      activity.processed += confirmed.length;
-      activity.skipped += res.results.filter(result => result.ok && result.skipped).length;
-      activity.restored += res.results.filter(result => result.ok && result.restored).length;
-      activity.failed += confirmed.filter(result => !result.ok).length;
-      activity.unconfirmed += res.results.filter(result => result.unconfirmed).length;
-      activity.update();
+      countResults(activity, res.results);
       if (res.results.some(result => result.unconfirmed || result.unattempted)) {
         for (const file of list.slice(submitted)) results.push({
           file: file.name, ok: false, unattempted: true,

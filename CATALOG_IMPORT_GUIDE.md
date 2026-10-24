@@ -103,10 +103,11 @@ copied catalog's archive location to its new `images` folder before using it.
    Supported names are `.fit`, `.fits`, `.fts`, tiled `.fz`
    (including `.fits.fz`), and their `.gz` wrappers. Originals stay in their
    original location; imported copies preserve the complete original bytes.
-5. Watch **files processed / total** and **elapsed time**. Counts advance after
-   each batch returns: up to 96 files normally, or 24 with compression enabled.
-   Batches also stay within 512 MiB (2 GiB for a folder read in place by the
-   desktop window), except that a larger individual exposure is sent alone (the
+5. Watch **files processed / total** and **elapsed time**. A folder chosen in
+   the desktop window imports as one continuous run, and counts advance with
+   each file. Uploaded files advance after each batch returns: up to 96 files
+   normally, or 24 with compression enabled. Upload batches also stay within
+   512 MiB, except that a larger individual exposure is sent alone (the
    per-file limit is 1 GiB). Elapsed time keeps updating during
    a batch. A failure counter appears when a returned file result fails.
 6. Review **Import results**, then open **Library** to inspect the objects and
@@ -327,17 +328,19 @@ Each file is written straight into the archive while it uploads, or while it is
 read from a folder chosen in the desktop window, without a temporary copy, and
 earlier files in a batch publish while later ones arrive.
 Rice uploads use batches of up to 24 files, with preparation bounded by available
-CPU cores. Plain uploads use batches of up to 96, bounded by 512 MiB; folder
-batches may reach 2 GiB. On Windows, SHA-256 uses the system's hardware-accelerated
+CPU cores. Plain uploads use batches of up to 96, bounded by 512 MiB. A folder
+from the desktop window runs as one continuous import that keeps 48 files
+staging while earlier ones publish, so a slow source disk is never left idle
+between batches. On Windows, SHA-256 uses the system's hardware-accelerated
 implementation when it is available. Temporary preparation
 does not hold the archive lock; publication and catalog commits remain serialized.
 The object matcher is reused across chunks until the catalog changes. On local
 NTFS/ReFS with an active change journal, unchanged nonmatching files use a
-process-local hash cache guarded by file identity, native change time and the
-journal's per-file change number, which detects edits with restored modification
-times. Files imported in the current session are known from the bytes written,
-and older same-size archive files are read once; later batches and imports skip
-rereading either. Other filesystems, and
+hash cache guarded by file identity, native change time and the journal's
+per-file change number, which detects edits with restored modification times.
+Imported files are known from the bytes written, and older same-size archive
+files are read once; the cache is kept in the catalog database, so later
+imports skip rereading either, also after restarting NightSeam. Other filesystems, and
 volumes without a change journal, fall back to reading current bytes.
 Actual duplicate matches are always rehashed before an upload is skipped. Each
 request pins up to 4,096 earlier same-size candidates against writes/renames and
