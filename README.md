@@ -2,7 +2,7 @@
 
 [![Catalog validation](https://github.com/Terrazocker/nightseam-library/actions/workflows/windows-validation.yml/badge.svg)](https://github.com/Terrazocker/nightseam-library/actions/workflows/windows-validation.yml)
 
-Version **0.1.0**. An independent catalog application with a native Windows
+Version **0.2.0**. An independent catalog application with a native Windows
 window and a Linux browser build, for importing exposures,
 organizing capture sessions, attaching calibration frames and browsing an archive
 sky map. It began as the catalog part of NightSeam and has been developed as an

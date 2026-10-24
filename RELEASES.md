@@ -1,5 +1,99 @@
 # Independent catalog release record
 
+## 0.2.0 — October 24, 2026
+
+The first release since the catalog became its own application on October 1,
+2026, and the first built by the release workflow.
+
+### New
+
+- Archive Health runs Quick (metadata) or Deep (full SHA-256) scans in the
+  background. Scans can be cancelled, and a downloadable report lists missing,
+  changed, unreadable and unindexed files. A scan never modifies anything.
+- Archive Health findings can be resolved by acknowledging deletions (per
+  exposure, per session or all at once) or by accepting a file's current
+  contents, and the history is kept.
+- Capture sessions follow the sun: a night runs sunset to sunrise and a day
+  runs sunrise to sunset at the observing location, with a fallback location
+  setting. Sessions without a location or a reliable time show as "Unassigned
+  location" or "Undated" rather than being guessed.
+- Lossless Rice compression, offered as an import option and as Compress
+  losslessly / Uncompress on a selected session, restores files byte for byte.
+  A Fast / Safe switch chooses between trusting reversibility and restoring
+  each file to compare its original hash.
+- Copy library writes a standalone folder of individual FITS files with a
+  manifest and a database snapshot. The copy is read back and hash-verified.
+- Compressed FITS files (.fits.gz, .fz, .fits.fz and gzip-wrapped variants)
+  import with their metadata, and each session row shows whether its storage
+  is compressed, uncompressed or mixed.
+- Choose folder imports a whole folder recursively as one continuous job with a
+  live per-file count. The Windows window uses the native folder dialog and
+  imports in place, without the "Upload N files?" prompt.
+- A one-click Support report lists app and tool versions and recent warning
+  categories, without paths or library contents.
+
+### Changed
+
+- The Workbench redesign gives the app one header with the Library, Import
+  and Sky Map tabs, the Import action and a Tools menu (Reindex folders,
+  Archive health, Export library, Copy library, Support report). It adds a
+  first-run empty-library state. Session rows show date, kind and local time
+  range.
+- The layout holds at narrow windows, keyboard navigation covers the object list
+  and session table, and increased-contrast and forced-colors settings are
+  honoured.
+- Imports are much faster, about seven times on a 512-file test. Large
+  libraries and archive-health scans of very large archives also scale better.
+- Reindex plans first and publishes atomically. It keeps IDs and manual
+  metadata when a missing file can be matched, reports ambiguous repairs
+  without guessing, and can be cancelled.
+- Session compression skips missing files and leaves unsupported
+  floating-point images unchanged instead of aborting, then lists what it
+  skipped.
+- Library CSV export neutralizes spreadsheet formulas. Over-long object names
+  and archive paths are refused, never silently cut.
+
+### Removed
+
+- The planning shell is retired: planner views, sites, rigs, panoramas,
+  custom-target editing, weather and object-image lookups, the update check and
+  `--planner`. The app makes no network requests. Older databases still open,
+  and their custom targets still resolve.
+- Setup-ZIP export and restore are removed. Recovery relies on the archive
+  folder, the rolling database backup and Reindex folders.
+- Exposure previews, thumbnails, the autostretch viewer and inline session
+  expansion are removed. Clicking a session selects its row.
+- Trash is removed. Files already in Trash stay in the archive and can be
+  restored with a maintenance script.
+
+### Fixed
+
+- Folder renames refuse unsafe moves before changing anything, a failed rename
+  is undone, and an incomplete undo is reported.
+- Imports keep partial upload results, stop on a database failure and report
+  the files they did not attempt. Shutting down during a folder import leaves
+  no staging files behind.
+- The catalog database is snapshotted before migration and after opening, in
+  addition to the rolling backup.
+- Windows device names such as NUL or con.fits and control characters no
+  longer break imports. Archive paths containing brackets no longer break
+  compression or Copy library.
+- A file replaced with the same size and timestamp is now detected during
+  import and reindex. A legacy integrity value no longer aborts a health scan.
+
+### Downloads
+
+- Windows x64: `NightSeam-Catalog-0.2.0-windows-x64.zip` with its `.sha256`.
+  It runs in a native window, using WebView2 with a browser fallback.
+- Linux x86_64: `NightSeam-Catalog-0.2.0-linux-x86_64.tar.gz` with its
+  `.sha256`, a browser build that opens the system browser. It bundles the
+  FITS tools and needs no Python or Node. It requires glibc 2.35 or newer and
+  was tested offline on Ubuntu 22.04 and 24.04 and Debian 12. The Choose
+  folder and Browse dialogs need a display plus zenity or kdialog; without
+  them, the browser's directory upload is used. Opening the archive folder
+  needs xdg-open.
+- Both builds run offline and keep their data beside the executable.
+
 ## Draft GitHub releases from release tags — October 24, 2026
 
 - `.github/workflows/release.yml` builds both platform archives when a `v*`
