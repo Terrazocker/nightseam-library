@@ -45,7 +45,7 @@ matches always rehash. Content SHA-256 (import copies, archive fingerprints,
 deep health scans, trash verification and library copies) goes through
 app/digests.py. It uses Windows CNG once that reproduces hashlib's
 known-answer digests, and otherwise hashlib. Python's bundled OpenSSL does not
-use the CPU's SHA extensions, while CNG does (about 3x on a Ryzen 5 5600X), and
+use the CPU's SHA extensions, while CNG does (about 3x on the test machine), and
 hashing is the import's CPU ceiling. Short identity hashes stay on hashlib. Import offers individual files or a recursive directory
 selection. In the browser fallback the directory comes through a directory
 input and uploads like files. In the native window, Choose folder… opens the

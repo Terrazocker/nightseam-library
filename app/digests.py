@@ -1,7 +1,7 @@
 """SHA-256 of file contents: Windows CNG when available, otherwise hashlib.
 
 Python's bundled OpenSSL does not use the SHA extensions of many current x64
-CPUs; Windows CNG does, about three times faster on a Ryzen 5 5600X. Imports,
+CPUs; Windows CNG does, about three times faster on the test machine. Imports,
 deep health scans and library copies hash every byte, so this is their CPU
 ceiling. Digests are identical: CNG is used only after it reproduces hashlib's
 known-answer digests, and any load or self-check failure keeps hashlib. Short

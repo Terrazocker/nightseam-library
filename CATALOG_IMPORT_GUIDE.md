@@ -323,10 +323,13 @@ fingerprint so imports recognize the updated contents. Cached hash matches are
 always verified against the actual archived bytes.
 
 Import prepares files concurrently while publishing them in selection order.
-Each file is written straight into the archive while it uploads, without a
-temporary copy, and earlier files in a batch publish while later ones arrive.
+Each file is written straight into the archive while it uploads, or while it is
+read from a folder chosen in the desktop window, without a temporary copy, and
+earlier files in a batch publish while later ones arrive.
 Rice uploads use batches of up to 24 files, with preparation bounded by available
-CPU cores. Plain uploads use batches of up to 96, bounded by 512 MiB. Temporary preparation
+CPU cores. Plain uploads use batches of up to 96, bounded by 512 MiB; folder
+batches may reach 2 GiB. On Windows, SHA-256 uses the system's hardware-accelerated
+implementation when it is available. Temporary preparation
 does not hold the archive lock; publication and catalog commits remain serialized.
 The object matcher is reused across chunks until the catalog changes. On local
 NTFS/ReFS with an active change journal, unchanged nonmatching files use a

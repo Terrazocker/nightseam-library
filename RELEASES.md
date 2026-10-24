@@ -6,7 +6,7 @@
   trash verification and library copies) now goes through app/digests.py. It
   uses Windows CNG once that reproduces hashlib's known-answer digests,
   including a copied state, and otherwise hashlib. Python's bundled OpenSSL
-  3.0.16 hashed at 673 MB/s on the Ryzen 5 5600X test machine because it does
+  3.0.16 hashed at 673 MB/s on the test machine because it does
   not use the CPU's SHA extensions; CNG hashed at 2244 MB/s with identical
   digests. Short identity hashes stay on hashlib.
 
@@ -55,7 +55,7 @@ read-count tests.
 - Folder batches may hold 2 GiB instead of the upload limit of 512 MiB, so the
   publication pipeline drains less often.
 
-Measured with a developer benchmark on the NVMe archive drive (144 synthetic
+Measured with a developer benchmark on the test machine (144 synthetic
 52 MB exposures, source files cached, instrumented source server): folder
 import went from 29.0 s to 10.5 s, and to 7.0 s uninstrumented with 2 GiB
 batches; upload import went from 44.3 s to 36.0 s. Process CPU for the folder
