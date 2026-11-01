@@ -81,6 +81,21 @@ def test_backup_contains_committed_wal_records(tmp_path):
     no_staging(path)
 
 
+def test_catalog_commits_through_a_durable_write_ahead_log(tmp_path):
+    path = tmp_path / "catalog.sqlite"
+    db = Database(path)
+    assert db.conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert db.conn.execute("PRAGMA synchronous").fetchone()[0] == 2  # FULL
+    db.add_image(rec())
+    assert not Path(str(path) + "-journal").exists()
+    db.close()
+    # Closing folds the log back, so the catalog file alone is complete.
+    assert not Path(str(path) + "-wal").exists()
+    assert read_value(path, "SELECT COUNT(*) FROM images") == 1
+    reopened = Database(path)
+    assert reopened.images()[0]["file"] == rec()["file"]
+
+
 def test_invalid_snapshot_aborts_before_migration_and_preserves_prior_copy(tmp_path, monkeypatch):
     path = tmp_path / "legacy.sqlite"
     with closing(sqlite3.connect(path)) as conn:

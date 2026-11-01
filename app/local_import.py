@@ -103,29 +103,40 @@ def scan(root: Path, archive: Path) -> dict:
 
 
 def exposure(root: Path, archive: Path, rel) -> LocalExposure:
-    """The source named by a scan's relative path; ValueError when it is not one."""
+    """The source named by a scan's relative path; ValueError when it is not one.
+
+    `archive` must already be resolved. Only names are checked here.
+    """
     parts = str(rel).replace("\\", "/").split("/") if isinstance(rel, str) and len(rel) <= 1024 else []
     if not parts or any(part in ("", ".", "..") or ":" in part or "\0" in part for part in parts):
         raise ValueError("Import file names must be paths inside the selected folder.")
     path = root.joinpath(*parts)
-    # A junction inside the folder must not lead outside it or into the archive.
-    resolved = path.resolve()
-    if not _within(resolved, root) or _within(resolved, archive.resolve()):
+    if _within(path, archive):
         raise ValueError("Import file names must be paths inside the selected folder.")
-    return LocalExposure(path)
+    # Links are resolved as each file opens: on a network share, resolving
+    # thousands of files here outlasted the page's request to start the job.
+    return LocalExposure(path, root, archive)
 
 
 class LocalExposure:
     """A source file that ingest_one reads like a spooled upload."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, root: Path, archive: Path):
         self.path = path
+        self.root, self.archive = root, archive
         self.filename = path.name
         self.size = None
         self.file = None
 
     def open_source(self) -> str | None:
         """Open the file for reading; return a per-file error, or None."""
+        try:
+            # A junction inside the folder must not lead outside it or into the archive.
+            resolved = self.path.resolve()
+        except OSError as exc:
+            return f"Cannot read source file: {exc.strerror or exc}"
+        if not _within(resolved, self.root) or _within(resolved, self.archive):
+            return "Source file is a link that leads outside the selected folder."
         try:
             source = self.path.open("rb")
         except FileNotFoundError:

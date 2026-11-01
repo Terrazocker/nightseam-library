@@ -210,13 +210,13 @@ def exercise(root, count, cycles=3, files_per_directory=32, depth=0,
                     for _ in range(2):
                         bench.require(ingest._find_duplicate(db, archive, 'absent', size,
                             dedup_batch=index) is None, 'Distinct bytes matched a negative probe')
-                    bench.require(reads == count + 2 * max(0, count - cap),
-                        'Above-cap candidates did not retain fresh fallback hashes')
+                    bench.require(reads == count,
+                        'Above-cap candidates were hashed again within one request')
                     last = records[-1]
                     duplicate = ingest._find_duplicate(db, archive, last['content_sha256'], size,
                         dedup_batch=index)
                     bench.require(duplicate and duplicate['id'] == last['id'], 'Positive duplicate lost identity')
-                    bench.require(reads == count + 2 * max(0, count - cap) + 1,
+                    bench.require(reads == count + 1,
                         'Positive duplicate was not freshly hashed')
                 live_heap, peak_heap = tracemalloc.get_traced_memory()
                 folders = len(index.folders)

@@ -225,5 +225,6 @@ def test_source_shutdown_interrupts_active_acknowledgement(tmp_path, monkeypatch
         if "request" in owned: owned["request"].join(timeout=6)
     assert not owned["request"].is_alive() and "error" not in outcome
     assert outcome["response"].status_code == 409
-    assert db.integrity_snapshot()[1][0]["expected_sha256"] == expected
+    # main() closes the catalog at exit; the reopened file holds every commit.
+    assert Database(tmp_path / "ack-main.db").integrity_snapshot()[1][0]["expected_sha256"] == expected
     assert not main._instance_file().exists()

@@ -72,10 +72,20 @@ class DedupBatch:
     No database hash alone admits an entry; an earlier actual read or
     publication of the written bytes in this process may, while its durable
     change-journal version is unchanged.
+
+    Past the pin budget, a candidate's actual-byte check is remembered for the
+    rest of the request instead of repeated for every later upload: camera
+    frames share one size, so repeating it made each upload slower than the
+    last. Another program rewriting such a file mid-request can only cause a
+    missed duplicate, never a skipped upload.
     """
     def __init__(self):
         self.stack = ExitStack()
         self.entries = {}
+        self.remembered = {}
+        self.digests = {}
+        self.settled = {}
+        self.unresolved = {}
         self.db = None
         self.root = None
         self.identity = None
@@ -96,12 +106,72 @@ class DedupBatch:
                     self.leased = False
                     self.db = self.root = self.identity = None
                     self.entries.clear()
+                    self.remembered.clear()
+                    self.digests.clear()
+                    self.settled.clear()
+                    self.unresolved.clear()
                     self.folders.clear()
                     self.directories.clear()
 
+    def _proof(self, id_):
+        return self.entries.get(id_) or self.remembered.get(id_)
+
+    def _prove(self, proofs, record, digest):
+        proofs[record['id']] = record['file'], digest
+        self.digests.setdefault(digest, set()).add(record['id'])
+
     def negative(self, record, incoming):
-        entry = self.entries.get(record['id'])
+        entry = self._proof(record['id'])
         return entry is not None and entry[0] == record['file'] and entry[1] != incoming
+
+    def candidates(self, db, digest, size, cancel=None):
+        """Same-size rows, minus those this request has already proven different.
+
+        While the request holds the archive lease no other operation can change
+        existing rows, so a complete lookup settles every row up to its upper
+        ID. Later lookups of that size read only newer rows, settled rows that
+        could not be proven, and rows whose proven bytes match this digest;
+        those still rehash. Settling happens only after the caller examined
+        every row without finding a duplicate.
+        """
+        _check_reindex_cancelled(cancel)
+        with db.lock:
+            upper = db.conn.execute('SELECT MAX(id) FROM images').fetchone()[0]
+        if upper is None:
+            return
+        after = self.settled.get(size) if self.leased and self.db is db else None
+        seen = []
+        if after is not None:
+            revisit = sorted(id_ for id_ in self.unresolved[size] | self.digests.get(digest, set())
+                             if id_ <= after)
+            for start in range(0, len(revisit), _CANDIDATE_PAGE_SIZE):
+                _check_reindex_cancelled(cancel)
+                ids = revisit[start:start + _CANDIDATE_PAGE_SIZE]
+                with db.lock:
+                    cursor = db.conn.execute(
+                        'SELECT id,file,content_sha256,file_size,file_mtime_ns FROM images WHERE id IN (%s) '
+                        'ORDER BY id' % ','.join('?' * len(ids)), ids)
+                    try:
+                        records = [dict(row) for row in cursor]
+                    finally:
+                        cursor.close()
+                for record in records:
+                    seen.append((record['id'], record['file']))
+                    yield record
+        selectors = [('content_sha256=?', (digest,)), ('file_size=?', (size,)), ('file_size IS NULL', ())]
+        while True:
+            _check_reindex_cancelled(cancel)
+            records = _candidate_rows(db, selectors, limit=_CANDIDATE_PAGE_SIZE, upper=upper, after=after)
+            for record in records:
+                seen.append((record['id'], record['file']))
+                yield record
+            if len(records) < _CANDIDATE_PAGE_SIZE:
+                break
+            after = records[-1]['id']
+        if self.leased and self.db is db:
+            self.settled[size] = upper
+            self.unresolved[size] = {id_ for id_, file in seen
+                                     if (self._proof(id_) or (None,))[0] != file}
 
     def fingerprint(self, db, record, path, incoming, cancel=None, *, admit_only=False):
         """Measure a candidate and retain stable negative proof within this request.
@@ -112,9 +182,9 @@ class DedupBatch:
         continue to rehash.
         Failed admission retains no new directory/file handles.
         """
-        if (self.root is not None and self.db is db and
-                record['id'] not in self.entries and len(self.entries) < _BATCH_PIN_LIMIT and
-                len(self.entries) + len(self.directories) + _BATCH_IO_HANDLES < _BATCH_HANDLE_LIMIT):
+        full = (len(self.entries) >= _BATCH_PIN_LIMIT or
+                len(self.entries) + len(self.directories) + _BATCH_IO_HANDLES >= _BATCH_HANDLE_LIMIT)
+        if self.root is not None and self.db is db and record['id'] not in self.entries and not full:
             from .archive_trash import _contained, _parent
             try:
                 with ExitStack() as context:
@@ -158,14 +228,17 @@ class DedupBatch:
                             if os.name == 'nt' and opened is not None:
                                 self.directories.update(opened)
                             self.folders.add(parent)
-                            self.entries[record['id']] = record['file'], measured[0]
+                            self._prove(self.entries, record, measured[0])
                         return measured
             except (OSError, ValueError):
                 pass
         if admit_only:
             return None
         _check_reindex_cancelled(cancel)
-        return _dedup_fingerprint(db, path, incoming, cancel)
+        measured = _dedup_fingerprint(db, path, incoming, cancel)
+        if full and measured is not None and self.leased and self.db is db and record['id'] not in self.entries:
+            self._prove(self.remembered, record, measured[0])
+        return measured
 
     @classmethod
     def prepare(cls, db, archive, sizes, cancel=None):
@@ -422,7 +495,7 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
             if image is not None:
                 return image
     if dedup_batch is not None:
-        candidates = _batch_candidates(db, digest, size, cancel_event)
+        candidates = dedup_batch.candidates(db, digest, size, cancel_event)
     else:
         candidates = db.image_fingerprint_candidates(digest, size)
     for rec in candidates:

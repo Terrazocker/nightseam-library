@@ -173,7 +173,10 @@ def test_failed_or_bounded_admission_falls_back_without_retaining_handles(tmp_pa
             assert len(index.entries) == len(index.folders) == len(active) == expected
             assert bool(index.directories) == (os.name == 'nt' and bool(expected))
         assert index.leased == (reason == 'capacity')
-        assert len(reads) == (4 if reason == 'capacity' else 6)
+        # Past the pin budget, each candidate's check is remembered for the
+        # request rather than repeated by every later upload.
+        assert len(index.remembered) == (2 if reason == 'capacity' else 0)
+        assert len(reads) == (3 if reason == 'capacity' else 6)
     finally:
         index.close()
     assert not active and available(db)

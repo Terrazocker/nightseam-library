@@ -859,10 +859,11 @@ def create_app(db: Database) -> FastAPI:
         root = picked_folder(body.folder)
         if any(job.status == 'running' for job in folder_jobs.values()):
             raise HTTPException(409, 'A folder import is already running.')
-        archive = Path(db.image_dir())
+        def named_sources():
+            archive = Path(db.image_dir()).resolve()
+            return [local_import.exposure(root, archive, rel) for rel in body.files]
         try:
-            sources = await run_in_threadpool(
-                lambda: [local_import.exposure(root, archive, rel) for rel in body.files])
+            sources = await run_in_threadpool(named_sources)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
         fields = {name: value for name, value in body.model_dump(exclude={'folder', 'files'}).items()

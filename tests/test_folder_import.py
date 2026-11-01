@@ -161,7 +161,20 @@ def test_linked_subfolders_are_not_followed(client, capture, tmp_path):
         pytest.skip("directory symlinks need extra privileges here")
     token = local_import.register(capture)
     assert "link/far.fit" not in [f["rel"] for f in scan(client, token).json()["files"]]
-    assert ingest(client, token, ["link/far.fit"]).status_code == 400
+    # Links resolve as each file opens, so only the linked file is refused.
+    results = ingest(client, token, ["link/far.fit", "test42.fts"]).json()["results"]
+    assert [res["ok"] for res in results] == [False, True]
+    assert "leads outside the selected folder" in results[0]["error"]
+    assert client.get("/api/library").json()["total_images"] == 1
+
+
+def test_starting_a_job_checks_names_without_reading_the_folder(tmp_path):
+    # A network folder can hold thousands of files; the job must not touch
+    # each one before the page's start request is answered.
+    gone = tmp_path / "unplugged"
+    source = local_import.exposure(gone, (tmp_path / "archive").resolve(), "night1/m31.fit")
+    assert source.filename == "m31.fit"
+    assert "no longer in the selected folder" in source.open_source()
 
 
 def test_register_refuses_non_folders(tmp_path):

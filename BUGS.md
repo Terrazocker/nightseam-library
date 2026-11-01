@@ -1,5 +1,47 @@
 # Current NightSeam Catalog findings
 
+## Long same-size imports slowed down with every file — November 1, 2026 (fixed)
+
+Duplicate detection compared each imported exposure with every archived image
+of the same byte size. Camera frames all share one size, so file k walked k
+rows. Within a request, only the first 4096 checked files stayed pinned; every
+file past that budget was opened and version-checked again for each later
+upload, inside the archive lock. A synthetic 6000-frame folder import rose
+from 12 ms per file to 28 ms by file 4000, then to about 2 s per file by
+file 6000: 2354 s in total. Existing archive frames of the same size count
+toward the budget, so a large Seestar archive would hit it from the first file.
+Past the pin budget, the request now remembers each actual-byte check instead
+of repeating it. Once the request holds the archive lease, later lookups read
+only rows added since, rows that could not be checked, and rows whose checked
+bytes match the incoming digest. The same import ran at a flat 9-13 ms per
+file (72 s). Positives still rehash, so a file is never skipped wrongly; if
+another program rewrites an archive file mid-import into a copy of a later
+file, that file is imported as a second copy.
+
+## Network folder imports reported every file as not attempted — November 1, 2026 (fixed)
+
+Choose folder… on a Seestar S50 share over Wi-Fi scanned 6784 exposures, then
+listed all of them as not attempted. Starting the job resolved every file's
+path before answering, at about 33 ms per file there (roughly 3.7 minutes),
+and the page's 30-second request timeout gave up first. That left the job
+running unseen, so a retry got "A folder import is already running". The start
+now checks names only. Each file resolves its links as it opens, and a link
+that leads outside the folder fails only that file. The page no longer times
+out the start request. Not yet retried against the Seestar end to end.
+
+## Imports kept the catalog's drive busy — November 1, 2026 (fixed)
+
+Each imported exposure commits once. In rollback-journal mode, every commit
+created, synced and deleted a journal file next to the catalog. With the
+application folder on C: and both the source and archive on G:, a synthetic
+1500-file folder import caused about 18 C: writes per file. C: busy time
+averaged 36% and peaked at 99%. The catalog now uses SQLite's write-ahead log
+with synchronous=FULL, so every commit stays durable. The same import made
+about 3.5 C: writes per file (15% average, 60% peak) and finished in 23 s
+instead of 30 s. The application closes the catalog at exit, which folds the
+log back into nightseam.db. A filesystem that cannot hold a write-ahead log
+keeps the rollback journal.
+
 ## Browser-gate teardown test failed once under full-suite load — October 24, 2026 (open)
 
 test_teardown_owns_descendants_after_the_launcher_exits failed in one full

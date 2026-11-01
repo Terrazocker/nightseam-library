@@ -213,7 +213,9 @@ function countResults(activity, batch) {
 async function importFolderJob(folder, list, options, activity, results) {
   let job;
   try {
-    job = await api("/api/images/folder/jobs", { method: "POST",
+    // A large folder on a network share can take longer than the default 30 s
+    // to accept; an abandoned start would leave its job running unseen.
+    job = await api("/api/images/folder/jobs", { method: "POST", timeout: 0,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ folder, files: list.map(f => f.rel), ...options }) });
   } catch (err) {
