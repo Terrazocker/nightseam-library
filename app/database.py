@@ -11,6 +11,7 @@ import csv
 import json
 import logging
 import math
+import os
 import re
 import shutil
 import sqlite3
@@ -254,7 +255,14 @@ class Database:
         catalog's drive busy while importing between two other drives. WAL
         syncs one sequential append per commit; FULL keeps each one durable.
         A filesystem without WAL support keeps its rollback journal.
+
+        Windows only: SQLite finds the log by file name, and POSIX lets another
+        process rename an open catalog and create a new one at its path. The
+        new file would then share the open catalog's log. Windows refuses to
+        rename an open catalog.
         """
+        if os.name != 'nt':
+            return
         try:
             with closing(self.conn.execute('PRAGMA journal_mode=WAL')) as mode:
                 mode.fetchone()

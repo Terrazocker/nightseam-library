@@ -40,7 +40,12 @@ with synchronous=FULL, so every commit stays durable. The same import made
 about 3.5 C: writes per file (15% average, 60% peak) and finished in 23 s
 instead of 30 s. The application closes the catalog at exit, which folds the
 log back into nightseam.db. A filesystem that cannot hold a write-ahead log
-keeps the rollback journal.
+keeps the rollback journal. Linux CI then failed
+test_replacing_open_catalog_is_refused_before_archive_inspection. After the
+open catalog was renamed and a new one created at its path, the new file
+shared the open catalog's -wal/-shm files, and the open connection read the
+replacement's settings. Windows refuses that rename, so the write-ahead log is
+now used on Windows only.
 
 ## Browser-gate teardown test failed once under full-suite load — October 24, 2026 (open)
 

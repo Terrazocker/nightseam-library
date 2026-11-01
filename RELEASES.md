@@ -96,10 +96,12 @@ The first release since the catalog became its own application on October 1,
 
 ## Write-ahead catalog and network folder imports — November 1, 2026
 
-- The catalog database uses SQLite's write-ahead log with synchronous=FULL
-  instead of a rollback journal that was created, synced and deleted on every
-  per-exposure commit. The application closes the catalog at exit, which folds
-  the log back into nightseam.db.
+- On Windows, the catalog database uses SQLite's write-ahead log with
+  synchronous=FULL instead of a rollback journal that was created, synced and
+  deleted on every per-exposure commit. The application closes the catalog at
+  exit, which folds the log back into nightseam.db. Linux keeps the rollback
+  journal: SQLite finds the log by file name, so a catalog renamed while open
+  would share it with a new file created at the same path.
 - Duplicate detection no longer slows down as a long import grows. Past the
   4096-file pin budget, each archive file's actual-byte check is remembered
   for the rest of the request, and later lookups read only rows added since.

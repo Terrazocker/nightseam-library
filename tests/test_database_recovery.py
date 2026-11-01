@@ -1,5 +1,6 @@
 """Recovery snapshots and atomic reindex use only private test databases."""
 
+import os
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -84,8 +85,12 @@ def test_backup_contains_committed_wal_records(tmp_path):
 def test_catalog_commits_through_a_durable_write_ahead_log(tmp_path):
     path = tmp_path / "catalog.sqlite"
     db = Database(path)
-    assert db.conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-    assert db.conn.execute("PRAGMA synchronous").fetchone()[0] == 2  # FULL
+    # POSIX keeps the rollback journal: a catalog renamed while open must not
+    # share its log with a new file created at the same path.
+    windows = os.name == "nt"
+    assert db.conn.execute("PRAGMA journal_mode").fetchone()[0] == ("wal" if windows else "delete")
+    if windows:
+        assert db.conn.execute("PRAGMA synchronous").fetchone()[0] == 2  # FULL
     db.add_image(rec())
     assert not Path(str(path) + "-journal").exists()
     db.close()
