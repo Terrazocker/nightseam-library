@@ -73,8 +73,9 @@ class DedupBatch:
     publication of the written bytes in this process may, while its durable
     change-journal version is unchanged.
 
-    Past the pin budget, a candidate's actual-byte check is remembered for the
-    rest of the request instead of repeated for every later upload: camera
+    Past the pin budget (zero without Windows pins), a candidate's actual-byte
+    check is remembered for the rest of the request, under its archive lease,
+    instead of repeated for every later upload: camera
     frames share one size, so repeating it made each upload slower than the
     last. Another program rewriting such a file mid-request can only cause a
     missed duplicate, never a skipped upload.
@@ -182,9 +183,9 @@ class DedupBatch:
         continue to rehash.
         Failed admission retains no new directory/file handles.
         """
-        full = (len(self.entries) >= _BATCH_PIN_LIMIT or
+        full = (self.root is None or len(self.entries) >= _BATCH_PIN_LIMIT or
                 len(self.entries) + len(self.directories) + _BATCH_IO_HANDLES >= _BATCH_HANDLE_LIMIT)
-        if self.root is not None and self.db is db and record['id'] not in self.entries and not full:
+        if self.db is db and record['id'] not in self.entries and not full:
             from .archive_trash import _contained, _parent
             try:
                 with ExitStack() as context:
@@ -236,7 +237,11 @@ class DedupBatch:
             return None
         _check_reindex_cancelled(cancel)
         measured = _dedup_fingerprint(db, path, incoming, cancel)
-        if full and measured is not None and self.leased and self.db is db and record['id'] not in self.entries:
+        if (full and measured is not None and measured[0] != incoming and self.db is db and
+                record['id'] not in self.entries):
+            if not self.leased:
+                db.archive_lock.reserve(self)
+                self.leased = True
             self._prove(self.remembered, record, measured[0])
         return measured
 
@@ -248,9 +253,14 @@ class DedupBatch:
         actually needs them. Exact duplicates can therefore finish after one
         current-byte verification, independent of the same-size population.
         `sizes` is None when a streamed request does not know its uploads yet.
+        Without Windows pins the budget is zero: every check is remembered
+        under the request's lease from the first lookup.
         """
         index = cls()
-        if not _WINDOWS_BATCH_PINS or sizes is not None and not sizes or not hasattr(db.archive_lock, 'reserve'):
+        if sizes is not None and not sizes or not hasattr(db.archive_lock, 'reserve'):
+            return index
+        if not _WINDOWS_BATCH_PINS:
+            index.db = db
             return index
         try:
             with _waiting_archive_lock(db, cancel):
