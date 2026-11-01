@@ -393,6 +393,7 @@ def main() -> int:
         if thread.is_alive():
             log.error("Server shutdown did not finish; archive work may still be stopping.")
             return 1
+        db.close()
         clear_instance_file()
     return 0
 

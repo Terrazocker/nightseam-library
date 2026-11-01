@@ -94,6 +94,44 @@ The first release since the catalog became its own application on October 1,
   needs xdg-open.
 - Both builds run offline and keep their data beside the executable.
 
+## Write-ahead catalog and network folder imports — November 1, 2026
+
+- On Windows, the catalog database uses SQLite's write-ahead log with
+  synchronous=FULL instead of a rollback journal that was created, synced and
+  deleted on every per-exposure commit. The application closes the catalog at
+  exit, which folds the log back into nightseam.db. Linux keeps the rollback
+  journal: SQLite finds the log by file name, so a catalog renamed while open
+  would share it with a new file created at the same path.
+- Duplicate detection no longer slows down as a long import grows. Past the
+  4096-file pin budget, each archive file's actual-byte check is remembered
+  for the rest of the request, and later lookups read only rows added since.
+  A synthetic 6000-frame same-size folder import took 72 s at a flat 9-13 ms
+  per file instead of 2354 s, rising to about 2 s per file (see BUGS.md).
+- Starting a folder import checks file names only, and each file resolves its
+  links as it opens. A link that leads outside the folder now fails that file
+  alone instead of refusing the whole request. The page no longer applies its
+  30-second timeout to the start request.
+
+Measured on Windows with the application data on C: and a synthetic
+1500-file folder imported from G: to G: (see BUGS.md): C: writes per file fell
+from about 18 to about 3.5, and the import took 23 s instead of 30 s. Resolving
+paths on a Seestar S50 share over Wi-Fi took about 33 ms per file, so the
+previous start request needed roughly 3.7 minutes for that 6784-file folder.
+
+Validation: the full source suite ran 1050 passed, 5 skipped and 1 failed:
+test_source_shutdown_interrupts_active_acknowledgement read the catalog
+after main() had closed it. That test now reopens the file, and test_main
+passed 13 of 13. check_js and the encoding guard passed. No executable was
+built, check_browser.py was not run, and the Seestar import was not retried
+end to end.
+
+After the duplicate-detection change, the full source suite ran 1053 passed
+and 5 skipped, and check_js and the encoding guard passed. Three tests that
+expected above-budget candidates to be hashed again on every lookup now
+expect one hash per request. The 6000-frame figures come from a scratch
+benchmark through the folder-job endpoint on this machine, not from the
+packaged application or a real Seestar folder.
+
 ## Draft GitHub releases from release tags — October 24, 2026
 
 - `.github/workflows/release.yml` builds both platform archives when a `v*`

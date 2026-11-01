@@ -1,5 +1,6 @@
 """Recovery snapshots and atomic reindex use only private test databases."""
 
+import os
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -79,6 +80,25 @@ def test_backup_contains_committed_wal_records(tmp_path):
     assert read_value(rolling, "PRAGMA quick_check") == "ok"
     assert read_value(rolling, "SELECT COUNT(*) FROM images") == 1
     no_staging(path)
+
+
+def test_catalog_commits_through_a_durable_write_ahead_log(tmp_path):
+    path = tmp_path / "catalog.sqlite"
+    db = Database(path)
+    # POSIX keeps the rollback journal: a catalog renamed while open must not
+    # share its log with a new file created at the same path.
+    windows = os.name == "nt"
+    assert db.conn.execute("PRAGMA journal_mode").fetchone()[0] == ("wal" if windows else "delete")
+    if windows:
+        assert db.conn.execute("PRAGMA synchronous").fetchone()[0] == 2  # FULL
+    db.add_image(rec())
+    assert not Path(str(path) + "-journal").exists()
+    db.close()
+    # Closing folds the log back, so the catalog file alone is complete.
+    assert not Path(str(path) + "-wal").exists()
+    assert read_value(path, "SELECT COUNT(*) FROM images") == 1
+    reopened = Database(path)
+    assert reopened.images()[0]["file"] == rec()["file"]
 
 
 def test_invalid_snapshot_aborts_before_migration_and_preserves_prior_copy(tmp_path, monkeypatch):

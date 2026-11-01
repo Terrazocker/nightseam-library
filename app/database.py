@@ -11,6 +11,7 @@ import csv
 import json
 import logging
 import math
+import os
 import re
 import shutil
 import sqlite3
@@ -234,6 +235,7 @@ class Database:
             # refuses opening rather than risking an unprotected upgrade.
             if existing:
                 self._write_backup_snapshot("pre-migration")
+            self._use_write_ahead_log()
             self._initialize()
             with closing(self.conn.execute('PRAGMA database_list')) as databases:
                 filename = next(row['file'] for row in databases if row['name'] == 'main')
@@ -244,6 +246,34 @@ class Database:
         except BaseException:
             self.conn.close()
             raise
+
+    def _use_write_ahead_log(self):
+        """Append commits to one log instead of a per-commit rollback journal.
+
+        Import commits once per exposure. A rollback journal is created,
+        synced three times and deleted for every commit, which kept the
+        catalog's drive busy while importing between two other drives. WAL
+        syncs one sequential append per commit; FULL keeps each one durable.
+        A filesystem without WAL support keeps its rollback journal.
+
+        Windows only: SQLite finds the log by file name, and POSIX lets another
+        process rename an open catalog and create a new one at its path. The
+        new file would then share the open catalog's log. Windows refuses to
+        rename an open catalog.
+        """
+        if os.name != 'nt':
+            return
+        try:
+            with closing(self.conn.execute('PRAGMA journal_mode=WAL')) as mode:
+                mode.fetchone()
+            self.conn.execute('PRAGMA synchronous=FULL').close()
+        except sqlite3.OperationalError:
+            log.warning("Catalog %s keeps its rollback journal", self.path, exc_info=True)
+
+    def close(self):
+        """Close at exit; the last connection folds the log back into the file."""
+        with self.lock:
+            self.conn.close()
 
     def _initialize(self):
         self.conn.executescript(SCHEMA)
