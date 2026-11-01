@@ -1,5 +1,46 @@
 # Independent catalog release record
 
+## 0.2.1 — November 1, 2026
+
+A maintenance release that keeps long imports fast on Windows and Linux.
+
+### Fixed
+
+- Long imports no longer slow down as they go. Duplicate detection checked
+  every earlier exposure of the same size again for each new file, and camera
+  frames all share one size. A 6000-frame test folder took about 39 minutes on
+  Windows, and Linux slowed down even faster. The same folder now imports in
+  about a minute on both, at a steady pace. A file is never skipped as a
+  duplicate unless its bytes match. If another program rewrites an archive
+  file while an import runs, a later identical file can be imported as a
+  second copy.
+- Choose folder on a large network folder, such as a Seestar S50 share over
+  Wi-Fi, no longer reports every file as not attempted. Starting the import
+  now checks file names only, and a link that leads outside the folder fails
+  that file alone.
+
+### Changed
+
+- On Windows, the catalog database records changes in SQLite's write-ahead
+  log, which keeps the catalog's drive far less busy during imports. The log
+  folds back into nightseam.db when the app closes.
+- While an import runs on Linux, other archive operations such as Reindex
+  folders and Archive health wait until it finishes, as they already did on
+  Windows.
+
+### Downloads
+
+- Windows x64: `NightSeam-Catalog-0.2.1-windows-x64.zip` with its `.sha256`.
+  It runs in a native window, using WebView2 with a browser fallback.
+- Linux x86_64: `NightSeam-Catalog-0.2.1-linux-x86_64.tar.gz` with its
+  `.sha256`, a browser build that opens the system browser. It bundles the
+  FITS tools and needs no Python or Node. It requires glibc 2.35 or newer and
+  is tested offline on Ubuntu 22.04 and 24.04 and Debian 12. The Choose folder
+  and Browse dialogs need a display plus zenity or kdialog; without them, the
+  browser's directory upload is used. Opening the archive folder needs
+  xdg-open.
+- Both builds run offline and keep their data beside the executable.
+
 ## 0.2.0 — October 24, 2026
 
 The first release since the catalog became its own application on October 1,
