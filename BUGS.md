@@ -18,6 +18,14 @@ file (72 s). Positives still rehash, so a file is never skipped wrongly; if
 another program rewrites an archive file mid-import into a copy of a later
 file, that file is imported as a second copy.
 
+Linux has no pins, so every candidate was checked on disk for every upload
+from the first file. On WSL2 Ubuntu (files on its own ext4 filesystem) the
+same benchmark rose steadily from 48 ms to 546 ms per file over 4000 files
+(1173 s). Unpinned batches now treat their pin budget as zero: they take the
+archive lease on their first remembered check and remember every negative
+check from then on. The 6000-frame import ran at a flat 9-10 ms per file there
+(55 s).
+
 ## Network folder imports reported every file as not attempted — November 1, 2026 (fixed)
 
 Choose folder… on a Seestar S50 share over Wi-Fi scanned 6784 exposures, then

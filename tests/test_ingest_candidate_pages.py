@@ -181,3 +181,24 @@ def test_settled_rows_still_find_remembered_and_unresolved_duplicates(tmp_path, 
     finally:
         index.close()
         db.conn.close()
+
+
+def test_unpinned_batches_lease_and_remember_from_the_first_lookup(tmp_path, monkeypatch):
+    # Linux has no pins; its imports slowed down from the first file.
+    db, archive, _ = library(tmp_path, count=4)
+    monkeypatch.setattr(ingest, '_WINDOWS_BATCH_PINS', False)
+    index = ingest.DedupBatch.prepare(db, archive, {len(exposure())})
+    streamed = counted_candidates(index)
+    try:
+        assert not index.leased and index.root is None
+        with db.archive_lock.for_batch(index):
+            assert ingest._find_duplicate(db, archive, 'absent', len(exposure()), dedup_batch=index) is None
+        assert index.leased and not index.entries and len(index.remembered) == 4 and len(streamed) == 4
+        with db.archive_lock.for_batch(index):
+            assert ingest._find_duplicate(db, archive, 'other', len(exposure()), dedup_batch=index) is None
+        assert len(streamed) == 4
+    finally:
+        index.close()
+    assert db.archive_lock.acquire(blocking=False)
+    db.archive_lock.release()
+    db.conn.close()

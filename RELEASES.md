@@ -107,6 +107,9 @@ The first release since the catalog became its own application on October 1,
   for the rest of the request, and later lookups read only rows added since.
   A synthetic 6000-frame same-size folder import took 72 s at a flat 9-13 ms
   per file instead of 2354 s, rising to about 2 s per file (see BUGS.md).
+  Linux, which has no file pins, now remembers checks from the first lookup:
+  on WSL2 Ubuntu the same import took 55 s at about 9 ms per file, where 4000
+  files previously took 1173 s, rising to 546 ms per file.
 - Starting a folder import checks file names only, and each file resolves its
   links as it opens. A link that leads outside the folder now fails that file
   alone instead of refusing the whole request. The page no longer applies its
