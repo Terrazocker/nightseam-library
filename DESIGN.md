@@ -114,9 +114,10 @@ workspace and the session inspector.
   stacks folder, creating it if needed, and shows how many stacks are
   recorded). Stacks are not sessions and never add to the metrics. Open,
   unframed metrics follow: sessions, images, light integration and last
-  session. Capture sessions are ordinary table rows: date with the moon
-  phase and the local time range, frame counts per type (zeros recede),
-  light integration, filters and a folder action. Clicking a row selects it.
+  session. Capture sessions are ordinary table rows: date with the local
+  time range, the moon phase in its own Moon column, frame counts per type
+  (zeros recede), light integration, filters and a folder action. Clicking a
+  row selects it.
 - **Moon phase:** the Moon at the middle of a session's captures, as one of
   eight inline SVG phase symbols (an outlined disc with its lit part filled;
   no emoji or Unicode glyphs) plus the illuminated percentage, 0% new to

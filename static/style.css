@@ -531,12 +531,13 @@ main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-
   text-align: left;
   white-space: nowrap;
 }
-.library-session-table th:nth-child(1) { width: 30%; }
-.library-session-table th:nth-child(2), .library-session-table th:nth-child(3),
-.library-session-table th:nth-child(4), .library-session-table th:nth-child(5) { width: 7.5%; }
-.library-session-table th:nth-child(6) { width: 12%; }
-.library-session-table th:nth-child(7) { width: 15%; }
+.library-session-table th:nth-child(1) { width: 26%; }
+.library-session-table th:nth-child(2) { width: 10%; }
+.library-session-table th:nth-child(3), .library-session-table th:nth-child(4),
+.library-session-table th:nth-child(5), .library-session-table th:nth-child(6) { width: 7%; }
+.library-session-table th:nth-child(7) { width: 11%; }
 .library-session-table th:nth-child(8) { width: 13%; }
+.library-session-table th:nth-child(9) { width: 12%; }
 .library-session-table th.num, .library-session-table td.num { text-align: right; }
 .library-session-table td {
   height: var(--row-h);
@@ -569,7 +570,7 @@ main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-
 .session-compression[data-compression="mixed"] { color: var(--warn); }
 /* Moon phase at the session midpoint: shape plus percentage, never colour alone. */
 .session-moon {
-  display: inline-flex; flex: none; align-items: center; gap: var(--sp-1); align-self: center;
+  display: inline-flex; align-items: center; gap: var(--sp-2); vertical-align: middle;
   color: var(--dim); font: 500 var(--fs-xs) / 1 var(--font-mono); font-variant-numeric: tabular-nums;
 }
 .moon-glyph { flex: none; width: 13px; height: 13px; }

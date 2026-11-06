@@ -577,7 +577,7 @@ export function renderLibrary() {
     renderLibraryObjectHeader(null, unit);
     $("#libraryObjectList").innerHTML = inlineNoticeMarkup(
       "folder", "No objects yet", "Objects appear as you import.", "objects-empty-state");
-    $("#librarySessions").innerHTML = `<tr><td colspan="8">${emptyStateMarkup(
+    $("#librarySessions").innerHTML = `<tr><td colspan="9">${emptyStateMarkup(
       "database", "Your library is empty",
       ["Import FITS exposures to start your catalog.",
        "They are grouped by object into capture sessions, one per night."],
@@ -626,7 +626,7 @@ export function renderLibrary() {
   }).join("") : '<p class="hint">No objects match this search.</p>';
   renderLibraryObjectHeader(selected, unit);
   if (!selected) {
-    $("#librarySessions").innerHTML = `<tr><td colspan="8">${emptyStateMarkup(
+    $("#librarySessions").innerHTML = `<tr><td colspan="9">${emptyStateMarkup(
       "search", "No matching objects", "Adjust or clear the search to see capture sessions.",
       "session-empty-state")}</td></tr>`;
     $("#librarySessionCount").textContent = "0 sessions";
@@ -861,7 +861,7 @@ function renderLibrarySessions(object, sessions, activeSession) {
   const list = $("#librarySessions");
   if (!list) return;
   if (!sessions.length) {
-    list.innerHTML = `<tr><td colspan="8">${emptyStateMarkup(
+    list.innerHTML = `<tr><td colspan="9">${emptyStateMarkup(
       "database", "No capture sessions", Number(object?.n_stacks)
         ? `This object has only stacked images (${plural(object.n_stacks, "stack")}). Open its stacks folder to see them.`
         : "This object has no recorded exposures.",
@@ -884,7 +884,8 @@ function renderLibrarySessions(object, sessions, activeSession) {
     const lightExposure = sessionLightExposure(s);
     const active = sessions.indexOf(activeSession) === i;
     return `<tr class="library-session${active ? " active" : ""}" data-library-session="${i}" tabindex="-1" aria-selected="${active}">
-      <td><button class="session-select" type="button" data-select-session="${i}" title="${esc(title + ' · ' + compression.detail)}"><span class="session-compression" data-compression="${compression.state}" role="img" aria-label="${esc(compression.detail)}" title="${esc(compression.detail)}">${catalogIcon(compression.icon)}</span><span class="session-select-label"><span class="session-day">${esc(when.day)}</span>${s.label ? `<span class="session-kind">${esc(s.label)}</span>` : ""}${moonBadge(sessionMoon(object, s))}<span class="session-time">${esc(when.time)}</span></span></button></td>
+      <td><button class="session-select" type="button" data-select-session="${i}" title="${esc(title + ' · ' + compression.detail)}"><span class="session-compression" data-compression="${compression.state}" role="img" aria-label="${esc(compression.detail)}" title="${esc(compression.detail)}">${catalogIcon(compression.icon)}</span><span class="session-select-label"><span class="session-day">${esc(when.day)}</span>${s.label ? `<span class="session-kind">${esc(s.label)}</span>` : ""}<span class="session-time">${esc(when.time)}</span></span></button></td>
+      <td class="session-moon-cell">${moonBadge(sessionMoon(object, s)) || '<span class="zero">—</span>'}</td>
       <td class="num">${cellCount(sessionTypeCount(s, "light"))}</td><td class="num">${cellCount(sessionTypeCount(s, "dark"))}</td><td class="num">${cellCount(sessionTypeCount(s, "flat"))}</td><td class="num">${cellCount(sessionTypeCount(s, "bias"))}</td>
       <td class="num duration" title="Light frames only">${lightExposure ? esc(fmtDur(lightExposure)) : '<span class="zero">—</span>'}</td><td title="${esc(filters)}">${filters ? esc(filters) : '<span class="zero">—</span>'}</td><td>${folder}</td></tr>`;
   }).join("");
