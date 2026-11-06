@@ -577,7 +577,7 @@ export function renderLibrary() {
     renderLibraryObjectHeader(null, unit);
     $("#libraryObjectList").innerHTML = inlineNoticeMarkup(
       "folder", "No objects yet", "Objects appear as you import.", "objects-empty-state");
-    $("#librarySessions").innerHTML = `<tr><td colspan="9">${emptyStateMarkup(
+    $("#librarySessions").innerHTML = `<tr><td colspan="10">${emptyStateMarkup(
       "database", "Your library is empty",
       ["Import FITS exposures to start your catalog.",
        "They are grouped by object into capture sessions, one per night."],
@@ -626,7 +626,7 @@ export function renderLibrary() {
   }).join("") : '<p class="hint">No objects match this search.</p>';
   renderLibraryObjectHeader(selected, unit);
   if (!selected) {
-    $("#librarySessions").innerHTML = `<tr><td colspan="9">${emptyStateMarkup(
+    $("#librarySessions").innerHTML = `<tr><td colspan="10">${emptyStateMarkup(
       "search", "No matching objects", "Adjust or clear the search to see capture sessions.",
       "session-empty-state")}</td></tr>`;
     $("#librarySessionCount").textContent = "0 sessions";
@@ -761,6 +761,130 @@ function sessionMoon(object, session) {
     label: `${name}, ${percent}% illuminated (middle of the session)` };
 }
 
+/* ---------------- session quality (prototype) ---------------- */
+
+const QUALITY_POLL_MS = 5000;
+const QUALITY_RELOAD_MS = 15000;
+let _qualityStatus = null;
+let _qualityTimer = null;
+let _qualityRevisionShown = null;
+let _qualityReloadedAt = 0;
+
+function qualityBand(grade) {
+  return grade >= 75 ? "good" : grade >= 50 ? "fair" : "poor";
+}
+
+function qualityCell(quality) {
+  if (!quality) return '<span class="zero" title="No light frames to grade">—</span>';
+  if (!quality.measured) return '<span class="zero" title="Not graded yet">…</span>';
+  const partial = quality.measured < quality.total;
+  const title = `Quality ${quality.grade} · ${quality.usable} of ${quality.measured} graded frames usable` +
+    (partial ? ` · ${quality.measured} of ${quality.total} frames graded so far` : "");
+  return `<span class="quality-grade" data-band="${qualityBand(quality.grade)}"${partial ? " data-partial" : ""} title="${esc(title)}">${quality.grade}${partial ? "*" : ""}</span>`;
+}
+
+/* Frame scores over the session as an inline SVG line; unusable frames dotted. */
+function qualityChart(frames) {
+  if (!frames || frames.length < 2) return "";
+  const width = 300, height = 72, pad = 4;
+  const times = frames.map((f) => utcMs(f.t));
+  const timed = times.every(Number.isFinite) && times.at(-1) > times[0];
+  const x = (i) => pad + (width - 2 * pad) * (timed ? (times[i] - times[0]) / (times.at(-1) - times[0]) : i / (frames.length - 1));
+  const y = (score) => pad + (height - 2 * pad) * (1 - score / 100);
+  const points = frames.map((f, i) => `${x(i).toFixed(1)},${y(f.score).toFixed(1)}`).join(" ");
+  const mean = frames.reduce((sum, f) => sum + f.score, 0) / frames.length;
+  // A zero-length round-capped stroke stays a circle when the chart stretches.
+  const dots = frames.map((f, i) => f.usable ? "" : `<path class="unusable" d="M${x(i).toFixed(1)} ${y(f.score).toFixed(1)}h0"><title>${esc(f.reason || "unusable")}</title></path>`).join("");
+  const scores = frames.map((f) => f.score);
+  const label = `Frame scores over the session: first ${scores[0]}, last ${scores.at(-1)}, lowest ${Math.min(...scores)}, highest ${Math.max(...scores)}`;
+  return `<svg class="quality-chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${esc(label)}">
+    <line class="mean" x1="${pad}" x2="${width - pad}" y1="${y(mean).toFixed(1)}" y2="${y(mean).toFixed(1)}"/>
+    <polyline class="line" points="${points}"/>${dots}</svg>`;
+}
+
+/* A one-line reading of the chart: steady, or which way the night went. */
+function qualityTrend(frames) {
+  if (!frames || frames.length < 6) return "";
+  const third = Math.max(2, Math.floor(frames.length / 3));
+  const avg = (list) => list.reduce((sum, f) => sum + f.score, 0) / list.length;
+  const delta = avg(frames.slice(-third)) - avg(frames.slice(0, third));
+  if (Math.abs(delta) < 8) return "Steady through the session";
+  return delta < 0 ? "Got worse toward the end" : "Improved over the session";
+}
+
+function qualityStatusLine(quality) {
+  const status = _qualityStatus;
+  if (!quality || quality.measured >= quality.total) return "";
+  if (!status?.enabled) return "Grading runs in the background of the desktop app.";
+  if (status.state === "waiting") return "Waiting for the archive to be idle before grading.";
+  if (status.state === "working") return `Grading in the background · ${status.pending.toLocaleString()} frames to go`;
+  return "Queued for grading.";
+}
+
+function qualitySectionMarkup(object, session) {
+  const quality = session.quality;
+  if (!quality) return "";
+  const lights = sessionImages(object, session).filter((image) => (image.imagetyp || "light") === "light")
+    .map((image) => image.id).filter((id) => Number.isSafeInteger(id));
+  const complete = quality.measured >= quality.total;
+  const button = complete ? "" :
+    `<button class="button small" type="button" data-quality-grade="${lights.join(",")}">Grade now</button>`;
+  const status = qualityStatusLine(quality);
+  if (!quality.measured) {
+    return `<section class="library-quality"><h3 class="section-label">Quality <span class="hint">prototype</span></h3>
+      <div class="quality-summary"><span class="hint">Not graded yet · ${quality.total.toLocaleString()} light frames</span>${button}</div>
+      ${status ? `<p class="quality-status">${esc(status)}</p>` : ""}</section>`;
+  }
+  const frames = quality.frames || [];
+  const first = frames[0]?.t ? fmtDT(frames[0].t).split(" ")[1] || "" : "";
+  const last = frames.at(-1)?.t ? fmtDT(frames.at(-1).t).split(" ")[1] || "" : "";
+  const trend = qualityTrend(frames);
+  return `<section class="library-quality"><h3 class="section-label">Quality <span class="hint">prototype</span></h3>
+    <div class="quality-summary"><span><span class="quality-grade" data-band="${qualityBand(quality.grade)}">${quality.grade}</span> <span class="hint">/ 100 · ${quality.usable} of ${quality.measured} frames usable${complete ? "" : ` · ${quality.measured} of ${quality.total} graded`}</span></span>${button}</div>
+    ${trend ? `<p class="hint">${esc(trend)}</p>` : ""}
+    ${qualityChart(frames)}
+    ${frames.length >= 2 ? `<div class="quality-chart-axis" aria-hidden="true"><span>${esc(first)}</span><span>frame score, first to last</span><span>${esc(last)}</span></div>` : ""}
+    ${status ? `<p class="quality-status">${esc(status)}</p>` : ""}</section>`;
+}
+
+async function gradeSessionNow(ids) {
+  try {
+    const status = await api("/api/library/quality/grade", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_ids: ids }) });
+    _qualityStatus = status;
+    toast(status.enabled ? "This session is graded next, as soon as the archive is idle."
+      : "Grading runs in the background of the desktop app.", "info", 4000);
+    scheduleQualityPoll(1000);
+  } catch (err) { /* api() already toasted */ }
+}
+
+function scheduleQualityPoll(delay = QUALITY_POLL_MS) {
+  clearTimeout(_qualityTimer);
+  _qualityTimer = setTimeout(pollQuality, delay);
+}
+
+/* Poll the grader while it has work; reload the library now and then so new
+   grades appear without a reload storm. */
+async function pollQuality() {
+  if (document.hidden || !$("#libraryObjectList")) { scheduleQualityPoll(); return; }
+  let status;
+  try { status = await api("/api/library/quality/status", { silent: true }); }
+  catch (err) { scheduleQualityPoll(QUALITY_POLL_MS * 4); return; }
+  const changed = _qualityRevisionShown !== null && status.revision !== _qualityRevisionShown;
+  _qualityStatus = status;
+  if (changed && Date.now() - _qualityReloadedAt >= QUALITY_RELOAD_MS && !_archiveOperation) {
+    _qualityReloadedAt = Date.now();
+    _qualityRevisionShown = status.revision;
+    try { S.library = await api("/api/library", { silent: true }); } catch (err) { /* keep the old view */ }
+    renderLibrary();
+  } else if (_qualityRevisionShown === null) {
+    _qualityRevisionShown = status.revision;
+  }
+  const idle = status.state === "done" && !status.pending;
+  scheduleQualityPoll(idle ? QUALITY_POLL_MS * 6 : QUALITY_POLL_MS);
+}
+
 function moonBadge(moon) {
   return moon ? `<span class="session-moon" role="img" aria-label="${esc(moon.label)}" title="${esc(moon.label)}">${moon.glyph}<span aria-hidden="true">${moon.percent}%</span></span>` : "";
 }
@@ -861,7 +985,7 @@ function renderLibrarySessions(object, sessions, activeSession) {
   const list = $("#librarySessions");
   if (!list) return;
   if (!sessions.length) {
-    list.innerHTML = `<tr><td colspan="9">${emptyStateMarkup(
+    list.innerHTML = `<tr><td colspan="10">${emptyStateMarkup(
       "database", "No capture sessions", Number(object?.n_stacks)
         ? `This object has only stacked images (${plural(object.n_stacks, "stack")}). Open its stacks folder to see them.`
         : "This object has no recorded exposures.",
@@ -886,6 +1010,7 @@ function renderLibrarySessions(object, sessions, activeSession) {
     return `<tr class="library-session${active ? " active" : ""}" data-library-session="${i}" tabindex="-1" aria-selected="${active}">
       <td><button class="session-select" type="button" data-select-session="${i}" title="${esc(title + ' · ' + compression.detail)}"><span class="session-compression" data-compression="${compression.state}" role="img" aria-label="${esc(compression.detail)}" title="${esc(compression.detail)}">${catalogIcon(compression.icon)}</span><span class="session-select-label"><span class="session-day">${esc(when.day)}</span>${s.label ? `<span class="session-kind">${esc(s.label)}</span>` : ""}<span class="session-time">${esc(when.time)}</span></span></button></td>
       <td class="session-moon-cell">${moonBadge(sessionMoon(object, s)) || '<span class="zero">—</span>'}</td>
+      <td class="num">${qualityCell(s.quality)}</td>
       <td class="num">${cellCount(sessionTypeCount(s, "light"))}</td><td class="num">${cellCount(sessionTypeCount(s, "dark"))}</td><td class="num">${cellCount(sessionTypeCount(s, "flat"))}</td><td class="num">${cellCount(sessionTypeCount(s, "bias"))}</td>
       <td class="num duration" title="Light frames only">${lightExposure ? esc(fmtDur(lightExposure)) : '<span class="zero">—</span>'}</td><td title="${esc(filters)}">${filters ? esc(filters) : '<span class="zero">—</span>'}</td><td>${folder}</td></tr>`;
   }).join("");
@@ -912,6 +1037,7 @@ function renderLibrarySessions(object, sessions, activeSession) {
     ${activeMoon ? `<div><dt title="Moon phase at the middle of the session">Moon</dt><dd class="session-moon-fact">${activeMoon.glyph}<span>${esc(activeMoon.name)} · ${activeMoon.percent}%</span></dd></div>` : ""}
     <div><dt>Total exposure</dt><dd>${esc(fmtDur(activeSession.exposure))}</dd></div>
     <div><dt>Light integration</dt><dd>${esc(fmtDur(sessionLightExposure(activeSession)))}</dd></div></dl>
+    ${qualitySectionMarkup(object, activeSession)}
     <section><h3 class="section-label">Frames</h3><div class="library-frame-rollup">${typeRows || '<p class="hint">No frame types recorded.</p>'}</div></section>
     <section class="library-filter-rollup"><h3 class="section-label">Filters</h3>${filterNames.length
       ? `<div class="chip-list">${filterNames.map((name) => `<span class="chip">${esc(name === "?" ? "Unknown" : name)}</span>`).join("")}</div>`
@@ -1000,6 +1126,7 @@ export function bindArchive() {
   });
   syncFrameSelector();
   renderIngestResults([]);
+  scheduleQualityPoll(2000);
 
   const mode = $("#ingestSafeMode"), modeGroup = $("#ingestCompressionMode");
   const modeInfo = $("#ingestModeInfo"), modeTip = $("#ingestModeTip");
@@ -1272,6 +1399,12 @@ export function bindArchive() {
     selectLibrarySession(next, { reveal: true });
   });
   $("#librarySessionRail").addEventListener("click", (e) => {
+    const gradeButton = e.target.closest("[data-quality-grade]");
+    if (gradeButton) {
+      const ids = gradeButton.dataset.qualityGrade.split(",").map(Number).filter(Number.isSafeInteger);
+      if (ids.length) gradeSessionNow(ids);
+      return;
+    }
     const folderButton = e.target.closest("[data-open-library-folder]");
     if (folderButton) {
       const rel = folderButton.dataset.openLibraryFolder;

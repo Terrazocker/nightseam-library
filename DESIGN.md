@@ -124,6 +124,13 @@ workspace and the session inspector.
   100% full. Waxing is lit on the right, mirrored for southern-hemisphere
   sites. It uses `--dim` and always carries the name in its accessible label.
   Undated sessions show none.
+- **Session quality (prototype):** a Quality column holds the session grade
+  0–100 as a number (`--good` from 75, `--warn` below 50, plain text between;
+  `*` while only part of the session is graded, `…` before any grading). The
+  inspector's Quality section shows the grade, usable frames, a one-line trend
+  ("Steady", "Got worse toward the end", "Improved") and a frame-score line
+  from first to last frame with unusable frames as `--warn` dots, plus Grade
+  now while frames are left. Per-frame metrics stay out of the UI for now.
 - **Inspector:** session date, storage, session window, moon and exposure totals;
   frames per type; filters as chips; every archive folder as a link. Actions
   sit at the bottom: Open session folder, Add calibration frames (+ Darks,

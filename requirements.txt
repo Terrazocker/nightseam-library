@@ -6,3 +6,4 @@ astropy>=7.0,<8
 numpy>=1.24,<3
 Pillow>=10.0
 mini-racer==0.14.1
+sep==1.4.1

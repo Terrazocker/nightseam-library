@@ -62,6 +62,17 @@ all under permissive (BSD/MIT/Apache-2.0) licenses. Their license texts are
 distributed in the package source tree (.venv-build site-packages) and are
 available on request.
 
+Session quality measurement — SEP (prototype)
+--------------------------------------------
+Frame quality grading uses SEP 1.4.1, Source Extractor as a Python library
+(https://github.com/sep-developers/sep), by Kyle Barbary and the SEP
+developers, derived from Source Extractor by Emmanuel Bertin. SEP is
+distributed under the GNU Lesser General Public License v3 or later, with
+parts under the BSD 3-Clause and MIT licenses. It is used unmodified as a
+separate, replaceable Python extension module; its source is available from
+the address above. Citation: Barbary (2016), JOSS 1(6), 58;
+Bertin & Arnouts (1996), A&AS 117, 393.
+
 Meteor shower display data — public domain/general reference sources.
 
 If you believe a credit is missing or incorrect, please open an issue on the

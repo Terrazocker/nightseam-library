@@ -1,5 +1,24 @@
 # Independent catalog release record
 
+## Prototype: session quality (branch session-quality-prototype)
+
+- Each capture session gets a quality grade from 0 to 100 and a frame-score
+  line from the first frame to the last, showing whether the night held,
+  got worse or improved. Grading runs slowly in the background only while no
+  import, reindex, health check or compression is active; Grade now in the
+  session details moves a session to the front. Stars are measured with SEP
+  1.4.1 (new dependency, LGPLv3+, see NOTICE).
+- Validation (November 6, 2026): 16 new tests on synthetic star fields
+  (round, blurred, trailed, thin cloud, bright sky, Bayer pattern, Rice and
+  gzip FITS) plus the worker's idle and lock rules. One frame measures in
+  about 70 ms (Seestar 1080x1920) to 370 ms (6248x4176) with a 16-150 MB peak.
+  A source preview graded 72 synthetic frames in about a minute: steady nights
+  97-98, a night with wind then cloud 70 with 12 of 36 frames unusable. The
+  full source suite ran 1098 passed, 5 skipped and 2 failed: the JSON export
+  lacked the new session quality that the Library route carries. With the
+  export fixed, those modules ran 137 passed. check_js and the encoding guard
+  passed. Not yet checked against real nights, in a packaged build or on Linux.
+
 ## Unreleased
 
 ### Added

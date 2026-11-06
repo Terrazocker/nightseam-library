@@ -33,6 +33,7 @@ pytest==9.1.1
 python-multipart==0.0.32
 pywebview==6.2.1
 pyyaml==6.0.3
+sep==1.4.1
 setuptools==84.0.0
 starlette==1.6.0
 truststore==0.10.4

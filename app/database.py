@@ -184,6 +184,23 @@ CREATE TABLE IF NOT EXISTS import_batches (
     image_dir TEXT NOT NULL,
     run_id TEXT
 );
+-- Discardable per-frame quality measurements (session grading prototype).
+-- A row counts only while its content digest and measurement version still
+-- match the image; anything else is re-measured. Never read for identity.
+CREATE TABLE IF NOT EXISTS frame_quality (
+    image_id INTEGER PRIMARY KEY,
+    content_sha256 TEXT,
+    version INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    background REAL,
+    noise REAL,
+    stars INTEGER,
+    signal REAL,
+    star_size REAL,
+    elongation REAL,
+    error TEXT,
+    measured_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS advanced_objects (
     id TEXT PRIMARY KEY,
     primary_name TEXT,
@@ -313,6 +330,10 @@ class Database:
                 self.conn.execute(f"ALTER TABLE images ADD COLUMN {column} {kind}")
             except sqlite3.OperationalError:
                 pass
+        try:  # migration: session-quality prototype tables made before `signal`
+            self.conn.execute("ALTER TABLE frame_quality ADD COLUMN signal REAL")
+        except sqlite3.OperationalError:
+            pass
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_images_content_sha256 "
             "ON images(content_sha256)")
@@ -981,6 +1002,27 @@ class Database:
                     "SELECT * FROM images WHERE object_id IS NULL ORDER BY id")
                 return [dict(r) for r in rows if name_key(r["object_name"]) == target]
             return [dict(r) for r in rows]
+
+    def frame_quality(self) -> dict[int, dict]:
+        """Every stored frame measurement by image id (fresh or stale)."""
+        with self.lock:
+            return {row["image_id"]: dict(row) for row in self.conn.execute(
+                "SELECT * FROM frame_quality")}
+
+    def set_frame_quality(self, image_id: int, content_sha256: str | None,
+                          version: int, metrics: dict | None, error: str | None = None):
+        """Store one frame's measurement, or the reason it could not be measured."""
+        metrics = metrics or {}
+        with self.lock:
+            with self.conn:
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO frame_quality (image_id, content_sha256, version, "
+                    "status, background, noise, stars, signal, star_size, elongation, error, measured_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (image_id, content_sha256, version, "error" if error else "ok",
+                     metrics.get("background"), metrics.get("noise"), metrics.get("stars"), metrics.get("signal"),
+                     metrics.get("star_size"), metrics.get("elongation"), error,
+                     datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")))
 
     def image(self, img_id: int) -> dict | None:
         with self.lock:
