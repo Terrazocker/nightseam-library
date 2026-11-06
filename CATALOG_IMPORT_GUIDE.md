@@ -170,7 +170,27 @@ The archive stores copies in:
 <archive>/<object>/<session>/darks/
 <archive>/<object>/<session>/flats/
 <archive>/<object>/<session>/bias/
+<archive>/<object>/stacks/
 ```
+
+## Stacked images
+
+Every object folder has one **stacks** folder beside its sessions. Stacks
+belong to the object, not to a night: they never join a session and never add
+to frame counts, images or integration totals.
+
+With **Auto**, an import treats a light image as a stack when its header says
+it combines several frames (**STACKCNT** or **NCOMBINE** above 1), when
+**IMAGETYP** is **Master Light** or names a stack, or when its file name
+contains a separate word **Stacked**, as in the Seestar's `Stacked_...` files
+or Siril's `..._stacked.fit`. Master darks, flats and bias stay in their
+calibration folders. Choose **Stacks** to file a selection without those
+markers as stacks, or **Lights** to keep a marked file as a light.
+
+Save new stacks from your stacking software into `<archive>/<object>/stacks/`
+(Library **Stacks** opens it, creating it for objects imported earlier) and run
+**Reindex folders** to record them. Stacks imported as lights before this
+folder existed stay where they are.
 
 New session folders use the fixed UTC solar boundary and an identity suffix,
 such as `night_2026-08-22_181703_<identity>`. Unresolved folders use
@@ -191,10 +211,11 @@ supported layouts:
 
 ```text
 <archive>/<object>/<session>/<lights|darks|flats|bias>/<supported FITS file>
+<archive>/<object>/stacks/<supported FITS file>
 <archive>/<object>/<lights|darks|flats|bias>/<supported FITS file>  (legacy)
 ```
 
-The frame folder determines the frame type. Session folder names do not have
+The frame folder determines the frame type; files in `stacks/` are stacks. Session folder names do not have
 to be timestamps. Empty folders and unsupported file types are ignored; manually copied
 files do not need all four frame folders beside them.
 

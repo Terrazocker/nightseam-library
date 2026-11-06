@@ -450,6 +450,29 @@ check("moon_published_phases", () => {
   near(C.moonAge(jdFull), SYNODIC_MONTH / 2, 0.15, "full moon age");
 });
 
+check("moon_published_phase_names", () => {
+  // published 2026 phases (mooninfo.org local tables, converted to UT, agree
+  // with the new/full anchors above): last quarter 2026-08-06 02:22 UT,
+  // first quarter 2026-08-20 02:46 UT. Each bin is 45 deg wide, so the
+  // truncated ephemeris has wide margin; the sign is what is pinned here.
+  const cases = [
+    [utc(2026, 8, 6, 2, 22), 6, false, 270],
+    [utc(2026, 8, 12, 17, 37), 0, null, 0],
+    [utc(2026, 8, 20, 2, 46), 2, true, 90],
+    [utc(2026, 8, 28, 4, 18), 4, null, 180],
+  ];
+  for (const [when, index, waxing, angle] of cases) {
+    const p = C.moonPhase(C.julianDay(when));
+    assert(p.index === index, `phase index ${p.index} != ${index} at ${when.toISOString()}`);
+    if (waxing !== null) assert(p.waxing === waxing, `waxing ${p.waxing} at ${when.toISOString()}`);
+    const off = Math.abs(((p.angle - angle + 540) % 360) - 180);
+    assert(off <= 2.5, `phase angle ${p.angle} vs ${angle} at ${when.toISOString()}`);
+    near(p.fraction, C.moonIllumination(C.julianDay(when)), 1e-12, "phase fraction");
+  }
+  near(C.moonPhase(C.julianDay(utc(2026, 8, 20, 2, 46))).fraction, 0.5, 0.03, "first quarter half lit");
+  near(C.moonPhase(C.julianDay(utc(2026, 8, 6, 2, 22))).fraction, 0.5, 0.03, "last quarter half lit");
+});
+
 check("moon_illumination_matches_elongation", () => {
   // psi = sun-moon elongation; illum = (1-cos psi)/2, age = S*psi/2pi. The
   // age tolerance 2e-6 d also pins the core's synodic constant against the

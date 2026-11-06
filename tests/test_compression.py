@@ -254,9 +254,11 @@ def test_unsupported_skips_without_changing_anything(tmp_path, extra):
 @pytest.mark.parametrize('missing_parent', [False, True])
 def test_mixed_session_compresses_eligible_and_preserves_missing_and_stacked(tmp_path, missing_parent):
     db, archive, originals = library(tmp_path, count=2)
+    # A float image inside the session. Not named "stacked": that file name
+    # now files it in the object's stacks folder, outside every session.
     stacked = exposure(2, dtype=np.float32)
     result = asyncio.run(ingest.ingest_one(db, db.all_objects(advanced=True), archive,
-        UploadFile(io.BytesIO(stacked), filename='stacked.fit')))
+        UploadFile(io.BytesIO(stacked), filename='float32.fit')))
     assert result['ok']
     before = db.images()
     missing, integer, unsupported = before

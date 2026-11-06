@@ -41,7 +41,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = ROOT / "tests" / "js" / "reference_anchors.mjs"
-ANCHOR_COUNT = 21
+ANCHOR_COUNT = 22
 
 
 def _run(core_dir=None):

@@ -166,6 +166,10 @@ class FolderOpenIn(BaseModel):
     rel: str                      # relative path inside the archive folder
 
 
+class StacksFolderIn(BaseModel):
+    slug: str = Field(max_length=200)  # the target's archive folder name
+
+
 class FolderScanIn(BaseModel):
     folder: str = Field(max_length=64)  # token from the native folder picker
 
@@ -923,6 +927,37 @@ def create_app(db: Database) -> FastAPI:
         except OSError as exc:
             raise HTTPException(500, f"cannot open folder: {exc}")
         return {"ok": True}
+
+    @app.post("/api/library/stacks_folder")
+    def api_library_stacks_folder(body: StacksFolderIn):
+        """Open <archive>/<target>/stacks, creating it for an existing target
+        imported before stacks folders existed. Only one existing top-level
+        target folder qualifies; nothing else is created. Opening an existing
+        folder never waits for a running import or reindex; only the one-time
+        creation takes the archive lock."""
+        from .ingest import STACK_DIR
+        slug = body.slug.strip()
+        if not slug or "/" in slug or "\\" in slug:
+            raise HTTPException(400, "bad target folder")
+        base = Path(db.image_dir()).resolve()
+        target = safe_join(base, slug)
+        if target is None:
+            raise HTTPException(400, "folder outside the archive")
+        if not target.is_dir():
+            raise HTTPException(404, "target folder not found on disk")
+        folder = safe_join(base, f"{slug}/{STACK_DIR}")
+        if folder is None:
+            raise HTTPException(400, "folder outside the archive")
+        try:
+            if not folder.is_dir():
+                with db.archive_lock:
+                    if folder.exists() and not folder.is_dir():
+                        raise HTTPException(409, "stacks exists but is not a folder")
+                    folder.mkdir(exist_ok=True)
+            open_folder(folder)
+        except OSError as exc:
+            raise HTTPException(500, f"cannot open stacks folder: {exc}")
+        return {"ok": True, "rel": f"{slug}/{STACK_DIR}"}
 
     @app.get("/api/library")
     def api_library():

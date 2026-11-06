@@ -4,6 +4,7 @@ import { $, esc, api, toast, setBusy, fmtSize, fmtDT, TYPE_LABEL } from "./util.
 import { S } from "./state.js";
 import { renderSkyMap } from "./skymap.js";
 import { catalogIcon } from "./catalog_icons.js";
+import { julianDay, moonPhase } from "./core.js";
 
 let _bound = false;
 let _selectedLibraryObject = null;
@@ -28,7 +29,7 @@ function inlineNoticeMarkup(icon, heading, line, className = "") {
 const IMPORT_ACTIONS = '<button class="button primary" type="button" data-empty-import="files">Import exposures…</button>' +
   '<button class="button" type="button" data-empty-import="folder">Import a folder…</button>';
 
-const FRAME_NAMES = { light: "Lights", dark: "Darks", flat: "Flats", bias: "Bias" };
+const FRAME_NAMES = { light: "Lights", dark: "Darks", flat: "Flats", bias: "Bias", stack: "Stacks" };
 
 function syncFrameSelector() {
   // An empty override means Auto: each exposure's header decides.
@@ -44,7 +45,7 @@ function syncFrameSelector() {
       ? `${name} will be attached to the selected object and session. Original capture dates are preserved.`
       : _importFrameOverride
       ? `The next import is treated as ${name.toLowerCase()}, overriding each header. Choose Auto to read headers again.`
-      : "Auto reads the frame type from each exposure's header and treats unlabeled files as lights.";
+      : "Auto reads the frame type from each exposure's header, files stacked images in the object's stacks folder and treats unlabeled files as lights.";
   }
 }
 
@@ -474,18 +475,32 @@ function renderImports(list) {
     frame.exposure += Number(row.total_exposure) || 0;
     group.frames.set(row.frame, frame);
   }
-  const frameOrder = (kind) => { const i = ["light", "dark", "flat", "bias"].indexOf(kind); return i < 0 ? 9 : i; };
+  const frameOrder = (kind) => { const i = ["light", "dark", "flat", "bias", "stack"].indexOf(kind); return i < 0 ? 9 : i; };
   box.innerHTML = [...groups.values()].map(g => {
+    const loc = `${esc(g.slug)}/${esc(g.session)}`;
+    const frames = [...g.frames].sort(([a], [b]) => frameOrder(a) - frameOrder(b)).map(([kind, f]) =>
+      `${FRAME_NAMES[kind] || kind} × ${f.n}${f.exposure > 0 ? ` · ${fmtDur(f.exposure)}` : ""}`);
+    const day = g.first ? fmtDT(g.first).split(" ")[0] : "";
+    if (String(g.session).toLowerCase() === "stacks") {
+      // Stacks belong to the object, not a session: nothing to calibrate.
+      return `<div class="imp-item">
+      <div class="imp-head">
+        <b>${esc(g.name)}</b>
+        ${day ? `<span class="imp-date mono">${esc(day)}</span>` : ""}
+      </div>
+      <div class="imp-frames">${frames.map((text) => `<span>${esc(text)}</span>`).join("")}</div>
+      <div class="imp-path mono" title="Archive folder: ${loc}">${loc}</div>
+      <div class="imp-btns">
+        <button type="button" class="imp-open icon-button" data-open="${loc}" title="Open this object's stacks folder" aria-label="Open this object's stacks folder">${catalogIcon("folder")}</button>
+      </div>
+    </div>`;
+    }
     const prefix = `${g.slug}/${g.session}/`.toLowerCase();
     const anchor = (S.library?.objects || []).flatMap(object => object.images || [])
       .find(image => Number.isSafeInteger(image.id) && image.id > 0 &&
         String(image.file || "").replaceAll("\\", "/").toLowerCase().startsWith(prefix));
     const anchorAttrs = anchor ? `data-imp-anchor="${anchor.id}"`
       : 'disabled title="This session is no longer available in the library."';
-    const loc = `${esc(g.slug)}/${esc(g.session)}`;
-    const frames = [...g.frames].sort(([a], [b]) => frameOrder(a) - frameOrder(b)).map(([kind, f]) =>
-      `${FRAME_NAMES[kind] || kind} \u00D7 ${f.n}${f.exposure > 0 ? ` \u00B7 ${fmtDur(f.exposure)}` : ""}`);
-    const day = g.first ? fmtDT(g.first).split(" ")[0] : "";
     return `<div class="imp-item">
       <div class="imp-head">
         <b>${esc(g.name)}</b>
@@ -644,7 +659,8 @@ function renderLibraryObjectHeader(object, unit) {
   identity.innerHTML = `<div class="object-heading library-active-object"><h1 class="object-title"><strong>${key}</strong></h1>
     <div class="object-actions">
     ${!object.object_id ? `<button class="button small lib-edit" type="button" data-edit="${key}">Edit</button>` : ""}
-    <button class="button small lib-open" type="button" data-openobj="${key}" title="Open this object's archive folder">${catalogIcon("folder")}<span>Open folder</span></button></div></div>
+    <button class="button small lib-open" type="button" data-openobj="${key}" title="Open this object's archive folder">${catalogIcon("folder")}<span>Open folder</span></button>
+    <button class="button small lib-stacks" type="button" data-openstacks="${key}" ${objectSlug(object) ? "" : "disabled "}title="Open this object's stacks folder · ${esc(plural(object.n_stacks, "stacked image"))}">${catalogIcon("folder")}<span>Stacks${Number(object.n_stacks) ? ` · ${Number(object.n_stacks).toLocaleString()}` : ""}</span></button></div></div>
     <p class="object-subtitle library-object-description">${esc([designation, type].filter(Boolean).join(" · "))} · <span class="mono">Size ${esc(size)}<button class="library-size-unit" type="button" aria-label="Size units: ${name}. Switch to ${next}" title="Switch to ${next}">${symbol}</button></span></p>`;
   $("#libSummary").innerHTML = libraryMetricHTML(object);
 }
@@ -685,6 +701,68 @@ function libraryMetricHTML(object) {
 function imageFolderPath(image) {
   const parts = String(image?.file || "").split(/[\\/]/).filter(Boolean);
   return parts.length ? parts.slice(0, -1).join("/") : null;
+}
+
+/* The object's top-level archive folder, from any recorded exposure or stack. */
+function objectSlug(object) {
+  const image = (object?.images || [])[0] || (object?.stacks || [])[0];
+  return image ? (imageFolderPath(image) || "").split("/")[0] || null : null;
+}
+
+function openStacksFolder(slug) {
+  api("/api/library/stacks_folder", {
+    method: "POST", silent: true,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slug })
+  }).then(() => toast("Opening the stacks folder in the file manager.", "info", 3000))
+    .catch(err => toast(`Cannot open stacks folder: ${err.message}`, "err", 6000));
+}
+
+/* ---------------- moon phase ---------------- */
+
+const MOON_PHASE_NAMES = ["New moon", "Waxing crescent", "First quarter", "Waxing gibbous",
+  "Full moon", "Waning gibbous", "Last quarter", "Waning crescent"];
+
+/* Lit part of the disc, drawn as seen from the northern hemisphere (a waxing
+   Moon is lit on the right). 1 crescent, 2 quarter, 3 gibbous; the terminator
+   is a half-ellipse that bulges toward the lit limb for a crescent. */
+const MOON_LIT_PATHS = {
+  1: "M8 1.5A6.5 6.5 0 0 1 8 14.5A3.25 6.5 0 0 0 8 1.5Z",
+  2: "M8 1.5A6.5 6.5 0 0 1 8 14.5Z",
+  3: "M8 1.5A6.5 6.5 0 0 1 8 14.5A3.25 6.5 0 0 1 8 1.5Z",
+};
+
+/* One of eight phase symbols as inline SVG (no emoji): an outlined disc with
+   its lit part filled. Waning phases mirror the waxing shapes; so does the
+   southern hemisphere, where the lit limb appears on the other side. */
+function moonGlyph(index, southern = false) {
+  const shape = index <= 4 ? index : 8 - index;
+  const mirror = (index > 4) !== southern;
+  const lit = shape === 4 ? '<circle cx="8" cy="8" r="6.5" fill="currentColor"/>'
+    : shape ? `<path d="${MOON_LIT_PATHS[shape]}" fill="currentColor"/>` : "";
+  return `<svg class="moon-glyph" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><g${mirror ? ' transform="matrix(-1 0 0 1 16 0)"' : ""}><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.2"/>${lit}</g></svg>`;
+}
+
+function utcMs(iso) {
+  const text = String(iso || "");
+  return Date.parse(/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(text) ? text : `${text}Z`);
+}
+
+/* The Moon at the middle of a session's captures; null when undated. */
+function sessionMoon(object, session) {
+  if (session.undated || !session.start) return null;
+  const start = utcMs(session.start), end = utcMs(session.end || session.start);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  const phase = moonPhase(julianDay(new Date((start + end) / 2)));
+  const latitude = sessionImages(object, session).find((image) => Number.isFinite(image.site_lat))?.site_lat;
+  const percent = Math.round(phase.fraction * 100);
+  const name = MOON_PHASE_NAMES[phase.index];
+  return { name, percent, glyph: moonGlyph(phase.index, latitude < 0),
+    label: `${name}, ${percent}% illuminated (middle of the session)` };
+}
+
+function moonBadge(moon) {
+  return moon ? `<span class="session-moon" role="img" aria-label="${esc(moon.label)}" title="${esc(moon.label)}">${moon.glyph}<span aria-hidden="true">${moon.percent}%</span></span>` : "";
 }
 
 function sessionImages(object, session) {
@@ -784,7 +862,9 @@ function renderLibrarySessions(object, sessions, activeSession) {
   if (!list) return;
   if (!sessions.length) {
     list.innerHTML = `<tr><td colspan="8">${emptyStateMarkup(
-      "database", "No capture sessions", "This object has no recorded exposures.",
+      "database", "No capture sessions", Number(object?.n_stacks)
+        ? `This object has only stacked images (${plural(object.n_stacks, "stack")}). Open its stacks folder to see them.`
+        : "This object has no recorded exposures.",
       "session-empty-state")}</td></tr>`;
     clearSessionDetails("No session selected", "");
     return;
@@ -804,7 +884,7 @@ function renderLibrarySessions(object, sessions, activeSession) {
     const lightExposure = sessionLightExposure(s);
     const active = sessions.indexOf(activeSession) === i;
     return `<tr class="library-session${active ? " active" : ""}" data-library-session="${i}" tabindex="-1" aria-selected="${active}">
-      <td><button class="session-select" type="button" data-select-session="${i}" title="${esc(title + ' · ' + compression.detail)}"><span class="session-compression" data-compression="${compression.state}" role="img" aria-label="${esc(compression.detail)}" title="${esc(compression.detail)}">${catalogIcon(compression.icon)}</span><span class="session-select-label"><span class="session-day">${esc(when.day)}</span>${s.label ? `<span class="session-kind">${esc(s.label)}</span>` : ""}<span class="session-time">${esc(when.time)}</span></span></button></td>
+      <td><button class="session-select" type="button" data-select-session="${i}" title="${esc(title + ' · ' + compression.detail)}"><span class="session-compression" data-compression="${compression.state}" role="img" aria-label="${esc(compression.detail)}" title="${esc(compression.detail)}">${catalogIcon(compression.icon)}</span><span class="session-select-label"><span class="session-day">${esc(when.day)}</span>${s.label ? `<span class="session-kind">${esc(s.label)}</span>` : ""}${moonBadge(sessionMoon(object, s))}<span class="session-time">${esc(when.time)}</span></span></button></td>
       <td class="num">${cellCount(sessionTypeCount(s, "light"))}</td><td class="num">${cellCount(sessionTypeCount(s, "dark"))}</td><td class="num">${cellCount(sessionTypeCount(s, "flat"))}</td><td class="num">${cellCount(sessionTypeCount(s, "bias"))}</td>
       <td class="num duration" title="Light frames only">${lightExposure ? esc(fmtDur(lightExposure)) : '<span class="zero">—</span>'}</td><td title="${esc(filters)}">${filters ? esc(filters) : '<span class="zero">—</span>'}</td><td>${folder}</td></tr>`;
   }).join("");
@@ -822,11 +902,13 @@ function renderLibrarySessions(object, sessions, activeSession) {
   const when = sessionWhen(activeSession);
   const windowText = activeSession.session_start && activeSession.session_end
     ? sessionWhen({ start: activeSession.session_start, end: activeSession.session_end }).time : "";
+  const activeMoon = sessionMoon(object, activeSession);
   $("#libraryFrameCount").textContent = plural(activeSession.n_images, "frame");
   $("#librarySessionFacts").innerHTML = `<p class="session-date"><strong>${esc(when.day)}</strong><span>${esc([activeSession.label || "Session", when.time].filter(Boolean).join(" · "))}</span></p>
     <dl class="library-session-facts">
     <div><dt>Storage</dt><dd title="${esc(compression.detail)}">${esc(compression.label)}</dd></div>
     ${windowText ? `<div><dt>Session window</dt><dd>${esc(windowText)}</dd></div>` : ""}
+    ${activeMoon ? `<div><dt>Moon</dt><dd class="session-moon-fact" title="${esc(activeMoon.label)}">${activeMoon.glyph}<span>${esc(activeMoon.name)} · ${activeMoon.percent}%</span></dd></div>` : ""}
     <div><dt>Total exposure</dt><dd>${esc(fmtDur(activeSession.exposure))}</dd></div>
     <div><dt>Light integration</dt><dd>${esc(fmtDur(sessionLightExposure(activeSession)))}</dd></div></dl>
     <section><h3 class="section-label">Frames</h3><div class="library-frame-rollup">${typeRows || '<p class="hint">No frame types recorded.</p>'}</div></section>
@@ -1142,9 +1224,13 @@ export function bindArchive() {
     const op = e.target.closest(".lib-open");
     if (op) {
       const o = (S.library.objects || []).find(x => x.name === op.dataset.openobj);
-      const slug = o && o.images && o.images[0]
-        ? (imageFolderPath(o.images[0]) || "").split("/")[0] : op.dataset.openobj;
-      openFolder(slug);
+      openFolder(objectSlug(o) || op.dataset.openobj);
+      return;
+    }
+    const stacks = e.target.closest(".lib-stacks");
+    if (stacks) {
+      const slug = objectSlug((S.library.objects || []).find(x => x.name === stacks.dataset.openstacks));
+      if (slug) openStacksFolder(slug);
       return;
     }
   });

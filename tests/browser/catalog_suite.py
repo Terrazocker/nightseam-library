@@ -1875,7 +1875,7 @@ def desktop_catalog_compression_skips_missing_and_stacked(c):
         return _header([('SIMPLE', True), ('BITPIX', bitpix), ('NAXIS', 2),
                         ('NAXIS1', 8), ('NAXIS2', 8), *metadata]) + _padded(
             struct.pack('>64f' if bitpix == -32 else '>64h', *[value] * 64))
-    originals = {'integer.fit': image(16, 1), 'stacked.fit': image(-32, 1.5),
+    originals = {'integer.fit': image(16, 1), 'float32.fit': image(-32, 1.5),
                  'deleted.fit': image(16, 2)}
     c.goto()
     c.page.locator('#catalog-tab-import').click()
@@ -1905,9 +1905,9 @@ def desktop_catalog_compression_skips_missing_and_stacked(c):
     for text in ('1 converted', '2 skipped', '1 missing', '1 unsupported'):
         c.expect_in(text, status)
     c.page.locator('#compressionSkipped summary').click()
-    c.expect_in('stacked.fit', c.page.locator('#compressionSkippedFiles').inner_text())
+    c.expect_in('float32.fit', c.page.locator('#compressionSkippedFiles').inner_text())
     c.expect_in('deleted.fit', c.page.locator('#compressionSkippedFiles').inner_text())
-    c.expect_eq((archive / results['stacked.fit']['stored']).read_bytes(), originals['stacked.fit'])
+    c.expect_eq((archive / results['float32.fit']['stored']).read_bytes(), originals['float32.fit'])
     group = next(item for item in c.page.request.get(c.url('/api/library')).json()['objects']
                  if item['name'] == 'Mixed compression fixture')
     c.expect_eq(len(group['images']), 3, 'missing and unsupported catalog records stay present')

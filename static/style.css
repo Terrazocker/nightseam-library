@@ -567,6 +567,13 @@ main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-
 .session-compression svg { width: 14px; height: 16px; }
 .session-compression[data-compression="compressed"] { color: var(--good); }
 .session-compression[data-compression="mixed"] { color: var(--warn); }
+/* Moon phase at the session midpoint: shape plus percentage, never colour alone. */
+.session-moon {
+  display: inline-flex; flex: none; align-items: center; gap: var(--sp-1); align-self: center;
+  color: var(--dim); font: 500 var(--fs-xs) / 1 var(--font-mono); font-variant-numeric: tabular-nums;
+}
+.moon-glyph { flex: none; width: 13px; height: 13px; }
+.session-moon-fact { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--sp-1); }
 .library-folder-link {
   display: inline-flex;
   align-items: center;

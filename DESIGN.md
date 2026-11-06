@@ -110,12 +110,20 @@ workspace and the session inspector.
   The selected row has an amber edge and tint.
 - **Workspace:** the selected object's name is the view title, with its
   designation, type and switchable size unit (activate the unit to cycle),
-  plus Edit (custom objects only) and Open folder. Open, unframed metrics
-  follow: sessions, images, light integration and last session. Capture
-  sessions are ordinary table rows: date with the local time range, frame
-  counts per type (zeros recede), light integration, filters and a folder
-  action. Clicking a row selects it.
-- **Inspector:** session date, storage, session window and exposure totals;
+  plus Edit (custom objects only), Open folder and Stacks (opens the object's
+  stacks folder, creating it if needed, and shows how many stacks are
+  recorded). Stacks are not sessions and never add to the metrics. Open,
+  unframed metrics follow: sessions, images, light integration and last
+  session. Capture sessions are ordinary table rows: date with the moon
+  phase and the local time range, frame counts per type (zeros recede),
+  light integration, filters and a folder action. Clicking a row selects it.
+- **Moon phase:** the Moon at the middle of a session's captures, as one of
+  eight inline SVG phase symbols (an outlined disc with its lit part filled;
+  no emoji or Unicode glyphs) plus the illuminated percentage, 0% new to
+  100% full. Waxing is lit on the right, mirrored for southern-hemisphere
+  sites. It uses `--dim` and always carries the name in its accessible label.
+  Undated sessions show none.
+- **Inspector:** session date, storage, session window, moon and exposure totals;
   frames per type; filters as chips; every archive folder as a link. Actions
   sit at the bottom: Open session folder, Add calibration frames (+ Darks,
   + Flats, + Bias) and Storage (Compress, Uncompress — the one that cannot

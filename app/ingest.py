@@ -775,6 +775,41 @@ FRAME_TYPES = {          # normalized IMAGETYP -> archive subfolder
 }
 FRAME_DIRS = {v: k for k, v in FRAME_TYPES.items()}   # subfolder -> type
 
+# Stacked (integrated) images belong to the target, not to one capture
+# session: <archive>/<object>/stacks/<file>. Every target folder carries an
+# empty stacks folder beside its sessions so stacking software can save there;
+# reindex records files found in it as stacks.
+STACK_TYPE = "stack"
+STACK_DIR = "stacks"
+_STACK_COUNT_KEYS = ("STACKCNT", "NCOMBINE")
+_STACKED_NAME = re.compile(r"(?:^|[\s_.-])stacked(?:$|[\s_.-])", re.IGNORECASE)
+
+
+def is_stack(header: dict, filename: str) -> bool:
+    """True for a stacked light image rather than a single exposure.
+
+    Stacking software marks its output with a frame count above one (Siril and
+    the Seestar write STACKCNT, others NCOMBINE), with IMAGETYP "Master Light"
+    or a "stack" type, or names it "Stacked_..." (Seestar) / "..._stacked"
+    (Siril). Only light-class images qualify: master darks, flats and bias
+    also carry NCOMBINE and keep their calibration folders (PY-09)."""
+    if classify_frame(header.get("IMAGETYP")) != "light":
+        return False
+    for key in _STACK_COUNT_KEYS:
+        value = header.get(key)
+        if isinstance(value, bool):
+            continue
+        try:
+            if float(str(value).strip()) > 1:
+                return True
+        except (TypeError, ValueError):
+            pass
+    kind = re.sub(r"[^a-z]", "", str(header.get("IMAGETYP") or "").lower())
+    if kind == "masterlight" or "stack" in kind:
+        return True
+    stem, _ = fits_metadata.filename_parts(Path(str(filename or "")).name)
+    return bool(stem and _STACKED_NAME.search(stem))
+
 
 def classify_frame(imagetyp: str | None) -> str:
     """Normalize a FITS IMAGETYP value into 'light'/'bias'/'dark'/'flat'.
@@ -915,20 +950,30 @@ def _unique_path(path: Path) -> Path:
         n += 1
 
 
-def _archive_target(archive: Path, name: str, slug: str,
-                    session: Path, frame: str) -> Path:
-    """Unique destination <archive>/<slug>/<session>/<frames>/<stem>..."""
+def _archive_filename(name: str) -> str:
     stem, suffix = fits_metadata.filename_parts(name)
     suffix = suffix or ".fit"
     # Stored paths must pass safe_rel: no control characters or device names.
     stem = re.sub(r"[\x00-\x1f\x7f]", "_", stem or "image")[:80]
     stem = paths.avoid_windows_device(stem)
+    return f"{stem}{suffix}"
+
+
+def _archive_target(archive: Path, name: str, slug: str,
+                    session: Path, frame: str) -> Path:
+    """Unique destination <archive>/<slug>/<session>/<frames>/<stem>...
+
+    A stack goes to <archive>/<slug>/stacks/<stem>... instead; every import
+    also keeps the target's stacks folder beside its sessions."""
+    stacks = archive / slug / STACK_DIR
+    stacks.mkdir(parents=True, exist_ok=True)
+    if frame == STACK_TYPE:
+        return _unique_path(stacks / _archive_filename(name))
     sub = session / FRAME_TYPES.get(frame, "lights")
     sub.mkdir(parents=True, exist_ok=True)
     for t in FRAME_TYPES.values():      # keep all four frame folders beside it
         (session / t).mkdir(parents=True, exist_ok=True)
-    target = sub / f"{stem}{suffix}"
-    return _unique_path(target)
+    return _unique_path(sub / _archive_filename(name))
 
 
 async def ingest_one(db: Database, catalog: list[dict], archive: Path,
@@ -1016,9 +1061,11 @@ async def ingest_one(db: Database, catalog: list[dict], archive: Path,
         filt = str(hdr.get("FILTER") or "").strip() or None
         tel = str(hdr.get("TELESCOP") or hdr.get("INSTRUME") or "").strip() or None
         frame = classify_frame(hdr.get("IMAGETYP"))
+        if frame == "light" and session_target is None and is_stack(hdr, name):
+            frame = STACK_TYPE
         forced = (frame_override or "").strip().lower()
-        if forced in FRAME_TYPES:           # explicit upload target wins
-            frame = forced
+        if forced in FRAME_TYPES or (forced == STACK_TYPE and session_target is None):
+            frame = forced                  # explicit upload target wins
 
         cancel = threading.Event()
         if compress:
@@ -1534,6 +1581,17 @@ def _check_reindex_cancelled(cancel_event) -> None:
         raise ReindexCancelled("Reindex cancelled. No library records were changed.")
 
 
+def _reindex_frame_type(parts: list[str]) -> str | None:
+    """The recorded class of an archive file from its folder, or None when the
+    layout is not one NightSeam writes. The folder decides, not the header:
+    a stack filed under lights/ before stacks existed stays a light."""
+    if len(parts) == 3 and parts[1].lower() == STACK_DIR:
+        return STACK_TYPE
+    if len(parts) in (3, 4):
+        return FRAME_DIRS.get(parts[-2].lower())
+    return None
+
+
 def reindex_library(db: Database, archive: Path, cancel_event=None) -> dict:
     # Serialize archive operations while scanning; SQLite reads remain available.
     with db.archive_lock:
@@ -1595,10 +1653,11 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
             raise ValueError("Unsafe archive file path. No library records were changed.")
         if target.is_file():
             parts = rel.split("/")
-            if len(parts) not in (3, 4) or parts[-2].lower() not in FRAME_DIRS:
+            if not _reindex_frame_type(parts):
                 raise ValueError(
                     f"Unexpected archive folder structure at '{entry.parent}'. "
-                    "Expected <object>/<session>/<frame-type>/<file.fit> or legacy "
+                    "Expected <object>/<session>/<frame-type>/<file.fit>, "
+                    "<object>/stacks/<file.fit> or legacy "
                     "<object>/<frame-type>/<file.fit>, where frame-type is lights, "
                     "darks, flats or bias. Use Import Exposures for flat source folders. "
                     "No library records were changed.")
@@ -1766,7 +1825,7 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
             "date_obs": captured,
             "filter": str(hdr.get("FILTER") or "").strip() or None,
             "telescope": str(hdr.get("TELESCOP") or hdr.get("INSTRUME") or "").strip() or None,
-            "imagetyp": FRAME_DIRS[parts[-2].lower()],
+            "imagetyp": _reindex_frame_type(parts),
             "content_sha256": measured[0], "file_size": measured[1],
             "file_mtime_ns": measured[2],
             "storage_compressed": storage_formats[target],
@@ -1807,7 +1866,7 @@ def _reindex_library_locked(db: Database, archive: Path, cancel_event=None) -> d
         anchor_date = normalize_session_date_obs(rec["session_date_obs"])
         anchors, prior_members = [], []
         for anchor in expected:
-            if anchor.get("session_date_obs") is not None:
+            if anchor.get("session_date_obs") is not None or anchor.get("imagetyp") == STACK_TYPE:
                 continue
             if rec.get("session_key"):
                 if imglib.image_session_metadata(anchor)["session_key"] != rec["session_key"]:

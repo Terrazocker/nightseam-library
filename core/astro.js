@@ -270,6 +270,28 @@ export function moonAge(jd) {
   return SYNODIC_MONTH * psi / (2 * Math.PI);
 }
 
+/** Lunar phase at `jd` for the Library's per-session moon badge.
+ *  `fraction` is the illuminated disc (0 = new, 1 = full). `angle` is the
+ *  Sun-Moon elongation signed into 0..360 deg (0 new, 90 first quarter,
+ *  180 full, 270 last quarter): the Moon is waxing while it lies east of the
+ *  Sun (positive RA difference). `index` is the nearest of the eight
+ *  conventional phases, each bin 45 deg wide and centred on its phase:
+ *  0 new, 1 waxing crescent, 2 first quarter, 3 waxing gibbous, 4 full,
+ *  5 waning gibbous, 6 last quarter, 7 waning crescent. Unlike the folded
+ *  moonAge, this keeps waxing and waning apart. */
+export function moonPhase(jd) {
+  const [raS, decS] = sunRaDec(jd);
+  const [raM, decM] = moonRaDec(jd);
+  const ras = D2R * raS, decs = D2R * decS;
+  const ram = D2R * raM, decm = D2R * decM;
+  const cosPsi = Math.sin(decs) * Math.sin(decm) + Math.cos(decs) * Math.cos(decm) * Math.cos(ram - ras);
+  const elongation = Math.acos(Math.max(-1, Math.min(1, cosPsi))) * R2D;
+  const waxing = Math.sin(ram - ras) >= 0;
+  const angle = waxing ? elongation : (360 - elongation) % 360;
+  const index = Math.floor((angle + 22.5) / 45) % 8;
+  return { fraction: moonIllumination(jd), angle, waxing, index };
+}
+
 /* ------------------------------------------------------------------
  * night / planning helpers (scan-based like the Python original)
  * ------------------------------------------------------------------ */

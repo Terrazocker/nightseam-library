@@ -62,7 +62,7 @@ MOVED = (
     "julianDay", "dateFromJD", "gmstDeg", "precessJ2000ToDate",
     "precessDateToJ2000", "refractionDeg", "altaz", "altazFrame",
     "altazFrameApply", "sunRaDec", "moonRaDec", "moonIllumination",
-    "moonAge",
+    "moonAge", "moonPhase",
     "sunAlt", "sunCrossings", "solarSession", "solarSessionWindows",
     "nightInfo", "pickDarkWindow", "scrubWindowMs",
     "scrubBounds", "scrubClamp", "sepDeg", "nightStats",
