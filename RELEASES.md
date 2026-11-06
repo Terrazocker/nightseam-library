@@ -30,6 +30,22 @@
   night. About 80 ms per frame. Two StackingWizard stacks saved in that
   session's lights folder were read as light frames. Not yet checked in a
   packaged build or on Linux.
+- Measurement refined for correctness (VERSION 4), checked against synthetic
+  stars of known shape rather than another program. Elongation now comes
+  from the 50 brightest stars without deblending: deblending had cut a badly
+  trailed frame's star trails into dropped pieces (0.23 measured, 0.83 true).
+  Star size is the half-flux radius across any trail, from isolated stars,
+  with the box filter's blur removed: the old isophotal radius cut off soft
+  stars' wings, and an all-direction HFR counted every trailed frame as soft
+  too. Large frames use their full-resolution centre instead of 4x binning
+  (elongation 0.21 for a true 0.33). Trailed now means at least 0.10 more
+  elongation than the night's roundest frames and three standard errors
+  clear of the measurement noise. Ground truth: elongation within 0.04 and
+  HFR within 6% across the tested shapes. On the Veil night the grade is 80
+  with 240 of 298 frames usable; 56 frames are trailed (StackingWizard: 42,
+  41 shared). The 14 extra frames add 0.10-0.17 elongation at 4-7 standard
+  errors: StackingWizard kept them with its lowest grades. The full source
+  suite ran 1114 passed and 5 skipped; check_js and the encoding guard passed.
 
 ## Unreleased
 

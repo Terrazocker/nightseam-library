@@ -29,20 +29,19 @@ from . import imglib, paths
 
 log = logging.getLogger("nightseam.quality")
 
-VERSION = 3
-FULL_RES_MAX_SIDE = 4096     # frames up to this size are measured at full sampling
-MAX_BINNED_SIDE = 2048       # larger frames are binned to at most ~2k px
+VERSION = 4
+FULL_RES_MAX_SIDE = 4096     # larger frames are measured on their central square
+BOX_VARIANCE = 0.25          # px^2 per axis the 2x2 box filter adds to every star
 BACKGROUND_BOX = 64          # SEP background mesh, measured pixels
 DETECT_SIGMA = 5.0           # extraction threshold in background RMS
-MIN_AREA_FULL = 9            # pixels above the threshold per star, full sampling
-MIN_AREA_BINNED = 5          # the same for binned frames
-MAX_STARS = 300              # brightest clean stars used for size and shape
+MIN_AREA = 9                 # pixels above the threshold per star
+SHAPE_STARS = 50             # brightest clean stars whose size and shape are measured
 SIGNAL_STARS = 50            # brightest stars whose summed flux tracks transparency
-ELONGATION_RATIO_OK = 1.3    # elongation up to this many times the session's roundest
-ELONGATION_RATIO_BAD = 1.8   # from here stars look trailed (Veil Seestar night: 290/296
-                             # frames agree with StackingWizard's trailing verdict)
-ELONGATION_FLOOR = 0.10      # a session's roundest never counts as rounder than this
-ELONGATION_LIMIT = 0.45      # 1 - b/a: trailed whatever the rest of the night did
+HFR_APERTURE = 6.0           # half-flux aperture: this many times the stars' rms extent
+TRAIL_EXCESS_OK = 0.05       # elongation above the night's roundest that still looks round
+TRAIL_EXCESS_BAD = 0.10      # from here stars are visibly trailed (b/a ~10% lower)
+TRAIL_SIGNIFICANCE = 3.0     # ... and the excess must be this many standard errors
+ELONGATION_LIMIT = 0.40      # 1 - b/a (b/a 0.6): trailed whatever the rest of the night did
 SIZE_BAD = 1.33              # star size this much larger than the session's best
 STARS_BAD = 0.50             # half the session's usual stars or starlight lost: cloud
 GLOW_BAD = 0.25              # sky 25% brighter than the session's darkest
@@ -81,79 +80,131 @@ def frame_pixels(raw: bytes) -> np.ndarray:
     raise FrameUnreadable("No 2-D image found in the file.")
 
 
-def _bin(data: np.ndarray, factor: int) -> np.ndarray:
-    h = data.shape[0] // factor * factor
-    w = data.shape[1] // factor * factor
-    view = data[:h, :w].reshape(h // factor, factor, w // factor, factor)
-    return np.ascontiguousarray(view.mean(axis=(1, 3), dtype=np.float32))
-
-
 def _box2(data: np.ndarray) -> np.ndarray:
     """2x2 box average at full sampling: every output pixel covers one whole
     Bayer quad, so the colour pattern folds away without halving the pixels
     a small star is drawn with (binning a 1920x1080 Seestar frame left its
-    stars too few pixels to show trailing)."""
+    stars too few pixels to show trailing). It blurs every star by exactly
+    BOX_VARIANCE per axis, which measure() takes back out."""
     out = (data[:-1, :-1] + data[1:, :-1] + data[:-1, 1:] + data[1:, 1:]) * np.float32(0.25)
     return np.ascontiguousarray(out, dtype=np.float32)
+
+
+def _centre(data: np.ndarray) -> np.ndarray:
+    """The central FULL_RES_MAX_SIDE square of a larger frame, at full sampling
+    (binning squashed a large sensor's stars below a pixel and hid their
+    shape; the centre also leaves out the corners' field curvature)."""
+    h, w = data.shape
+    side = FULL_RES_MAX_SIDE
+    y0, x0 = max(0, (h - side) // 2), max(0, (w - side) // 2)
+    return data[y0:y0 + side, x0:x0 + side]
 
 
 def measure(data: np.ndarray) -> dict:
     """Background, noise, star count, star size and elongation of one frame.
 
-    Frames up to FULL_RES_MAX_SIDE are measured at full sampling through a
-    2x2 box filter; larger ones are binned until at most MAX_BINNED_SIDE wide
-    (binning also folds a Bayer quad). SEP then models the background,
-    extracts sources at DETECT_SIGMA times its RMS and gives each one second
-    moments. star_size is the median second-moment radius sqrt(x2 + y2) in
-    ORIGINAL pixels; elongation is the median 1 - b/a of the brightest clean,
-    unsaturated stars (0 round, toward 1 a line)."""
+    Frames are measured at full sampling through a 2x2 box filter; one larger
+    than FULL_RES_MAX_SIDE is measured on its central square of that size.
+    SEP models the background, extracts sources at DETECT_SIGMA times its RMS
+    and gives each one second moments. Only the SHAPE_STARS brightest clean,
+    unsaturated stars describe the frame: faint stars look stretched from
+    noise alone. star_size is their median half-flux radius (HFR) in pixels
+    measured across any trail - it includes a soft star's wings that
+    threshold-limited moments cut off, and answers focus and seeing only;
+    elongation is their median 1 - b/a (0 round, toward 1 a line) with its
+    standard error and answers tracking. Both have the box filter's own blur
+    removed.
+
+    Deblending is off: SEP would cut a long trail into pieces, flag them as
+    blended and leave only the rounder survivors to measure."""
     import sep
 
     if data.ndim != 2:
         raise FrameUnreadable("Expected a 2-D image.")
+    cropped = max(data.shape) > FULL_RES_MAX_SIDE
+    if cropped:
+        data = _centre(data)
     finite = np.isfinite(data)
     if not finite.all():
         data = np.where(finite, data, np.nanmedian(data))
-    if max(data.shape) <= FULL_RES_MAX_SIDE:
-        factor, min_area = 1, MIN_AREA_FULL
-        img = _box2(data)
-    else:
-        factor, min_area = 2, MIN_AREA_BINNED
-        while max(data.shape) / factor > MAX_BINNED_SIDE:
-            factor *= 2
-        img = _bin(data, factor)
+    img = _box2(data)
     try:
         background = sep.Background(img, bw=BACKGROUND_BOX, bh=BACKGROUND_BOX, fw=3, fh=3)
     except Exception as exc:          # SEP raises plain Exception
         raise FrameUnreadable(f"Background could not be modelled: {exc}") from None
     level, noise = float(background.globalback), float(background.globalrms)
     metrics = {"background": level, "noise": noise, "stars": 0, "signal": 0.0,
-               "star_size": None, "elongation": None, "bin": factor}
+               "star_size": None, "elongation": None, "elongation_err": None, "cropped": cropped}
     if not noise > 0:
         return metrics
     residual = img - background.back()
     sep.set_extract_pixstack(max(300000, img.size // 4))
     try:
-        sources = sep.extract(residual, DETECT_SIGMA, err=noise, minarea=min_area,
-                              deblend_cont=0.005, clean=True)
+        sources = sep.extract(residual, DETECT_SIGMA, err=noise, minarea=MIN_AREA,
+                              deblend_cont=1.0, clean=True)
     except Exception as exc:
         raise FrameUnreadable(f"Stars could not be extracted: {exc}") from None
-    # Saturated cores are flat-topped and measure too large; flagged sources
-    # are blended or cut by the edge. Neither describes the seeing.
-    ceiling = 0.98 * float(img.max())
-    clean = sources[(sources["flag"] == 0) & (img[sources["ycpeak"], sources["xcpeak"]] < ceiling)
-                    & (sources["a"] > 0) & (sources["b"] > 0)]
     metrics["stars"] = int(len(sources))
+    # Saturated cores are flat-topped and measure too large; sources cut by
+    # the frame edge or with overflowing or singular moments describe nothing.
+    ceiling = 0.98 * float(img.max())
+    broken = sep.OBJ_TRUNC | sep.OBJ_DOVERFLOW | sep.OBJ_SINGU
+    clean = sources[((sources["flag"] & broken) == 0)
+                    & (img[sources["ycpeak"], sources["xcpeak"]] < ceiling)
+                    & (sources["a"] > 0) & (sources["b"] > 0)]
     if len(clean) < 3:
         return metrics
-    clean = clean[np.argsort(clean["flux"])[::-1][:MAX_STARS]]
+    clean = clean[np.argsort(clean["flux"])[::-1]]
     # Starlight that got through: thin cloud dims every star long before it
     # hides them, so the brightest stars' summed flux reacts first.
-    metrics["signal"] = float(clean["flux"][:SIGNAL_STARS].sum()) * factor * factor
-    radius = np.sqrt(clean["x2"] + clean["y2"]) * factor
-    elongation = 1.0 - clean["b"] / clean["a"]
-    metrics["star_size"] = float(np.median(radius))
+    metrics["signal"] = float(clean["flux"][:SIGNAL_STARS].sum())
+    def axes(stars):
+        # a and b are the rms extents along the star's axes; the box filter
+        # added BOX_VARIANCE to both.
+        major = np.sqrt(np.clip(stars["a"] ** 2 - BOX_VARIANCE, 1e-4, None))
+        minor = np.sqrt(np.clip(stars["b"] ** 2 - BOX_VARIANCE, 1e-4, None))
+        return major, minor
+
+    # Shape: the brightest clean stars, whatever their neighbours. A trail is
+    # long, so any isolation rule scaled to the stars' extent would throw the
+    # trailed bright stars out and keep the faint ones (measured: 0.29 instead
+    # of the true 0.85 on a badly trailed Seestar frame). The median shrugs
+    # off the odd merged double.
+    shape = clean[:SHAPE_STARS]
+    major, minor = axes(shape)
+    elongation = 1.0 - minor / major
+    # Size: isolated stars only. The half-flux aperture must hold the whole
+    # trail, and a neighbour's light inside it makes a star read soft. Fall
+    # back to the brightest stars when a crowded field has too few isolated.
+    rmax = float(np.clip(HFR_APERTURE * np.median(shape["a"]), 4.0, 60.0))
+    candidates = clean[:SHAPE_STARS * 4]
+    distance = np.hypot(candidates["x"][:, None] - sources["x"][None, :],
+                        candidates["y"][:, None] - sources["y"][None, :])
+    distance[distance < 0.5] = np.inf                  # the star itself
+    isolated = candidates[distance.min(axis=1) > 1.5 * rmax]
+    sized = isolated[:SHAPE_STARS] if len(isolated) >= 10 else shape
+    metrics["size_stars"] = int(len(sized))
+    try:
+        hfr, _ = sep.flux_radius(residual, sized["x"], sized["y"],
+                                 np.full(len(sized), rmax), 0.5, subpix=5)
+    except Exception as exc:
+        raise FrameUnreadable(f"Star sizes could not be measured: {exc}") from None
+    good = (hfr > 0) & np.isfinite(hfr)
+    if not good.any():
+        return metrics
+    # A Gaussian's HFR is 1.1774 sigma; the box added BOX_VARIANCE to sigma^2.
+    hfr = np.sqrt(np.clip(hfr[good] ** 2 - 1.1774 ** 2 * BOX_VARIANCE, 1e-4, None))
+    # Size ACROSS the trail: trailing stretches only the long axis, so the
+    # star's HFR scaled to its short axis tracks focus and seeing alone and
+    # does not count a trailed frame twice. (An elliptical star's HFR follows
+    # sqrt(major * minor); times sqrt(minor / major) leaves the minor width.)
+    sized_major, sized_minor = axes(sized)
+    across = hfr * np.sqrt(sized_minor[good] / sized_major[good])
+    metrics["star_size"] = float(np.median(across))
     metrics["elongation"] = float(np.median(elongation))
+    # Standard error of a median: 1.2533 sigma / sqrt(n), sigma from the MAD.
+    spread = 1.4826 * float(np.median(np.abs(elongation - np.median(elongation))))
+    metrics["elongation_err"] = float(1.2533 * spread / np.sqrt(len(elongation)))
     return metrics
 
 
@@ -181,10 +232,11 @@ def session_summary(frames: list[dict], total: int) -> dict:
     """Grade one session from its measured light frames, in capture order.
 
     frames: [{"id", "date_obs", "background", "noise", "stars", "signal",
-    "star_size", "elongation"}] (measured ones only). total: the session's light frames.
-    Each frame scores 0..100 from four penalties against the session's own
-    best (star size, elongation, star count and starlight, sky glow); an
-    elongation above ELONGATION_LIMIT counts as trailed regardless.
+    "star_size", "elongation", "elongation_err"}] (measured ones only).
+    total: the session's light frames. Each frame scores 0..100 from four
+    penalties against the session's own best (star size, elongation, star
+    count and starlight, sky glow); trailing needs a visible and significant
+    excess, and an elongation above ELONGATION_LIMIT is trailed regardless.
     The session grade is the mean frame score; usable counts the frames that
     fail none of the limits."""
     summary = {"version": VERSION, "total": total, "measured": len(frames),
@@ -201,7 +253,9 @@ def session_summary(frames: list[dict], total: int) -> dict:
     glows = np.array([f["background"] for f in frames if f.get("background") is not None], dtype=float)
     ref_size = float(np.percentile(sizes, 20))
     elongations = np.array([f["elongation"] for f in usable_frames], dtype=float)
-    ref_elongation = max(ELONGATION_FLOOR, float(np.percentile(elongations, 20)))
+    ref_elongation = float(np.percentile(elongations, 20))
+    errors = [f.get("elongation_err") for f in usable_frames if f.get("elongation_err")]
+    ref_error = float(np.median(errors)) if errors else 0.0
     ref_stars = max(1.0, float(np.percentile(stars, 80)))
     signals = np.array([f.get("signal") or 0.0 for f in frames], dtype=float)
     ref_signal = float(np.percentile(signals, 80)) if signals.any() else 0.0
@@ -214,11 +268,17 @@ def session_summary(frames: list[dict], total: int) -> dict:
             reasons.append("no stars")
         else:
             size_pen = _clamp((f["star_size"] / ref_size - 1) / (SIZE_BAD - 1))
-            # Trailing compared with the night's roundest frames: how round a
-            # star measures depends on the optics and sampling, not only on
-            # tracking. A clearly stretched star is trailed whatever the night.
-            ratio = f["elongation"] / ref_elongation
-            trail_pen = _clamp((ratio - ELONGATION_RATIO_OK) / (ELONGATION_RATIO_BAD - ELONGATION_RATIO_OK))
+            # Trailing is the elongation a frame adds over the night's roundest
+            # frames (how round a star measures also depends on the optics and
+            # sampling). It counts once it is both visible (TRAIL_EXCESS_*) and
+            # well beyond the measurement's own error, so noise never trails a
+            # frame. A clearly stretched star is trailed whatever the night did.
+            excess = f["elongation"] - ref_elongation
+            error = float(np.hypot(f.get("elongation_err") or ref_error, ref_error))
+            significant = excess > TRAIL_SIGNIFICANCE * error
+            trail_pen = _clamp((excess - TRAIL_EXCESS_OK) / (TRAIL_EXCESS_BAD - TRAIL_EXCESS_OK))
+            if not significant:
+                trail_pen = min(trail_pen, 0.99)
             if f["elongation"] >= ELONGATION_LIMIT:
                 trail_pen = 1.0
             if size_pen >= 1:
@@ -250,6 +310,7 @@ def session_summary(frames: list[dict], total: int) -> dict:
             "reason": ", ".join(reasons),
             "star_size": None if f.get("star_size") is None else round(f["star_size"], 3),
             "elongation": None if f.get("elongation") is None else round(f["elongation"], 3),
+            "trail_excess": None if f.get("elongation") is None else round(f["elongation"] - ref_elongation, 3),
             "stars": f.get("stars"), "noise": f.get("noise"),
             "signal_pct": None if signal_pct is None else round(signal_pct, 1),
             "sky_glow_pct": None if glow_pct is None else round(glow_pct, 1)})
@@ -277,11 +338,12 @@ def attach_session_quality(objects: list[dict], measurements: dict[int, dict],
                 if row["status"] == "ok":
                     measured.append({"id": image["id"], "date_obs": image.get("date_obs"),
                                      **{key: row.get(key) for key in ("background", "noise", "stars", "signal",
-                                                                      "star_size", "elongation")}})
+                                                                      "star_size", "elongation",
+                                                                      "elongation_err")}})
                 else:
                     measured.append({"id": image["id"], "date_obs": image.get("date_obs"),
                                      "background": None, "noise": None, "stars": 0, "signal": 0.0,
-                                     "star_size": None, "elongation": None})
+                                     "star_size": None, "elongation": None, "elongation_err": None})
             measured.sort(key=lambda f: (f["date_obs"] is None, f["date_obs"] or ""))
             session["quality"] = session_summary(measured, len(lights)) if lights else None
 

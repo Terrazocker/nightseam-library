@@ -31,6 +31,39 @@ def test_measure_ranks_round_blurred_and_trailed_stars():
     assert 3 < round_["noise"] < 15
 
 
+@pytest.mark.parametrize("stretch", [1.0, 1.2, 1.5, 2.0, 3.0])
+def test_elongation_matches_the_injected_axis_ratio(stretch):
+    """Ground truth: Gaussian stars with b/a = 1/stretch, Bayer pattern on."""
+    measured = quality.measure(star_field(shape=(1080, 1920), n=300, stretch=stretch, angle=0.9,
+                                          bayer=True).astype(np.float32))
+    assert measured["elongation"] == pytest.approx(1 - 1 / stretch, abs=0.04)
+    assert 0 < measured["elongation_err"] < 0.01
+
+
+@pytest.mark.parametrize("sigma", [1.3, 1.6, 2.0, 2.6, 3.5])
+def test_star_size_is_the_half_flux_radius_across_any_trail(sigma):
+    """A Gaussian's HFR is 1.1774 sigma; trailing must not inflate it."""
+    round_ = quality.measure(star_field(shape=(1080, 1920), n=300, sigma=sigma).astype(np.float32))
+    trailed = quality.measure(star_field(shape=(1080, 1920), n=300, sigma=sigma,
+                                         stretch=1.8).astype(np.float32))
+    assert round_["star_size"] == pytest.approx(1.1774 * sigma, rel=0.06)
+    assert trailed["star_size"] == pytest.approx(round_["star_size"], rel=0.1)
+
+
+def test_a_long_trail_is_measured_whole():
+    """Deblending used to cut long trails into pieces that were then dropped."""
+    measured = quality.measure(star_field(shape=(1080, 1920), n=200, stretch=4.0).astype(np.float32))
+    assert measured["elongation"] > 0.6
+
+
+def test_a_large_frame_is_measured_on_its_full_resolution_centre():
+    measured = quality.measure(star_field(shape=(4200, 6300), n=900, sigma=3.0,
+                                          stretch=1.5).astype(np.float32))
+    assert measured["cropped"] is True
+    assert measured["elongation"] == pytest.approx(1 / 3, abs=0.04)
+    assert measured["star_size"] == pytest.approx(1.1774 * 3.0, rel=0.06)
+
+
 def test_measure_tracks_sky_glow_and_ignores_a_bayer_pattern():
     dark = quality.measure_file_bytes(fits_bytes(star_field()))
     bright = quality.measure_file_bytes(fits_bytes(star_field(sky=1400)))
@@ -62,9 +95,10 @@ def test_measure_survives_an_empty_sky():
 
 # ---------------------------------------------------------------- grading
 
-def _frame(i, size=2.9, elong=0.05, stars=150, bg=1000.0):
+def _frame(i, size=2.9, elong=0.05, stars=150, bg=1000.0, err=0.015):
     return {"id": i, "date_obs": f"2026-08-22T{20 + i // 60:02d}:{i % 60:02d}:00",
-            "background": bg, "noise": 6.0, "stars": stars, "star_size": size, "elongation": elong}
+            "background": bg, "noise": 6.0, "stars": stars, "star_size": size, "elongation": elong,
+            "elongation_err": err}
 
 
 def test_steady_session_grades_high_and_every_frame_is_usable():
@@ -87,20 +121,31 @@ def test_deteriorating_session_flags_trailed_soft_cloudy_and_bright_frames():
     assert summary["frames"][11]["sky_glow_pct"] == pytest.approx(40.0)
 
 
-def test_trailing_is_judged_against_the_nights_roundest_frames():
-    """A real Seestar night: good frames measured 0.10-0.27, trailed ones
-    about 0.30 - below any fixed limit that would not also flag good nights."""
-    frames = [_frame(i, elong=0.13 + 0.01 * (i % 4)) for i in range(20)]
+def test_trailing_is_a_visible_and_significant_excess_over_the_nights_roundest():
+    """A real Seestar night: the roundest frames measured about 0.12 (the
+    optics' own shape), trailed ones 0.22 and more."""
+    frames = [_frame(i, elong=0.12 + 0.01 * (i % 4)) for i in range(20)]
     frames += [_frame(20, elong=0.30), _frame(21, elong=0.20)]
     summary = quality.session_summary(frames, 22)
     reasons = {f["id"]: f["reason"] for f in summary["frames"]}
     assert reasons[20] == "trailed stars"
-    assert reasons[21] == ""                       # 1.5x: penalised, still usable
+    assert summary["frames"][20]["trail_excess"] == pytest.approx(0.17, abs=0.01)
+    assert reasons[21] == ""                       # +0.07: penalised, still usable
     assert summary["frames"][21]["score"] < summary["frames"][0]["score"]
     assert all(reasons[i] == "" for i in range(20))
     # A clearly stretched star stays trailed even when the whole night is.
     smeared = quality.session_summary([_frame(i, elong=0.5) for i in range(5)], 5)
     assert smeared["usable"] == 0
+
+
+def test_noise_never_trails_a_frame():
+    """The same excess counts only when it stands well clear of the
+    measurement's own error (few or faint stars)."""
+    frames = [_frame(i, elong=0.12) for i in range(10)]
+    frames.append(_frame(10, elong=0.25, err=0.06))     # +0.13 but only ~2 standard errors
+    frames.append(_frame(11, elong=0.25, err=0.01))     # +0.13 at ~7 standard errors
+    reasons = {f["id"]: f["reason"] for f in quality.session_summary(frames, 12)["frames"]}
+    assert reasons[10] == "" and reasons[11] == "trailed stars"
 
 
 def test_thin_cloud_is_caught_by_lost_starlight_before_stars_vanish():

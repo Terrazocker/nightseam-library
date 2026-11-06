@@ -198,6 +198,7 @@ CREATE TABLE IF NOT EXISTS frame_quality (
     signal REAL,
     star_size REAL,
     elongation REAL,
+    elongation_err REAL,
     error TEXT,
     measured_at TEXT NOT NULL
 );
@@ -332,6 +333,10 @@ class Database:
                 pass
         try:  # migration: session-quality prototype tables made before `signal`
             self.conn.execute("ALTER TABLE frame_quality ADD COLUMN signal REAL")
+        except sqlite3.OperationalError:
+            pass
+        try:  # migration: ... and before `elongation_err`
+            self.conn.execute("ALTER TABLE frame_quality ADD COLUMN elongation_err REAL")
         except sqlite3.OperationalError:
             pass
         self.conn.execute(
@@ -1017,11 +1022,11 @@ class Database:
             with self.conn:
                 self.conn.execute(
                     "INSERT OR REPLACE INTO frame_quality (image_id, content_sha256, version, "
-                    "status, background, noise, stars, signal, star_size, elongation, error, measured_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "status, background, noise, stars, signal, star_size, elongation, elongation_err, error, measured_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (image_id, content_sha256, version, "error" if error else "ok",
                      metrics.get("background"), metrics.get("noise"), metrics.get("stars"), metrics.get("signal"),
-                     metrics.get("star_size"), metrics.get("elongation"), error,
+                     metrics.get("star_size"), metrics.get("elongation"), metrics.get("elongation_err"), error,
                      datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")))
 
     def image(self, img_id: int) -> dict | None:

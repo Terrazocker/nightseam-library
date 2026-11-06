@@ -331,21 +331,30 @@ files were quarantined then; the application regenerates instance.json on launch
 
 ### Session quality (prototype)
 
-`app/quality.py` grades light frames with SEP (Source Extractor as a library):
-frames up to 4096 px are measured at full sampling through a 2x2 box filter
-(folding a Bayer quad without halving a small star's pixels; binning hid
-trailing on 1920x1080 Seestar frames), larger ones are binned to at most
-2048 px. SEP then models the background and RMS and extracts stars with
-second moments.
+`app/quality.py` grades light frames with SEP (Source Extractor as a library).
+Frames are measured at full sampling through a 2x2 box filter, which folds a
+Bayer quad without halving a small star's pixels (binning hid trailing on
+1920x1080 Seestar frames); a frame wider than 4096 px is measured on its
+central 4096 px square. SEP models the background and RMS and extracts
+stars without deblending, which would cut a long trail into dropped pieces.
 A frame records background, noise, star count, starlight (summed flux of its
-50 brightest clean stars), median second-moment radius and median 1 - b/a.
+50 brightest clean stars), elongation 1 - b/a of those 50 brightest stars
+with its standard error, and star size: the half-flux radius (HFR) of up to
+50 isolated stars, measured across any trail so it answers focus and seeing
+while elongation answers tracking. Both have the box filter's known blur
+removed. On synthetic stars of known shape the measure returns elongation
+within 0.04 and HFR within 6% of the truth, crowded and large frames
+included (tests/test_session_quality.py).
 Rows live in the discardable `frame_quality` table, keyed to the image's
 `content_sha256` and `quality.VERSION`; anything else is re-measured.
 
 A session's grade is the mean frame score. Each frame is compared with the
 session's own best (star size, elongation, star count and starlight, sky
-glow); trailed means 1.8 times the roundest frames' elongation, or 0.45
-outright. A frame failing any limit is unusable and scores at most 40. Stacks and calibration frames are never graded.
+glow). Trailed means elongation at least 0.10 above the night's roundest
+frames (b/a about 10% lower) and at least three standard errors clear of
+the measurement noise, or 1 - b/a of 0.40 outright. A frame failing any
+limit is unusable and scores at most 40. Stacks and calibration frames are
+never graded.
 
 `QualityWorker` runs only in the application (`create_app(...,
 background_quality=True)` from main.py; tests never start it). It measures

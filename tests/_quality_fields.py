@@ -15,15 +15,18 @@ def star_field(seed=1, shape=(600, 900), n=150, sigma=1.6, stretch=1.0, angle=0.
     yy, xx = np.mgrid[0:h, 0:w]
     sx, sy = sigma * stretch, sigma
     c, s = np.cos(angle), np.sin(angle)
+    half = max(15, int(np.ceil(5 * max(sx, sy))))      # draw each star out to 5 sigma
+    margin = half + 5
     for _ in range(n):
-        y0, x0 = rng.uniform(20, h - 20), rng.uniform(20, w - 20)
+        y0, x0 = rng.uniform(margin, h - margin), rng.uniform(margin, w - margin)
         # A star's total light is fixed: seeing or trailing spreads it, it
         # does not add any. Thin cloud dims it.
         amp = rng.uniform(300, 3000) * clouds * (1.6 * 1.6) / (sx * sy)
-        y1, x1 = int(y0) - 15, int(x0) - 15
-        dy, dx = yy[y1:y1 + 31, x1:x1 + 31] - y0, xx[y1:y1 + 31, x1:x1 + 31] - x0
+        y1, x1 = int(y0) - half, int(x0) - half
+        box = slice(y1, y1 + 2 * half + 1), slice(x1, x1 + 2 * half + 1)
+        dy, dx = yy[box] - y0, xx[box] - x0
         u, v = c * dx + s * dy, -s * dx + c * dy
-        img[y1:y1 + 31, x1:x1 + 31] += amp * np.exp(-0.5 * ((u / sx) ** 2 + (v / sy) ** 2))
+        img[box] += amp * np.exp(-0.5 * ((u / sx) ** 2 + (v / sy) ** 2))
     img += rng.normal(0, noise, shape)
     if bayer:
         img[0::2, 1::2] *= 0.6
