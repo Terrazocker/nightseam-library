@@ -909,7 +909,7 @@ function renderLibrarySessions(object, sessions, activeSession) {
     <dl class="library-session-facts">
     <div><dt>Storage</dt><dd title="${esc(compression.detail)}">${esc(compression.label)}</dd></div>
     ${windowText ? `<div><dt>Session window</dt><dd>${esc(windowText)}</dd></div>` : ""}
-    ${activeMoon ? `<div><dt>Moon</dt><dd class="session-moon-fact" title="${esc(activeMoon.label)}">${activeMoon.glyph}<span>${esc(activeMoon.name)} · ${activeMoon.percent}%</span></dd></div>` : ""}
+    ${activeMoon ? `<div><dt title="Moon phase at the middle of the session">Moon</dt><dd class="session-moon-fact">${activeMoon.glyph}<span>${esc(activeMoon.name)} · ${activeMoon.percent}%</span></dd></div>` : ""}
     <div><dt>Total exposure</dt><dd>${esc(fmtDur(activeSession.exposure))}</dd></div>
     <div><dt>Light integration</dt><dd>${esc(fmtDur(sessionLightExposure(activeSession)))}</dd></div></dl>
     <section><h3 class="section-label">Frames</h3><div class="library-frame-rollup">${typeRows || '<p class="hint">No frame types recorded.</p>'}</div></section>
