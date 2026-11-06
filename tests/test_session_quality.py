@@ -25,8 +25,8 @@ def test_measure_ranks_round_blurred_and_trailed_stars():
     trailed = quality.measure_file_bytes(fits_bytes(star_field(stretch=2.5)))
     assert round_["stars"] > 100
     assert blurred["star_size"] > round_["star_size"] * 1.15
-    assert round_["elongation"] < quality.ELONGATION_OK
-    assert trailed["elongation"] > quality.ELONGATION_BAD
+    assert round_["elongation"] < 0.15
+    assert trailed["elongation"] > quality.ELONGATION_LIMIT
     assert round_["background"] == pytest.approx(1000, rel=0.02)
     assert 3 < round_["noise"] < 15
 
@@ -37,7 +37,7 @@ def test_measure_tracks_sky_glow_and_ignores_a_bayer_pattern():
     bayer = quality.measure_file_bytes(fits_bytes(star_field(bayer=True)))
     assert bright["background"] > dark["background"] * 1.3
     assert bayer["star_size"] == pytest.approx(dark["star_size"], rel=0.1)
-    assert bayer["elongation"] < quality.ELONGATION_OK
+    assert bayer["elongation"] < 0.15
 
 
 def test_frame_pixels_reads_rice_and_gzip_fits_and_refuses_junk():
@@ -85,6 +85,22 @@ def test_deteriorating_session_flags_trailed_soft_cloudy_and_bright_frames():
     assert summary["usable"] == 8 and summary["measured"] == 12 and summary["total"] == 14
     assert summary["grade"] < quality.session_summary([_frame(i) for i in range(8)], 8)["grade"]
     assert summary["frames"][11]["sky_glow_pct"] == pytest.approx(40.0)
+
+
+def test_trailing_is_judged_against_the_nights_roundest_frames():
+    """A real Seestar night: good frames measured 0.10-0.27, trailed ones
+    about 0.30 - below any fixed limit that would not also flag good nights."""
+    frames = [_frame(i, elong=0.13 + 0.01 * (i % 4)) for i in range(20)]
+    frames += [_frame(20, elong=0.30), _frame(21, elong=0.20)]
+    summary = quality.session_summary(frames, 22)
+    reasons = {f["id"]: f["reason"] for f in summary["frames"]}
+    assert reasons[20] == "trailed stars"
+    assert reasons[21] == ""                       # 1.5x: penalised, still usable
+    assert summary["frames"][21]["score"] < summary["frames"][0]["score"]
+    assert all(reasons[i] == "" for i in range(20))
+    # A clearly stretched star stays trailed even when the whole night is.
+    smeared = quality.session_summary([_frame(i, elong=0.5) for i in range(5)], 5)
+    assert smeared["usable"] == 0
 
 
 def test_thin_cloud_is_caught_by_lost_starlight_before_stars_vanish():

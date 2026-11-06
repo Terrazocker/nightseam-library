@@ -17,7 +17,19 @@
   full source suite ran 1098 passed, 5 skipped and 2 failed: the JSON export
   lacked the new session quality that the Library route carries. With the
   export fixed, those modules ran 137 passed. check_js and the encoding guard
-  passed. Not yet checked against real nights, in a packaged build or on Linux.
+  passed.
+- Real night (November 6, 2026): a 298-frame Seestar S50 Veil Nebula session
+  (1920x1080, GRBG) read in place, compared with StackingWizard's grades for
+  the same 296 frames. The first version missed all 42 frames StackingWizard
+  called trailed: binning left the small stars too few pixels. Measuring at
+  full sampling through a 2x2 box filter and judging trailing against the
+  night's roundest frames raised rank agreement to 0.79 (star size), 0.83
+  (elongation), 0.99 (background, noise) and 0.67 (frame score), and the
+  usable verdicts agree on 288 of 296 frames; the 8 others sit at the cut.
+  The session grades 83 with 249 of 296 frames usable, steady through the
+  night. About 80 ms per frame. Two StackingWizard stacks saved in that
+  session's lights folder were read as light frames. Not yet checked in a
+  packaged build or on Linux.
 
 ## Unreleased
 

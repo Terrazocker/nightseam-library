@@ -332,17 +332,20 @@ files were quarantined then; the application regenerates instance.json on launch
 ### Session quality (prototype)
 
 `app/quality.py` grades light frames with SEP (Source Extractor as a library):
-each frame is binned 2x2 (folding a Bayer quad) and down to at most 2048 px,
-then SEP models the background and RMS and extracts stars with second moments.
+frames up to 4096 px are measured at full sampling through a 2x2 box filter
+(folding a Bayer quad without halving a small star's pixels; binning hid
+trailing on 1920x1080 Seestar frames), larger ones are binned to at most
+2048 px. SEP then models the background and RMS and extracts stars with
+second moments.
 A frame records background, noise, star count, starlight (summed flux of its
 50 brightest clean stars), median second-moment radius and median 1 - b/a.
 Rows live in the discardable `frame_quality` table, keyed to the image's
 `content_sha256` and `quality.VERSION`; anything else is re-measured.
 
 A session's grade is the mean frame score. Each frame is compared with the
-session's own best (star size, star count and starlight, sky glow) plus an
-absolute elongation limit; a frame failing any limit is unusable and scores
-at most 40. Stacks and calibration frames are never graded.
+session's own best (star size, elongation, star count and starlight, sky
+glow); trailed means 1.8 times the roundest frames' elongation, or 0.45
+outright. A frame failing any limit is unusable and scores at most 40. Stacks and calibration frames are never graded.
 
 `QualityWorker` runs only in the application (`create_app(...,
 background_quality=True)` from main.py; tests never start it). It measures
