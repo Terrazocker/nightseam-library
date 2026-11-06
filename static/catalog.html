@@ -100,8 +100,8 @@
           <header class="panel-heading library-sessions-heading"><h2 id="librarySessionsHeading">Capture sessions</h2><span id="librarySessionCount" class="panel-count">0 sessions</span></header>
           <div class="tablewrap library-session-table-wrap">
             <table id="librarySessionTable" class="library-session-table">
-              <thead><tr><th scope="col">Date</th><th scope="col" class="num">Lights</th><th scope="col" class="num">Darks</th><th scope="col" class="num">Flats</th><th scope="col" class="num">Bias</th><th scope="col" class="num">Integration</th><th scope="col">Filters</th><th scope="col">Folder</th></tr></thead>
-              <tbody id="librarySessions"><tr><td colspan="8"></td></tr></tbody>
+              <thead><tr><th scope="col">Date</th><th scope="col" title="Moon phase at the middle of the session">Moon</th><th scope="col" class="num">Lights</th><th scope="col" class="num">Darks</th><th scope="col" class="num">Flats</th><th scope="col" class="num">Bias</th><th scope="col" class="num">Integration</th><th scope="col">Filters</th><th scope="col">Folder</th></tr></thead>
+              <tbody id="librarySessions"><tr><td colspan="9"></td></tr></tbody>
             </table>
           </div>
         </section>
@@ -151,8 +151,9 @@
               <button type="button" data-frame-override="dark" aria-pressed="false">Darks</button>
               <button type="button" data-frame-override="flat" aria-pressed="false">Flats</button>
               <button type="button" data-frame-override="bias" aria-pressed="false">Bias</button>
+              <button type="button" data-frame-override="stack" aria-pressed="false">Stacks</button>
             </div>
-            <p id="frameTypeHelp" class="hint" aria-live="polite">Auto reads the frame type from each exposure's header and treats unlabeled files as lights.</p>
+            <p id="frameTypeHelp" class="hint" aria-live="polite">Auto reads the frame type from each exposure's header, files stacked images in the object's stacks folder and treats unlabeled files as lights.</p>
           </div>
 
           <div class="form-section">

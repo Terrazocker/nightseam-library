@@ -206,10 +206,20 @@ def image_session_metadata(image: dict) -> dict:
                             image.get("site_lon"))
 
 
+STACK_TYPE = "stack"
+
+
+def is_stack_record(image: dict) -> bool:
+    """Stacks belong to their target, never to a capture session."""
+    return image.get("imagetyp") == STACK_TYPE
+
+
 def _session_groups(images: list[dict]) -> list[list[dict]]:
     """Group exact physical night/day intervals, never chronological gaps."""
     groups = {}
     for image in images:
+        if is_stack_record(image):
+            continue
         metadata = image_session_metadata(image)
         groups.setdefault(metadata["session_key"], []).append(image)
     for members in groups.values():
@@ -315,7 +325,13 @@ def group_library(images: list[dict], catalog: list[dict]) -> list[dict]:
             "first": None,
             "last": None,
             "images": [],
+            "stacks": [],             # stacked images in <object>/stacks/
         })
+        if is_stack_record(im):
+            # Kept apart so a stack's integration never adds to the frame
+            # counts, totals or sessions built from single exposures.
+            g["stacks"].append(im)
+            continue
         g["n_images"] += 1
         g["total_exposure"] += float(im.get("exposure") or 0.0)
         fr = im.get("imagetyp") or "light"
@@ -345,6 +361,8 @@ def group_library(images: list[dict], catalog: list[dict]) -> list[dict]:
     resolver = None
     for g in by_key.values():
         row = None
+        # A target may so far hold only stacks.
+        sample = (g["images"] or g["stacks"])[0]
         if g["object_id"]:
             row = row_by_id.get(g["object_id"])
             if row is None:
@@ -355,20 +373,20 @@ def group_library(images: list[dict], catalog: list[dict]) -> list[dict]:
                 # the same path an ingest takes - before calling a real capture
                 # "Unknown object". A capture that was never resolved
                 # (object_id is None) stays unresolved: that is user intent.
-                first = g["images"][0]
+                first = sample
                 if resolver is None:
                     resolver = CatalogResolver(rows)
                 row = resolver.resolve(first.get("object_name"),
                                        first.get("ra_hours"), first.get("dec_deg"))
         if row:
             g["name"] = row["primary_name"] or g["object_id"]
-            g["designation"] = designation_of(row, g["images"][0])
+            g["designation"] = designation_of(row, sample)
             g["otype"] = row["otype"]
             g["size_am"] = row["size_am"]
             g["ra_hours"] = row["ra_hours"]
             g["dec_deg"] = row["dec_deg"]
         else:
-            first = g["images"][0]
+            first = sample
             g["name"] = first.get("object_name") or "Unknown object"
             g["designation"] = ""
             g["otype"] = first.get("otype") or None
@@ -389,6 +407,7 @@ def group_library(images: list[dict], catalog: list[dict]) -> list[dict]:
             g["first"] = min(dates, key=lambda pair: pair[0])[1]
             g["last"] = max(dates, key=lambda pair: pair[0])[1]
         g["n_sessions"] = len(g["sessions"])
+        g["n_stacks"] = len(g["stacks"])
         objects.append(g)
 
     objects.sort(key=lambda g: (g["name"] or "").lower())
@@ -397,7 +416,7 @@ def group_library(images: list[dict], catalog: list[dict]) -> list[dict]:
 
 def row_coord(g: dict, kind: str):
     """Coordinates of the first image that actually has one."""
-    for i in g.get("images", []):
+    for i in [*g.get("images", []), *g.get("stacks", [])]:
         v = i.get("ra_hours" if kind == "ra" else "dec_deg")
         if v is not None:
             return v

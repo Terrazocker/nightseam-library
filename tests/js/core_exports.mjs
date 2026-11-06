@@ -86,5 +86,39 @@ if (!cr.evening || !cr.morning) {
   }
 }
 
+/* ---- moonPhase (core/astro.js) ----
+ * Over one synodic month sampled every 6 h, the phase index only steps
+ * forward through 0..7 (one wrap at new moon), visits all eight phases,
+ * waxing agrees with the angle, and the lit fraction rises while waxing and
+ * falls while waning. */
+{
+  const start = Date.UTC(2026, 7, 12, 18);           // just after the Aug 12 new moon
+  let previous = null, wraps = 0;
+  const seen = new Set();
+  for (let h = 0; h <= 30 * 24; h += 6) {
+    const jd = C.julianDay(new Date(start + h * 3600e3));
+    const p = C.moonPhase(jd);
+    seen.add(p.index);
+    if (!(p.fraction >= 0 && p.fraction <= 1)) fail(`moonPhase fraction ${p.fraction}`);
+    if (!(p.angle >= 0 && p.angle < 360)) fail(`moonPhase angle ${p.angle}`);
+    if (p.waxing !== (p.angle <= 180)) fail(`waxing ${p.waxing} disagrees with angle ${p.angle}`);
+    if (previous) {
+      const step = (p.index - previous.index + 8) % 8;
+      if (step > 1) fail(`phase index jumped ${previous.index} -> ${p.index}`);
+      if (p.index < previous.index) wraps += 1;
+      const tooClose = p.fraction < 0.02 || p.fraction > 0.98;
+      if (!tooClose && p.waxing && previous.waxing && p.fraction < previous.fraction) {
+        fail(`fraction fell while waxing at +${h} h`);
+      }
+      if (!tooClose && !p.waxing && !previous.waxing && p.fraction > previous.fraction) {
+        fail(`fraction rose while waning at +${h} h`);
+      }
+    }
+    previous = p;
+  }
+  eq(seen.size, 8, "a synodic month visits all eight phases");
+  eq(wraps, 1, "the index wraps exactly once, at the next new moon");
+}
+
 console.log(ok ? "core exports contract held" : "core exports contract FAILED");
 process.exit(ok ? 0 : 1);

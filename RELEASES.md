@@ -1,5 +1,31 @@
 # Independent catalog release record
 
+## Unreleased
+
+### Added
+
+- Each object folder has a stacks folder beside its sessions. Imports file
+  stacked images there: a header frame count above one (STACKCNT or
+  NCOMBINE), IMAGETYP Master Light or a stack type, or a Seestar `Stacked_`
+  or Siril `_stacked` file name. The Import screen gains a Stacks frame type,
+  and Reindex folders records files saved into `<object>/stacks/`. Stacks stay
+  out of sessions and totals; Library shows a Stacks button with their count.
+  Stacks imported earlier as lights are not moved.
+- Every capture session shows the Moon at the middle of its captures: one of
+  eight phase symbols and the illuminated percentage (0% new, 100% full), in
+  the session row and the inspector. Core gains `moonPhase`, which keeps
+  waxing and waning apart.
+
+Validation (November 6, 2026): the full source suite ran 1084 passed and 5
+skipped; check_js, the encoding guard and check_core passed. A new reference
+anchor pins the published August 2026 quarter moons (last quarter Aug 6
+02:22 UT, first quarter Aug 20 02:46 UT) with the existing new and full
+anchors. Two fixtures that named a float exposure `stacked.fit` were renamed
+to `float32.fit`, since that name now files the image as a stack. The Library
+was checked in a source preview against a scratch archive (eight phases,
+southern mirroring, a stacks-only object, no console errors). No executable
+was built and check_browser.py --desktop was not run.
+
 ## 0.2.1 — November 1, 2026
 
 A maintenance release that keeps long imports fast on Windows and Linux.
