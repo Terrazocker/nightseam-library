@@ -329,6 +329,61 @@ The migration moved both root data/ and dist/data/ without changing external
 image_dir settings or archived exposure bytes. Stale singleton instance.json
 files were quarantined then; the application regenerates instance.json on launch.
 
+### Session quality (prototype)
+
+`app/quality.py` grades light frames with SEP (Source Extractor as a library).
+Frames are measured at full sampling through a 2x2 box filter, which folds a
+Bayer quad without halving a small star's pixels (binning hid trailing on
+1920x1080 Seestar frames); a frame wider than 4096 px is measured on its
+central 4096 px square. SEP models the background and RMS and extracts
+stars without deblending, which would cut a long trail into dropped pieces.
+A frame records background, noise, star count, starlight (summed flux of its
+50 brightest clean stars), elongation 1 - b/a of those 50 brightest stars
+with its standard error, and star size: the half-flux radius (HFR) of up to
+50 isolated stars, measured across any trail so it answers focus and seeing
+while elongation answers tracking. Both have the box filter's known blur
+removed. On synthetic stars of known shape the measure returns elongation
+within 0.04 and HFR within 6% of the truth, crowded and large frames
+included (tests/test_session_quality.py).
+Rows live in the discardable `frame_quality` table, keyed to the image's
+`content_sha256` and `quality.VERSION`; anything else is re-measured.
+
+A session's grade (within the night) is the mean frame score. Each frame is
+compared with the session's own best (star size, elongation, star count and
+starlight, background noise). Trailed means elongation at least 0.10 above
+the night's roundest frames (b/a about 10% lower) and at least three
+standard errors clear of the measurement noise, or 1 - b/a of 0.40
+outright. A brighter sky costs a frame only through the noise it adds (a
+Seestar S30's read noise of ~42 ADU swamps 8-33 ADU of sky). A frame failing
+any limit is unusable and scores at most 40. Stacks and calibration frames
+are never graded; a stacked image filed under lights/ (NCOMBINE or STACKCNT
+above 1) is stored as `skipped` and counts nowhere.
+
+Sessions are compared in shared units read from the FITS header
+(`frame_setup`, `frame_rates`): sky = (background - BIAS camera offset) per
+second per arcsec^2, seeing = 2 x HFR x pixel scale (arcsec FWHM), starlight
+= the brightest stars' flux per second. Pixel scale comes from XPIXSZ,
+XBINNING and FOCALLEN, or a WCS. Only frames in a session's main setup
+(instrument, gain, filter, binning) count. Per session each measure is
+summarised as median, best (mean of the best tenth) or mean, and
+`compare_sessions` sets it against the best session sharing its units: sky
+by setup, seeing across all setups with a known scale, starlight by object
+and setup. The conditions score weighs sky 0.35, seeing 0.30, starlight
+0.20 and the share of trailed frames 0.15 over the measures that had another
+session to compare with; a session with none has no score. Without a BIAS
+card the sky still ranks within a setup but its ratios read low.
+
+`QualityWorker` runs only in the application (`create_app(...,
+background_quality=True)` from main.py; tests never start it). It measures
+one frame at a time on a low-priority thread and only while the archive is
+idle: the archive lock is free, no health, compression or folder job runs and
+no archive request arrived in the last 20 s. It reads a file's bytes under the
+archive lock (never holding a file open while an archive operation needs it),
+measures with the lock released and rests three times the measurement time.
+Newest sessions go first; `POST /api/library/quality/grade` moves a session to
+the front. `GET /api/library/quality/status` reports progress, and
+`/api/library` sessions carry a `quality` summary with per-frame scores.
+
 ## Independent build
 
 Session rows show a fixed-size storage symbol (compressed, uncompressed, mixed,

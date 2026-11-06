@@ -336,7 +336,7 @@ def main() -> int:
         return 0
 
     db = Database(paths.data_dir() / "nightseam.db")
-    app = create_app(db)
+    app = create_app(db, background_quality=True)
 
     port = free_port(args.port, args.host)
     url = f"http://{args.host}:{port}/"

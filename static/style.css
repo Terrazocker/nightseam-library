@@ -531,13 +531,14 @@ main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-
   text-align: left;
   white-space: nowrap;
 }
-.library-session-table th:nth-child(1) { width: 26%; }
-.library-session-table th:nth-child(2) { width: 10%; }
-.library-session-table th:nth-child(3), .library-session-table th:nth-child(4),
-.library-session-table th:nth-child(5), .library-session-table th:nth-child(6) { width: 7%; }
-.library-session-table th:nth-child(7) { width: 11%; }
-.library-session-table th:nth-child(8) { width: 13%; }
-.library-session-table th:nth-child(9) { width: 12%; }
+.library-session-table th:nth-child(1) { width: 24%; }
+.library-session-table th:nth-child(2) { width: 9%; }
+.library-session-table th:nth-child(3) { width: 8%; }
+.library-session-table th:nth-child(4), .library-session-table th:nth-child(5),
+.library-session-table th:nth-child(6), .library-session-table th:nth-child(7) { width: 6.5%; }
+.library-session-table th:nth-child(8) { width: 10%; }
+.library-session-table th:nth-child(9) { width: 11%; }
+.library-session-table th:nth-child(10) { width: 12%; }
 .library-session-table th.num, .library-session-table td.num { text-align: right; }
 .library-session-table td {
   height: var(--row-h);
@@ -574,6 +575,28 @@ main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-
   color: var(--dim); font: 500 var(--fs-xs) / 1 var(--font-mono); font-variant-numeric: tabular-nums;
 }
 .moon-glyph { flex: none; width: 13px; height: 13px; }
+/* Session quality (prototype): a number first, colour only as a second cue. */
+.quality-grade { font: 600 var(--fs-xs) / 1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.quality-grade[data-band="good"] { color: var(--good); }
+.quality-grade[data-band="fair"] { color: var(--text); }
+.quality-grade[data-band="poor"] { color: var(--warn); }
+.quality-grade[data-partial] { opacity: .7; }
+.quality-summary { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2); }
+.quality-summary .quality-grade { font-size: var(--fs-lg); }
+.quality-chart { display: block; width: 100%; height: 72px; margin-top: var(--sp-2); color: var(--dim); }
+.quality-chart .mean { stroke: var(--border); stroke-dasharray: 3 3; }
+.quality-chart .line { fill: none; stroke: currentColor; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.quality-chart .unusable { stroke: var(--warn); stroke-width: 6; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.quality-chart-axis { display: flex; justify-content: space-between; color: var(--faint); font: var(--fs-xs) / 1.4 var(--font-mono); }
+.quality-status { margin-top: var(--sp-1); color: var(--faint); font-size: var(--fs-xs); }
+.quality-block { margin-top: var(--sp-3); }
+.quality-block + .quality-block { padding-top: var(--sp-3); border-top: 1px solid var(--border-soft); }
+.quality-block-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-bottom: var(--sp-1); }
+.quality-block-head h4 { margin: 0; color: var(--dim); font-size: var(--fs-xs); font-weight: 600; }
+.quality-mode { flex: none; height: 24px; }
+.quality-mode button { padding: 0 var(--sp-2); font-size: var(--fs-xs); }
+.quality-facts { margin-top: var(--sp-2); }
+.quality-facts dd .hint { margin-left: var(--sp-1); font-family: var(--font-ui); font-weight: 400; }
 .session-moon-fact { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--sp-1); }
 .library-folder-link {
   display: inline-flex;

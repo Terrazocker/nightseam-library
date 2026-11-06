@@ -184,6 +184,28 @@ CREATE TABLE IF NOT EXISTS import_batches (
     image_dir TEXT NOT NULL,
     run_id TEXT
 );
+-- Discardable per-frame quality measurements (session grading prototype).
+-- A row counts only while its content digest and measurement version still
+-- match the image; anything else is re-measured. Never read for identity.
+CREATE TABLE IF NOT EXISTS frame_quality (
+    image_id INTEGER PRIMARY KEY,
+    content_sha256 TEXT,
+    version INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    background REAL,
+    noise REAL,
+    stars INTEGER,
+    signal REAL,
+    star_size REAL,
+    elongation REAL,
+    elongation_err REAL,
+    exposure REAL,
+    pedestal REAL,
+    pixel_scale REAL,
+    setup TEXT,
+    error TEXT,
+    measured_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS advanced_objects (
     id TEXT PRIMARY KEY,
     primary_name TEXT,
@@ -198,6 +220,12 @@ CREATE TABLE IF NOT EXISTS advanced_objects (
     popularity INTEGER DEFAULT 0
 );
 """
+
+
+# Per-frame session-quality measures stored in frame_quality, in column order.
+FRAME_QUALITY_MEASURES = ("background", "noise", "stars", "signal", "star_size",
+                          "elongation", "elongation_err", "exposure", "pedestal",
+                          "pixel_scale", "setup")
 
 
 def normalize_session_date_obs(value) -> str | None:
@@ -311,6 +339,14 @@ class Database:
                              ("file_mtime_ns", "INTEGER"), ("storage_compressed", "INTEGER")):
             try:
                 self.conn.execute(f"ALTER TABLE images ADD COLUMN {column} {kind}")
+            except sqlite3.OperationalError:
+                pass
+        # migration: session-quality prototype tables made before later measures
+        for column, kind in (("signal", "REAL"), ("elongation_err", "REAL"),
+                             ("exposure", "REAL"), ("pedestal", "REAL"),
+                             ("pixel_scale", "REAL"), ("setup", "TEXT")):
+            try:
+                self.conn.execute(f"ALTER TABLE frame_quality ADD COLUMN {column} {kind}")
             except sqlite3.OperationalError:
                 pass
         self.conn.execute(
@@ -981,6 +1017,29 @@ class Database:
                     "SELECT * FROM images WHERE object_id IS NULL ORDER BY id")
                 return [dict(r) for r in rows if name_key(r["object_name"]) == target]
             return [dict(r) for r in rows]
+
+    def frame_quality(self) -> dict[int, dict]:
+        """Every stored frame measurement by image id (fresh or stale)."""
+        with self.lock:
+            return {row["image_id"]: dict(row) for row in self.conn.execute(
+                "SELECT * FROM frame_quality")}
+
+    def set_frame_quality(self, image_id: int, content_sha256: str | None,
+                          version: int, metrics: dict | None, error: str | None = None):
+        """Store one frame's measurement, or the reason it could not be measured."""
+        metrics = metrics or {}
+        status = "error" if error else "skipped" if metrics.get("skipped") else "ok"
+        error = error or metrics.get("skipped")
+        columns = ("image_id", "content_sha256", "version", "status", *FRAME_QUALITY_MEASURES,
+                   "error", "measured_at")
+        values = (image_id, content_sha256, version, status,
+                  *(metrics.get(name) for name in FRAME_QUALITY_MEASURES), error,
+                  datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S"))
+        with self.lock:
+            with self.conn:
+                self.conn.execute(
+                    f"INSERT OR REPLACE INTO frame_quality ({','.join(columns)}) "
+                    f"VALUES ({','.join('?' * len(columns))})", values)
 
     def image(self, img_id: int) -> dict | None:
         with self.lock:

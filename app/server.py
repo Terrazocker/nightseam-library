@@ -37,7 +37,7 @@ from .ingest import (ArchiveRenameRecoveryError, ReindexCancelled, DedupBatch, _
 from .paths import safe_join, safe_rel, static_dir
 from .upload_stream import MalformedUpload, UploadInterrupted, multipart_parts
 from .version import app_version
-from . import diagnostics, local_import
+from . import diagnostics, local_import, quality as session_quality
 
 APP_VERSION = app_version()
 log = logging.getLogger(__name__)
@@ -166,6 +166,10 @@ class FolderOpenIn(BaseModel):
     rel: str                      # relative path inside the archive folder
 
 
+class QualityGradeIn(BaseModel):
+    image_ids: list[int] = Field(max_length=100000)
+
+
 class StacksFolderIn(BaseModel):
     slug: str = Field(max_length=200)  # the target's archive folder name
 
@@ -211,11 +215,27 @@ class HealthAcknowledgementIn(BaseModel):
 
 # ------------------------------------------------------------------ factory
 
-def create_app(db: Database) -> FastAPI:
+def create_app(db: Database, background_quality: bool = False) -> FastAPI:
     diagnostics.install_error_collector()
     health = ArchiveHealthManager(db)
     compression = CompressionManager(db)
-    ingest_workers = asyncio.Semaphore(max(1, min(24, os.cpu_count() or 1)))
+
+    def archive_busy() -> bool:
+        """True while any archive work runs or ran in the last 20 seconds."""
+        if time.monotonic() - _state.get('last_archive_request', -1e9) < 20.0:
+            return True
+        if any(manager.thread is not None and manager.thread.is_alive()
+               for manager in (health, compression)):
+            return True
+        if any(job.task is not None and not job.task.done() for job in folder_jobs.values()):
+            return True
+        if not db.archive_lock.acquire(blocking=False):
+            return True
+        db.archive_lock.release()
+        return False
+
+    grader = session_quality.QualityWorker(db, busy=archive_busy)
+    ingest_workers =asyncio.Semaphore(max(1, min(24, os.cpu_count() or 1)))
     ingest_admission = asyncio.Lock()
     resolver_lock = threading.Lock()
     resolver_cache = None
@@ -233,18 +253,22 @@ def create_app(db: Database) -> FastAPI:
         try:
             await run_in_threadpool(recover_compression, db)
             await run_in_threadpool(recover_pending, db, health.stopping.is_set)
+            if background_quality:
+                grader.start()
             yield
         finally:
             for job in list(folder_jobs.values()):
                 if job.task is not None and not job.task.done():
                     job.task.cancel()
                     await asyncio.gather(job.task, return_exceptions=True)
+            await run_in_threadpool(grader.shutdown)
             await run_in_threadpool(compression.shutdown)
             await run_in_threadpool(health.shutdown)
     app = FastAPI(title="NightSeam", version=APP_VERSION, docs_url=None,
                   redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.archive_health = health
     app.state.compression = compression
+    app.state.quality = grader
 
     def serialize_archive(function):
         """Sync routes run in workers; lock before any metadata/file snapshot."""
@@ -276,6 +300,9 @@ def create_app(db: Database) -> FastAPI:
     @app.middleware("http")
     async def touch(request, call_next):
         _state["last_request"] = time.time()
+        if request.method != 'GET' and not request.url.path.startswith('/api/library/quality'):
+            # Session grading stays out of the way of any archive work.
+            _state['last_archive_request'] = time.monotonic()
         # Reject an oversized upload from its declared length BEFORE Starlette
         # spools the body to a temp file: the per-file cap inside the ingest
         # route can only run once the whole request has been buffered.
@@ -959,11 +986,26 @@ def create_app(db: Database) -> FastAPI:
             raise HTTPException(500, f"cannot open stacks folder: {exc}")
         return {"ok": True, "rel": f"{slug}/{STACK_DIR}"}
 
+    @app.get("/api/library/quality/status")
+    def api_quality_status():
+        """The session grader's progress (prototype)."""
+        snapshot = grader.snapshot()
+        snapshot["enabled"] = grader.thread is not None
+        return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/library/quality/grade")
+    def api_quality_grade(body: QualityGradeIn):
+        """Grade these frames next, still only while the archive is idle."""
+        queued = grader.prioritize(body.image_ids)
+        return {"queued": queued, **grader.snapshot(), "enabled": grader.thread is not None}
+
     @app.get("/api/library")
     def api_library():
         from . import imglib
         imgs = db.images()
         objs = imglib.group_library(imgs, db.all_objects(advanced=True))
+        session_quality.attach_session_quality(
+            objs, db.frame_quality(), {i["id"]: i.get("content_sha256") for i in imgs})
         # Construct/render in this worker: returning a dict makes FastAPI walk
         # and encode the complete library on the ASGI event loop afterwards.
         return JSONResponse(jsonable_encoder({
@@ -1112,6 +1154,9 @@ def create_app(db: Database) -> FastAPI:
         if format == "json":
             if objs is None:
                 objs = imglib.group_library(imgs, db.all_objects(advanced=True))
+            # The export mirrors the Library, session quality included.
+            session_quality.attach_session_quality(
+                objs, db.frame_quality(), {i["id"]: i.get("content_sha256") for i in imgs})
             return Response(
                 content=json.dumps({
                     "image_dir": db.image_dir(),

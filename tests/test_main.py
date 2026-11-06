@@ -163,8 +163,8 @@ def test_source_lifespan_stops_waiting_health_worker(tmp_path, monkeypatch):
     db = Database(tmp_path / "health-main.db")
     real_create = main.create_app
     owned = {}
-    def create(database):
-        app = real_create(database); owned["health"] = app.state.archive_health; return app
+    def create(database, **options):
+        app = real_create(database, **options); owned["health"] = app.state.archive_health; return app
     monkeypatch.setattr(main, "Database", lambda path: db)
     monkeypatch.setattr(main, "create_app", create)
     monkeypatch.setattr(main, "setup_logging", lambda console: logging.getLogger("health-main-test"))
@@ -192,8 +192,8 @@ def test_source_shutdown_interrupts_active_acknowledgement(tmp_path, monkeypatch
     target.write_bytes(b"edited" * (1024 * 1024))
     real_create, real_hash = main.create_app, hashlib.sha256
     owned, outcome = {}, {}; reading = threading.Event()
-    def create(database):
-        app = real_create(database); owned["health"] = app.state.archive_health; return app
+    def create(database, **options):
+        app = real_create(database, **options); owned["health"] = app.state.archive_health; return app
     class SlowHash:
         def __init__(self): self.hash = real_hash()
         def update(self, data):

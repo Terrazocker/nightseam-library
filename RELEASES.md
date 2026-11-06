@@ -1,6 +1,136 @@
 # Independent catalog release record
 
-## Unreleased
+## 0.2.2 — November 6, 2026
+
+Stacked images get their own folder, every capture session shows the Moon,
+and a first version of session quality grading arrives as a prototype.
+
+### New
+
+- Every object folder has a stacks folder beside its sessions. Imports file
+  stacked images there: a header that counts several combined frames
+  (STACKCNT or NCOMBINE above one), IMAGETYP Master Light, or a file name
+  with the word "stacked", such as the Seestar's `Stacked_...` or Siril's
+  `..._stacked.fit`. Master darks, flats and bias keep their calibration
+  folders. The Import screen gains a Stacks frame type, and Reindex folders
+  records files saved into `<object>/stacks/`. The Library's Stacks button
+  opens the folder and shows how many stacks it holds. Stacks never count
+  toward sessions, frame totals or integration.
+- Every capture session shows the Moon at the middle of its captures: one of
+  eight phase symbols and the illuminated share, from 0% at new moon to 100%
+  at full, in its own Moon column and in the session details. Phases are
+  mirrored for southern-hemisphere sites.
+- Session quality (prototype). NightSeam measures each light frame slowly in
+  the background, only while nothing else uses the archive: sky, noise,
+  stars, star size across any trail, and how stretched the stars are, using
+  SEP (Source Extractor as a library). Each session then shows:
+  - Conditions, compared with your other sessions in shared units: sky
+    brightness per second and square arcsecond above the camera offset,
+    seeing in arcseconds, starlight per second and the share of trailed
+    frames. A Median, Best or Mean toggle chooses how each session is summed
+    up, and the Quality column ranks an object's sessions.
+  - Within the night: a 0-100 grade, the number of usable frames, a one-line
+    trend and a frame-by-frame line from the first frame to the last.
+  Grade now moves a session to the front of the queue. Stacked images saved
+  into a lights folder are recognised and left out.
+
+### Changed
+
+- The session table gains Moon and Quality columns; the moon phase no longer
+  shares the date cell.
+- The Windows and Linux packages are about 17 MB larger: grading uses NumPy,
+  Astropy and SEP. SEP is licensed LGPLv3+ (see NOTICE).
+
+### Known limits
+
+- Session quality is a prototype. Its limits were checked against synthetic
+  stars of known shape and one real Seestar S30 night.
+- Comparisons need a second session with the same camera, gain and filter
+  (seeing compares across setups). Target altitude and the Moon's distance
+  from the target are not yet taken into account.
+- Cameras that write no BIAS offset still rank their nights by sky
+  brightness, but the ratios read smaller than they are.
+- Stacks imported as lights before this release stay where they are.
+
+### Downloads
+
+- Windows x64: `NightSeam-Catalog-0.2.2-windows-x64.zip` with its `.sha256`.
+  It runs in a native window, using WebView2 with a browser fallback.
+- Linux x86_64: `NightSeam-Catalog-0.2.2-linux-x86_64.tar.gz` with its
+  `.sha256`, a browser build that opens the system browser. It bundles the
+  FITS tools and needs no Python or Node. It requires glibc 2.35 or newer and
+  is tested offline on Ubuntu 22.04 and 24.04 and Debian 12. The Choose folder
+  and Browse dialogs need a display plus zenity or kdialog; without them, the
+  browser's directory upload is used. Opening the archive folder needs
+  xdg-open.
+- Both builds run offline and keep their data beside the executable.
+
+## Session quality development — November 6, 2026
+
+- Each capture session gets a quality grade from 0 to 100 and a frame-score
+  line from the first frame to the last, showing whether the night held,
+  got worse or improved. Grading runs slowly in the background only while no
+  import, reindex, health check or compression is active; Grade now in the
+  session details moves a session to the front. Stars are measured with SEP
+  1.4.1 (new dependency, LGPLv3+, see NOTICE).
+- Validation (November 6, 2026): 16 new tests on synthetic star fields
+  (round, blurred, trailed, thin cloud, bright sky, Bayer pattern, Rice and
+  gzip FITS) plus the worker's idle and lock rules. One frame measures in
+  about 70 ms (Seestar 1080x1920) to 370 ms (6248x4176) with a 16-150 MB peak.
+  A source preview graded 72 synthetic frames in about a minute: steady nights
+  97-98, a night with wind then cloud 70 with 12 of 36 frames unusable. The
+  full source suite ran 1098 passed, 5 skipped and 2 failed: the JSON export
+  lacked the new session quality that the Library route carries. With the
+  export fixed, those modules ran 137 passed. check_js and the encoding guard
+  passed.
+- Real night (November 6, 2026): a 298-frame Seestar S30 Veil Nebula session
+  (1920x1080, GRBG) read in place, compared with StackingWizard's grades for
+  the same 296 frames. The first version missed all 42 frames StackingWizard
+  called trailed: binning left the small stars too few pixels. Measuring at
+  full sampling through a 2x2 box filter and judging trailing against the
+  night's roundest frames raised rank agreement to 0.79 (star size), 0.83
+  (elongation), 0.99 (background, noise) and 0.67 (frame score), and the
+  usable verdicts agree on 288 of 296 frames; the 8 others sit at the cut.
+  The session grades 83 with 249 of 296 frames usable, steady through the
+  night. About 80 ms per frame. Two StackingWizard stacks saved in that
+  session's lights folder were read as light frames. Not yet checked in a
+  packaged build or on Linux.
+- Measurement refined for correctness (VERSION 4), checked against synthetic
+  stars of known shape rather than another program. Elongation now comes
+  from the 50 brightest stars without deblending: deblending had cut a badly
+  trailed frame's star trails into dropped pieces (0.23 measured, 0.83 true).
+  Star size is the half-flux radius across any trail, from isolated stars,
+  with the box filter's blur removed: the old isophotal radius cut off soft
+  stars' wings, and an all-direction HFR counted every trailed frame as soft
+  too. Large frames use their full-resolution centre instead of 4x binning
+  (elongation 0.21 for a true 0.33). Trailed now means at least 0.10 more
+  elongation than the night's roundest frames and three standard errors
+  clear of the measurement noise. Ground truth: elongation within 0.04 and
+  HFR within 6% across the tested shapes. On the Veil night the grade is 80
+  with 240 of 298 frames usable; 56 frames are trailed (StackingWizard: 42,
+  41 shared). The 14 extra frames add 0.10-0.17 elongation at 4-7 standard
+  errors: StackingWizard kept them with its lowest grades. The full source
+  suite ran 1114 passed and 5 skipped; check_js and the encoding guard passed.
+- Sessions compare across the library (VERSION 5). Each frame's header gives
+  exposure, camera offset (BIAS), pixel scale and setup, so sky becomes ADU
+  per second per arcsec^2 above the offset, seeing arcseconds FWHM and
+  starlight flux per second. A Conditions score ranks each session against
+  the best session sharing those units (sky by setup, seeing across setups,
+  starlight per object), with a Median/Best/Mean toggle; the within-night
+  grade stays as its own block. Within a night, a brighter sky now costs a
+  frame only through added noise: the Seestar S30's sky sits 8-33 ADU over a
+  953 ADU offset, so raw-level percentages (ours and StackingWizard's) hid a
+  roughly threefold change. Stacked images filed under lights/ are skipped.
+  The Veil night (296 frames, two StackingWizard stacks skipped) reads sky
+  0.073 ADU/s/arcsec^2 and seeing 9.1" FWHM on the median. In a scratch
+  preview a moonlit night of the same object scored 50 on conditions (sky
+  4.2x the darkest) while its within-night grade stayed 97. The full source
+  suite ran 1122 passed, 5 skipped and 1 failed: the intermittent
+  test_teardown_owns_descendants_after_the_launcher_exits already recorded
+  in BUGS.md; test_browser_gate.py then ran 15 of 15 on its own. check_js
+  and the encoding guard passed.
+
+## Stacks and moon phase development — November 6, 2026
 
 ### Added
 
