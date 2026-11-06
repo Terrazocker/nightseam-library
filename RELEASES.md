@@ -1,6 +1,71 @@
 # Independent catalog release record
 
-## Prototype: session quality (branch session-quality-prototype)
+## 0.2.2 — November 6, 2026
+
+Stacked images get their own folder, every capture session shows the Moon,
+and a first version of session quality grading arrives as a prototype.
+
+### New
+
+- Every object folder has a stacks folder beside its sessions. Imports file
+  stacked images there: a header that counts several combined frames
+  (STACKCNT or NCOMBINE above one), IMAGETYP Master Light, or a file name
+  with the word "stacked", such as the Seestar's `Stacked_...` or Siril's
+  `..._stacked.fit`. Master darks, flats and bias keep their calibration
+  folders. The Import screen gains a Stacks frame type, and Reindex folders
+  records files saved into `<object>/stacks/`. The Library's Stacks button
+  opens the folder and shows how many stacks it holds. Stacks never count
+  toward sessions, frame totals or integration.
+- Every capture session shows the Moon at the middle of its captures: one of
+  eight phase symbols and the illuminated share, from 0% at new moon to 100%
+  at full, in its own Moon column and in the session details. Phases are
+  mirrored for southern-hemisphere sites.
+- Session quality (prototype). NightSeam measures each light frame slowly in
+  the background, only while nothing else uses the archive: sky, noise,
+  stars, star size across any trail, and how stretched the stars are, using
+  SEP (Source Extractor as a library). Each session then shows:
+  - Conditions, compared with your other sessions in shared units: sky
+    brightness per second and square arcsecond above the camera offset,
+    seeing in arcseconds, starlight per second and the share of trailed
+    frames. A Median, Best or Mean toggle chooses how each session is summed
+    up, and the Quality column ranks an object's sessions.
+  - Within the night: a 0-100 grade, the number of usable frames, a one-line
+    trend and a frame-by-frame line from the first frame to the last.
+  Grade now moves a session to the front of the queue. Stacked images saved
+  into a lights folder are recognised and left out.
+
+### Changed
+
+- The session table gains Moon and Quality columns; the moon phase no longer
+  shares the date cell.
+- The Windows and Linux packages are about 17 MB larger: grading uses NumPy,
+  Astropy and SEP. SEP is licensed LGPLv3+ (see NOTICE).
+
+### Known limits
+
+- Session quality is a prototype. Its limits were checked against synthetic
+  stars of known shape and one real Seestar S30 night.
+- Comparisons need a second session with the same camera, gain and filter
+  (seeing compares across setups). Target altitude and the Moon's distance
+  from the target are not yet taken into account.
+- Cameras that write no BIAS offset still rank their nights by sky
+  brightness, but the ratios read smaller than they are.
+- Stacks imported as lights before this release stay where they are.
+
+### Downloads
+
+- Windows x64: `NightSeam-Catalog-0.2.2-windows-x64.zip` with its `.sha256`.
+  It runs in a native window, using WebView2 with a browser fallback.
+- Linux x86_64: `NightSeam-Catalog-0.2.2-linux-x86_64.tar.gz` with its
+  `.sha256`, a browser build that opens the system browser. It bundles the
+  FITS tools and needs no Python or Node. It requires glibc 2.35 or newer and
+  is tested offline on Ubuntu 22.04 and 24.04 and Debian 12. The Choose folder
+  and Browse dialogs need a display plus zenity or kdialog; without them, the
+  browser's directory upload is used. Opening the archive folder needs
+  xdg-open.
+- Both builds run offline and keep their data beside the executable.
+
+## Session quality development — November 6, 2026
 
 - Each capture session gets a quality grade from 0 to 100 and a frame-score
   line from the first frame to the last, showing whether the night held,
@@ -65,7 +130,7 @@
   in BUGS.md; test_browser_gate.py then ran 15 of 15 on its own. check_js
   and the encoding guard passed.
 
-## Unreleased
+## Stacks and moon phase development — November 6, 2026
 
 ### Added
 
