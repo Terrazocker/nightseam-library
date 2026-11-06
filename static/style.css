@@ -589,6 +589,14 @@ main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-
 .quality-chart .unusable { stroke: var(--warn); stroke-width: 6; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .quality-chart-axis { display: flex; justify-content: space-between; color: var(--faint); font: var(--fs-xs) / 1.4 var(--font-mono); }
 .quality-status { margin-top: var(--sp-1); color: var(--faint); font-size: var(--fs-xs); }
+.quality-block { margin-top: var(--sp-3); }
+.quality-block + .quality-block { padding-top: var(--sp-3); border-top: 1px solid var(--border-soft); }
+.quality-block-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-bottom: var(--sp-1); }
+.quality-block-head h4 { margin: 0; color: var(--dim); font-size: var(--fs-xs); font-weight: 600; }
+.quality-mode { flex: none; height: 24px; }
+.quality-mode button { padding: 0 var(--sp-2); font-size: var(--fs-xs); }
+.quality-facts { margin-top: var(--sp-2); }
+.quality-facts dd .hint { margin-left: var(--sp-1); font-family: var(--font-ui); font-weight: 400; }
 .session-moon-fact { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--sp-1); }
 .library-folder-link {
   display: inline-flex;

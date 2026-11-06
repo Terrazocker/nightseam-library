@@ -774,13 +774,53 @@ function qualityBand(grade) {
   return grade >= 75 ? "good" : grade >= 50 ? "fair" : "poor";
 }
 
+const QUALITY_MODES = { median: "Median", best: "Best", mean: "Mean" };
+const QUALITY_MODE_HELP = {
+  median: "Each session's typical frame: a few cloudy or trailed frames do not move it.",
+  best: "Each session's best tenth of frames: what the night could do at its best.",
+  mean: "Each session's average frame: lost frames pull it down.",
+};
+let _qualityMode = (() => {
+  try { return QUALITY_MODES[localStorage.getItem("nightseam.qualityMode")] ? localStorage.getItem("nightseam.qualityMode") : "median"; }
+  catch (err) { return "median"; }
+})();
+
+function setQualityMode(mode) {
+  if (!QUALITY_MODES[mode]) return;
+  _qualityMode = mode;
+  try { localStorage.setItem("nightseam.qualityMode", mode); } catch (err) { /* per-viewer convenience only */ }
+  renderLibrary();
+}
+
+function sessionConditions(quality) {
+  return quality?.conditions?.modes?.[_qualityMode] || null;
+}
+
+/* The session list shows conditions: this night against the user's other
+   nights, in shared units. A night with nothing to compare shows a dash. */
 function qualityCell(quality) {
   if (!quality) return '<span class="zero" title="No light frames to grade">—</span>';
   if (!quality.measured) return '<span class="zero" title="Not graded yet">…</span>';
   const partial = quality.measured < quality.total;
-  const title = `Quality ${quality.grade} · ${quality.usable} of ${quality.measured} graded frames usable` +
-    (partial ? ` · ${quality.measured} of ${quality.total} frames graded so far` : "");
-  return `<span class="quality-grade" data-band="${qualityBand(quality.grade)}"${partial ? " data-partial" : ""} title="${esc(title)}">${quality.grade}${partial ? "*" : ""}</span>`;
+  const conditions = sessionConditions(quality);
+  const progress = partial ? ` · ${quality.measured} of ${quality.total} frames graded so far` : "";
+  if (conditions?.score == null) {
+    return `<span class="zero" title="${esc(`Nothing to compare with yet: needs another session with this camera, or a known pixel scale${progress}`)}">—</span>`;
+  }
+  const title = `Conditions ${conditions.score} (${QUALITY_MODES[_qualityMode].toLowerCase()}) · ` +
+    (conditions.of > 1 ? `${ordinal(conditions.rank)} of ${conditions.of} sessions of this object` : "compared with your other sessions") +
+    ` · within the night ${quality.grade}` + progress;
+  return `<span class="quality-grade" data-band="${qualityBand(conditions.score)}"${partial ? " data-partial" : ""} title="${esc(title)}">${conditions.score}${partial ? "*" : ""}</span>`;
+}
+
+function ordinal(n) {
+  const suffix = n % 100 >= 11 && n % 100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" })[n % 10] || "th";
+  return `${n}${suffix}`;
+}
+
+function significant(value, digits = 3) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return Number(value.toPrecision(digits)).toLocaleString(undefined, { maximumSignificantDigits: digits });
 }
 
 /* Frame scores over the session as an inline SVG line; unusable frames dotted. */
@@ -821,6 +861,42 @@ function qualityStatusLine(quality) {
   return "Queued for grading.";
 }
 
+/* Conditions: the session's measures in shared units, each set against the
+   best comparable session (sky and starlight: same camera setup; seeing: in
+   arcseconds across setups). */
+function conditionsMarkup(quality) {
+  const meta = quality.conditions;
+  const c = sessionConditions(quality);
+  if (!meta || !c) return "";
+  const arcsec = meta.scale_known;
+  const relation = (ratio, compared, better, worse, same) => {
+    if (ratio == null || !compared || compared < 2) return '<span class="hint">only session to compare</span>';
+    if (Math.abs(ratio - 1) < 0.005) return `<span class="hint">${esc(same)}</span>`;
+    return `<span class="hint">${esc(ratio > 1 ? worse(ratio) : better(ratio))}</span>`;
+  };
+  const rows = [
+    ["Sky", `${significant(c.sky)} ${arcsec ? "ADU/s/″²" : "ADU/s/px"}`,
+      relation(c.sky_ratio, c.compared?.sky, (r) => `${significant(r, 2)}× your darkest`, (r) => `${significant(r, 2)}× your darkest`, "your darkest")],
+    ["Seeing", c.seeing == null ? "—" : `${significant(c.seeing, 2)}${arcsec ? "″" : " px"} FWHM`,
+      relation(c.seeing_ratio, c.compared?.seeing, (r) => `${significant(r, 2)}× your sharpest`, (r) => `${significant(r, 2)}× your sharpest`, "your sharpest")],
+    ["Starlight", c.starlight_ratio == null ? "—" : `${Math.round(100 * c.starlight_ratio)}%`,
+      relation(c.starlight_ratio, c.compared?.starlight, () => "of your clearest on this object", () => "of your clearest on this object", "your clearest on this object")],
+    ["Trailed frames", meta.trailed_pct == null ? "—" : `${significant(meta.trailed_pct, 2)}%`, ""],
+  ];
+  const score = c.score == null
+    ? '<span class="hint">Needs another session to compare with</span>'
+    : `<span><span class="quality-grade" data-band="${qualityBand(c.score)}">${c.score}</span> <span class="hint">/ 100${c.of > 1 ? ` · ${ordinal(c.rank)} of ${c.of} sessions of this object` : ""}</span></span>`;
+  const modes = Object.entries(QUALITY_MODES).map(([mode, label]) =>
+    `<button type="button" data-quality-mode="${mode}" aria-pressed="${mode === _qualityMode}" title="${esc(QUALITY_MODE_HELP[mode])}">${label}</button>`).join("");
+  return `<div class="quality-block"><div class="quality-block-head"><h4>Conditions</h4>
+      <div class="segmented quality-mode" role="group" aria-label="Session statistic">${modes}</div></div>
+    <div class="quality-summary">${score}</div>
+    <dl class="library-session-facts quality-facts">${rows.map(([label, value, note]) =>
+      `<div><dt>${esc(label)}</dt><dd>${esc(value)}${note ? ` ${note}` : ""}</dd></div>`).join("")}</dl>
+    ${meta.offset_known ? "" : '<p class="quality-status">No camera offset in these headers: sky ratios read smaller than they are.</p>'}
+    <p class="quality-status">${esc(meta.setup || "")}</p></div>`;
+}
+
 function qualitySectionMarkup(object, session) {
   const quality = session.quality;
   if (!quality) return "";
@@ -840,11 +916,13 @@ function qualitySectionMarkup(object, session) {
   const last = frames.at(-1)?.t ? fmtDT(frames.at(-1).t).split(" ")[1] || "" : "";
   const trend = qualityTrend(frames);
   return `<section class="library-quality"><h3 class="section-label">Quality <span class="hint">prototype</span></h3>
-    <div class="quality-summary"><span><span class="quality-grade" data-band="${qualityBand(quality.grade)}">${quality.grade}</span> <span class="hint">/ 100 · ${quality.usable} of ${quality.measured} frames usable${complete ? "" : ` · ${quality.measured} of ${quality.total} graded`}</span></span>${button}</div>
+    ${conditionsMarkup(quality)}
+    <div class="quality-block"><div class="quality-block-head"><h4>Within the night</h4>${button}</div>
+    <div class="quality-summary"><span><span class="quality-grade" data-band="${qualityBand(quality.grade)}">${quality.grade}</span> <span class="hint">/ 100 · ${quality.usable} of ${quality.measured} frames usable${complete ? "" : ` · ${quality.measured} of ${quality.total} graded`}</span></span></div>
     ${trend ? `<p class="hint">${esc(trend)}</p>` : ""}
     ${qualityChart(frames)}
     ${frames.length >= 2 ? `<div class="quality-chart-axis" aria-hidden="true"><span>${esc(first)}</span><span>frame score, first to last</span><span>${esc(last)}</span></div>` : ""}
-    ${status ? `<p class="quality-status">${esc(status)}</p>` : ""}</section>`;
+    ${status ? `<p class="quality-status">${esc(status)}</p>` : ""}</div></section>`;
 }
 
 async function gradeSessionNow(ids) {
@@ -1399,6 +1477,8 @@ export function bindArchive() {
     selectLibrarySession(next, { reveal: true });
   });
   $("#librarySessionRail").addEventListener("click", (e) => {
+    const modeButton = e.target.closest("[data-quality-mode]");
+    if (modeButton) { setQualityMode(modeButton.dataset.qualityMode); return; }
     const gradeButton = e.target.closest("[data-quality-grade]");
     if (gradeButton) {
       const ids = gradeButton.dataset.qualityGrade.split(",").map(Number).filter(Number.isSafeInteger);

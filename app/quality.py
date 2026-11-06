@@ -29,7 +29,7 @@ from . import imglib, paths
 
 log = logging.getLogger("nightseam.quality")
 
-VERSION = 4
+VERSION = 5
 FULL_RES_MAX_SIDE = 4096     # larger frames are measured on their central square
 BOX_VARIANCE = 0.25          # px^2 per axis the 2x2 box filter adds to every star
 BACKGROUND_BOX = 64          # SEP background mesh, measured pixels
@@ -44,8 +44,16 @@ TRAIL_SIGNIFICANCE = 3.0     # ... and the excess must be this many standard err
 ELONGATION_LIMIT = 0.40      # 1 - b/a (b/a 0.6): trailed whatever the rest of the night did
 SIZE_BAD = 1.33              # star size this much larger than the session's best
 STARS_BAD = 0.50             # half the session's usual stars or starlight lost: cloud
-GLOW_BAD = 0.25              # sky 25% brighter than the session's darkest
+NOISE_BAD = 0.25             # background noise 25% above the session's quietest
 UNUSABLE_CAP = 40            # highest score a frame failing any limit gets
+# Comparing sessions (conditions):
+CONDITION_MODES = ("median", "best", "mean")
+BEST_FRACTION = 0.10         # "best" is the mean of a session's best tenth of frames
+SKY_RATIO_BAD = 4.0          # sky 4x the darkest comparable session: full penalty
+SEEING_RATIO_BAD = 1.5       # stars 50% wider than the sharpest comparable session
+STARLIGHT_RATIO_BAD = 0.5    # half the starlight of the clearest comparable session
+TRAILED_SHARE_BAD = 0.5      # half the frames trailed
+CONDITION_WEIGHTS = {"sky": 0.35, "seeing": 0.30, "starlight": 0.20, "trailing": 0.15}
 
 
 class FrameUnreadable(ValueError):
@@ -54,17 +62,20 @@ class FrameUnreadable(ValueError):
 
 # ---------------------------------------------------------------- pixels
 
-def frame_pixels(raw: bytes) -> np.ndarray:
-    """The first image in a FITS file's bytes as a 2-D float32 luminance.
+def read_frame(raw: bytes) -> tuple[np.ndarray, dict]:
+    """The first image in a FITS file's bytes as a 2-D float32 luminance, and
+    the capture setup its header describes (frame_setup).
 
     Handles plain, Rice/tile-compressed (.fz) and gzip FITS. Colour cubes are
-    averaged over their planes; a Bayer mosaic is left as is (binning removes
-    its pattern)."""
+    averaged over their planes; a Bayer mosaic is left as is (the 2x2 box
+    filter folds its pattern). Pixel values are physical ADU (BZERO applied),
+    the same units as the header's camera offset."""
     from astropy.io import fits
     if raw[:2] == b"\x1f\x8b":
         raw = gzip.decompress(raw)
     try:
         with fits.open(io.BytesIO(raw), memmap=False, lazy_load_hdus=True) as hdus:
+            primary = dict(hdus[0].header)
             for hdu in hdus:
                 if getattr(hdu, "is_image", False) and hdu.header.get("NAXIS", 0) >= 2:
                     data = hdu.data
@@ -74,10 +85,67 @@ def frame_pixels(raw: bytes) -> np.ndarray:
                     if data.ndim == 3:
                         data = data.mean(axis=0)
                     if data.ndim == 2 and min(data.shape) >= 32:
-                        return data
+                        # A tile-compressed image keeps its cards on its own
+                        # HDU; anything missing there comes from the primary.
+                        return data, frame_setup({**primary, **dict(hdu.header)})
     except (OSError, ValueError, TypeError) as exc:
         raise FrameUnreadable(f"FITS pixels could not be read: {exc}") from None
     raise FrameUnreadable("No 2-D image found in the file.")
+
+
+def frame_pixels(raw: bytes) -> np.ndarray:
+    return read_frame(raw)[0]
+
+
+def _number(header: dict, *keys) -> float | None:
+    for key in keys:
+        value = header.get(key)
+        if isinstance(value, bool):
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(number):
+            return number
+    return None
+
+
+def frame_setup(header: dict) -> dict:
+    """What turns a frame's numbers into units another session can share.
+
+    exposure: seconds. pedestal: the camera offset in ADU every pixel carries
+    before any light (BIAS, as the Seestar writes it); without it a sky level
+    is offset plus sky and its ratios understate real changes - a Seestar S30
+    frame read 961-986 ADU over a 953 ADU offset, so the sky itself was 8-33.
+    pixel_scale: arcsec per pixel from pixel size, binning and focal length,
+    or from a WCS. setup: instrument, gain, filter and binning - the frames
+    whose sky and starlight rates may be compared directly."""
+    exposure = _number(header, "EXPTIME", "EXPOSURE")
+    pedestal = _number(header, "BIAS")
+    binning = _number(header, "XBINNING") or 1.0
+    pixel_um, focal_mm = _number(header, "XPIXSZ"), _number(header, "FOCALLEN")
+    scale = None
+    if pixel_um and focal_mm and pixel_um > 0 and focal_mm > 0:
+        scale = 206.265 * pixel_um * binning / focal_mm
+    else:
+        degrees = _number(header, "CDELT1", "CD1_1")
+        if degrees:
+            scale = abs(degrees) * 3600.0
+        else:
+            scale = _number(header, "SECPIX", "PIXSCALE", "SCALE")
+    if scale is not None and not 0.01 < scale < 3600:
+        scale = None
+    instrument = str(header.get("INSTRUME") or header.get("TELESCOP") or "").strip()
+    gain = _number(header, "GAIN")
+    setup = " | ".join([instrument or "unknown camera",
+                        f"gain {gain:g}" if gain is not None else "gain ?",
+                        str(header.get("FILTER") or "no filter").strip(),
+                        f"bin {binning:g}"])
+    from .ingest import is_stack
+    return {"exposure": exposure if exposure and exposure > 0 else None,
+            "pedestal": pedestal, "pixel_scale": scale, "setup": setup,
+            "stacked": is_stack(header, "")}
 
 
 def _box2(data: np.ndarray) -> np.ndarray:
@@ -209,7 +277,34 @@ def measure(data: np.ndarray) -> dict:
 
 
 def measure_file_bytes(raw: bytes) -> dict:
-    return measure(frame_pixels(raw))
+    """measure() of a FITS file's bytes, with its capture setup attached.
+
+    A stacked image (its header counts several combined frames) is not a
+    single exposure and is not measured: `skipped` says why. Such files sit
+    in lights/ when stacking software saved them there."""
+    data, setup = read_frame(raw)
+    if setup.pop("stacked"):
+        return {**setup, "skipped": "Stacked image, not a single exposure."}
+    return {**measure(data), **setup}
+
+
+def frame_rates(f: dict) -> dict:
+    """A measured frame in units sessions can share (None where unknown).
+
+    sky_rate: sky above the camera offset per second per square arcsecond
+    (per pixel when the scale is unknown). seeing: star FWHM in arcseconds -
+    twice the half-flux radius for a Gaussian star, measured across any
+    trail. starlight_rate: the brightest stars' summed flux per second."""
+    exposure, scale = f.get("exposure"), f.get("pixel_scale")
+    area = scale * scale if scale else 1.0
+    sky = starlight = seeing = None
+    if exposure and f.get("background") is not None:
+        sky = max(0.0, f["background"] - (f.get("pedestal") or 0.0)) / exposure / area
+    if exposure and f.get("signal"):
+        starlight = f["signal"] / exposure
+    if f.get("star_size"):
+        seeing = 2.0 * f["star_size"] * (scale or 1.0)
+    return {"sky_rate": sky, "seeing": seeing, "starlight_rate": starlight}
 
 
 # ---------------------------------------------------------------- grading
@@ -240,7 +335,7 @@ def session_summary(frames: list[dict], total: int) -> dict:
     The session grade is the mean frame score; usable counts the frames that
     fail none of the limits."""
     summary = {"version": VERSION, "total": total, "measured": len(frames),
-               "grade": None, "usable": 0, "frames": []}
+               "grade": None, "usable": 0, "frames": [], "conditions": None}
     usable_frames = [f for f in frames if f.get("star_size")]
     if not usable_frames:
         summary["frames"] = [{"id": f["id"], "t": f.get("date_obs"), "score": 0,
@@ -250,7 +345,10 @@ def session_summary(frames: list[dict], total: int) -> dict:
         return summary
     sizes = np.array([f["star_size"] for f in usable_frames])
     stars = np.array([f["stars"] or 0 for f in frames], dtype=float)
-    glows = np.array([f["background"] for f in frames if f.get("background") is not None], dtype=float)
+    noises = np.array([f["noise"] for f in frames if f.get("noise")], dtype=float)
+    ref_noise = float(np.percentile(noises, 10)) if len(noises) else None
+    skies = np.array([_sky(f) for f in frames if _sky(f) is not None], dtype=float)
+    ref_sky = float(np.percentile(skies, 10)) if len(skies) else None
     ref_size = float(np.percentile(sizes, 20))
     elongations = np.array([f["elongation"] for f in usable_frames], dtype=float)
     ref_elongation = float(np.percentile(elongations, 20))
@@ -259,7 +357,6 @@ def session_summary(frames: list[dict], total: int) -> dict:
     ref_stars = max(1.0, float(np.percentile(stars, 80)))
     signals = np.array([f.get("signal") or 0.0 for f in frames], dtype=float)
     ref_signal = float(np.percentile(signals, 80)) if signals.any() else 0.0
-    ref_glow = float(np.percentile(glows, 10)) if len(glows) else None
     scores = []
     for f in frames:
         reasons = []
@@ -293,13 +390,18 @@ def session_summary(frames: list[dict], total: int) -> dict:
             cloud_pen = max(cloud_pen, _clamp((1 - signal_ratio) / STARS_BAD))
         if cloud_pen >= 1:
             reasons.append("cloud or haze")
+        # A brighter sky costs a frame only through the noise it adds: with a
+        # camera whose own read noise dominates (a Seestar S30: ~42 ADU noise
+        # over 8-33 ADU of sky) the sky can double at almost no cost. So the
+        # penalty follows the noise; the sky level itself is reported.
         glow_pen = 0.0
-        glow_pct = None
-        if ref_glow and f.get("background") is not None and ref_glow > 0:
-            glow_pct = 100 * (f["background"] / ref_glow - 1)
-            glow_pen = _clamp((f["background"] / ref_glow - 1) / GLOW_BAD)
+        if ref_noise and f.get("noise"):
+            glow_pen = _clamp((f["noise"] / ref_noise - 1) / NOISE_BAD)
             if glow_pen >= 1:
-                reasons.append("bright sky")
+                reasons.append("bright, noisy sky")
+        glow_pct = None
+        if ref_sky and _sky(f) is not None:
+            glow_pct = 100 * (_sky(f) / ref_sky - 1)
         score = 100 * (1 - (0.3 * size_pen + 0.3 * trail_pen + 0.3 * cloud_pen + 0.1 * glow_pen))
         if reasons:                 # a frame that fails a limit never reads as fair
             score = min(score, UNUSABLE_CAP)
@@ -316,7 +418,140 @@ def session_summary(frames: list[dict], total: int) -> dict:
             "sky_glow_pct": None if glow_pct is None else round(glow_pct, 1)})
     summary["grade"] = int(round(sum(scores) / len(scores)))
     summary["usable"] = sum(1 for frame in summary["frames"] if frame["usable"])
+    summary["conditions"] = session_conditions(frames, summary["frames"])
     return summary
+
+
+def _sky(f: dict) -> float | None:
+    """Sky above the camera offset, in the frame's own ADU."""
+    if f.get("background") is None:
+        return None
+    return max(0.0, f["background"] - (f.get("pedestal") or 0.0))
+
+
+def _statistic(values: list[float], mode: str, higher_is_better: bool) -> float | None:
+    """One session's value: its median frame, its mean, or its best tenth."""
+    values = [v for v in values if v is not None and np.isfinite(v)]
+    if not values:
+        return None
+    if mode == "median":
+        return float(np.median(values))
+    if mode == "mean":
+        return float(np.mean(values))
+    ordered = sorted(values, reverse=higher_is_better)
+    return float(np.mean(ordered[:max(1, int(np.ceil(len(ordered) * BEST_FRACTION)))]))
+
+
+def session_conditions(frames: list[dict], graded: list[dict]) -> dict:
+    """A session's conditions in units other sessions share, per statistic.
+
+    For each of median, best (mean of the best BEST_FRACTION of frames) and
+    mean: sky rate, seeing, starlight rate and elongation, plus the share of
+    trailed frames. setup names the camera/gain/filter/binning most frames
+    used; offset_known and scale_known say whether every frame carried a
+    camera offset and a pixel scale (the sky rate is only physical when the
+    offset is known)."""
+    setups = [f.get("setup") for f in frames if f.get("setup")]
+    setup = max(set(setups), key=setups.count) if setups else None
+    # Only frames in the session's main setup share its units: a stack saved
+    # into lights/ by stacking software, or a frame from a second camera,
+    # would mix other exposures, offsets and scales into the session's value.
+    same = [f for f in frames if f.get("setup") == setup] if setup else []
+    others = len(frames) - len(same)
+    rates = [frame_rates(f) for f in same]
+    graded_by_id = {g["id"]: g for g in graded}
+    trailed = sum(1 for f in same if "trailed" in (graded_by_id.get(f["id"], {}).get("reason") or ""))
+    result = {
+        "setup": setup,
+        "frames": len(same),
+        "other_setups": others,
+        "offset_known": bool(same) and all(f.get("pedestal") is not None for f in same),
+        "scale_known": bool(same) and all(f.get("pixel_scale") for f in same),
+        "trailed_pct": round(100 * trailed / len(same), 1) if same else None,
+        "modes": {},
+    }
+    for mode in CONDITION_MODES:
+        result["modes"][mode] = {
+            "sky": _statistic([r["sky_rate"] for r in rates], mode, False),
+            "seeing": _statistic([r["seeing"] for r in rates], mode, False),
+            "starlight": _statistic([r["starlight_rate"] for r in rates], mode, True),
+            "elongation": _statistic([f.get("elongation") for f in same], mode, False),
+        }
+    return result
+
+
+def compare_sessions(entries: list[tuple[str, dict]]) -> None:
+    """Rank sessions against each other in place: (object key, quality).
+
+    Each comparable measure is set against the best session that shares its
+    units - sky by setup (camera offset removed, per second and arcsec^2),
+    seeing in arcseconds across every setup with a known pixel scale (else by
+    setup, in pixels), starlight by object AND setup (other targets have other
+    stars). A session alone in a group is not compared on that measure. The
+    conditions score combines the compared measures with the share of trailed
+    frames; it stays empty until something could be compared. rank/of order
+    an object's scored sessions."""
+    for mode in CONDITION_MODES:
+        groups: dict[tuple, list[dict]] = {}
+        rows = []
+        for object_key, quality in entries:
+            conditions = (quality or {}).get("conditions")
+            if not conditions or not conditions.get("setup"):
+                continue
+            values = conditions["modes"][mode]
+            row = {"object": object_key, "conditions": conditions, "values": values, "out": {}}
+            rows.append(row)
+            setup = conditions["setup"]
+            seeing_group = ("seeing", "arcsec") if conditions["scale_known"] else ("seeing", setup)
+            for measure, group in (("sky", ("sky", setup)), ("seeing", seeing_group),
+                                   ("starlight", ("starlight", object_key, setup))):
+                if values.get(measure) is not None:
+                    groups.setdefault(group, []).append(row)
+                    row["out"][measure] = group
+        references = {}
+        for group, members in groups.items():
+            measure = group[0]
+            numbers = [m["values"][measure] for m in members]
+            references[group] = (max(numbers) if measure == "starlight" else min(numbers), len(members))
+        for row in rows:
+            values, conditions = row["values"], row["conditions"]
+            out = {"sky": values["sky"], "seeing": values["seeing"], "starlight": values["starlight"],
+                   "elongation": values["elongation"], "compared": {}}
+            penalties, weights = 0.0, 0.0
+            for measure, group in row["out"].items():
+                reference, members = references[group]
+                if not reference:
+                    continue
+                ratio = values[measure] / reference
+                out[f"{measure}_ratio"] = round(ratio, 3)
+                out["compared"][measure] = members
+                if members < 2:
+                    continue
+                if measure == "sky":
+                    penalty = _clamp(np.log2(max(ratio, 1.0)) / np.log2(SKY_RATIO_BAD))
+                elif measure == "seeing":
+                    penalty = _clamp((ratio - 1) / (SEEING_RATIO_BAD - 1))
+                else:
+                    penalty = _clamp((1 - ratio) / (1 - STARLIGHT_RATIO_BAD))
+                penalties += CONDITION_WEIGHTS[measure] * penalty
+                weights += CONDITION_WEIGHTS[measure]
+            score = None
+            if weights:
+                trail = _clamp((conditions.get("trailed_pct") or 0) / 100 / TRAILED_SHARE_BAD)
+                penalties += CONDITION_WEIGHTS["trailing"] * trail
+                weights += CONDITION_WEIGHTS["trailing"]
+                score = int(round(100 * (1 - penalties / weights)))
+            out["score"] = score
+            conditions["modes"][mode] = out
+            row["result"] = out
+        by_object: dict[str, list[dict]] = {}
+        for row in rows:
+            if row["result"]["score"] is not None:
+                by_object.setdefault(row["object"], []).append(row["result"])
+        for scored in by_object.values():
+            scored.sort(key=lambda r: -r["score"])
+            for position, result in enumerate(scored, 1):
+                result["rank"], result["of"] = position, len(scored)
 
 
 def attach_session_quality(objects: list[dict], measurements: dict[int, dict],
@@ -325,27 +560,37 @@ def attach_session_quality(objects: list[dict], measurements: dict[int, dict],
 
     `digests` maps image id to its stored content digest: the public library
     records leave digests out, and a measurement counts only for the bytes
-    it was made from."""
+    it was made from. Sessions are then compared across the library."""
+    from .database import FRAME_QUALITY_MEASURES
+    entries = []
     for obj in objects:
+        object_key = obj.get("object_id") or "u:" + imglib.name_key(obj.get("name") or "")
         by_id = {image["id"]: image for image in obj.get("images", []) if image.get("id") is not None}
         for session in obj.get("sessions", []):
-            lights = [by_id[i] for i in session.get("image_ids", []) if i in by_id and is_gradable(by_id[i])]
+            lights = []
+            for i in session.get("image_ids", []):
+                if i not in by_id or not is_gradable(by_id[i]):
+                    continue
+                row = measurements.get(i)
+                # A stack filed under lights/ is no exposure of this night.
+                if fresh({"content_sha256": digests.get(i)}, row) and row["status"] == "skipped":
+                    continue
+                lights.append(by_id[i])
             measured = []
             for image in lights:
                 row = measurements.get(image["id"])
                 if not fresh({"content_sha256": digests.get(image["id"])}, row):
                     continue
-                if row["status"] == "ok":
-                    measured.append({"id": image["id"], "date_obs": image.get("date_obs"),
-                                     **{key: row.get(key) for key in ("background", "noise", "stars", "signal",
-                                                                      "star_size", "elongation",
-                                                                      "elongation_err")}})
-                else:
-                    measured.append({"id": image["id"], "date_obs": image.get("date_obs"),
-                                     "background": None, "noise": None, "stars": 0, "signal": 0.0,
-                                     "star_size": None, "elongation": None, "elongation_err": None})
+                values = {key: row.get(key) for key in FRAME_QUALITY_MEASURES}
+                if row["status"] != "ok":
+                    values.update(background=None, noise=None, stars=0, signal=0.0,
+                                  star_size=None, elongation=None, elongation_err=None)
+                measured.append({"id": image["id"], "date_obs": image.get("date_obs"), **values})
             measured.sort(key=lambda f: (f["date_obs"] is None, f["date_obs"] or ""))
             session["quality"] = session_summary(measured, len(lights)) if lights else None
+            if session["quality"] and session["quality"].get("conditions"):
+                entries.append((object_key, session["quality"]))
+    compare_sessions(entries)
 
 
 # ---------------------------------------------------------------- worker

@@ -348,13 +348,30 @@ included (tests/test_session_quality.py).
 Rows live in the discardable `frame_quality` table, keyed to the image's
 `content_sha256` and `quality.VERSION`; anything else is re-measured.
 
-A session's grade is the mean frame score. Each frame is compared with the
-session's own best (star size, elongation, star count and starlight, sky
-glow). Trailed means elongation at least 0.10 above the night's roundest
-frames (b/a about 10% lower) and at least three standard errors clear of
-the measurement noise, or 1 - b/a of 0.40 outright. A frame failing any
-limit is unusable and scores at most 40. Stacks and calibration frames are
-never graded.
+A session's grade (within the night) is the mean frame score. Each frame is
+compared with the session's own best (star size, elongation, star count and
+starlight, background noise). Trailed means elongation at least 0.10 above
+the night's roundest frames (b/a about 10% lower) and at least three
+standard errors clear of the measurement noise, or 1 - b/a of 0.40
+outright. A brighter sky costs a frame only through the noise it adds (a
+Seestar S30's read noise of ~42 ADU swamps 8-33 ADU of sky). A frame failing
+any limit is unusable and scores at most 40. Stacks and calibration frames
+are never graded; a stacked image filed under lights/ (NCOMBINE or STACKCNT
+above 1) is stored as `skipped` and counts nowhere.
+
+Sessions are compared in shared units read from the FITS header
+(`frame_setup`, `frame_rates`): sky = (background - BIAS camera offset) per
+second per arcsec^2, seeing = 2 x HFR x pixel scale (arcsec FWHM), starlight
+= the brightest stars' flux per second. Pixel scale comes from XPIXSZ,
+XBINNING and FOCALLEN, or a WCS. Only frames in a session's main setup
+(instrument, gain, filter, binning) count. Per session each measure is
+summarised as median, best (mean of the best tenth) or mean, and
+`compare_sessions` sets it against the best session sharing its units: sky
+by setup, seeing across all setups with a known scale, starlight by object
+and setup. The conditions score weighs sky 0.35, seeing 0.30, starlight
+0.20 and the share of trailed frames 0.15 over the measures that had another
+session to compare with; a session with none has no score. Without a BIAS
+card the sky still ranks within a setup but its ratios read low.
 
 `QualityWorker` runs only in the application (`create_app(...,
 background_quality=True)` from main.py; tests never start it). It measures

@@ -18,7 +18,7 @@
   lacked the new session quality that the Library route carries. With the
   export fixed, those modules ran 137 passed. check_js and the encoding guard
   passed.
-- Real night (November 6, 2026): a 298-frame Seestar S50 Veil Nebula session
+- Real night (November 6, 2026): a 298-frame Seestar S30 Veil Nebula session
   (1920x1080, GRBG) read in place, compared with StackingWizard's grades for
   the same 296 frames. The first version missed all 42 frames StackingWizard
   called trailed: binning left the small stars too few pixels. Measuring at
@@ -46,6 +46,24 @@
   41 shared). The 14 extra frames add 0.10-0.17 elongation at 4-7 standard
   errors: StackingWizard kept them with its lowest grades. The full source
   suite ran 1114 passed and 5 skipped; check_js and the encoding guard passed.
+- Sessions compare across the library (VERSION 5). Each frame's header gives
+  exposure, camera offset (BIAS), pixel scale and setup, so sky becomes ADU
+  per second per arcsec^2 above the offset, seeing arcseconds FWHM and
+  starlight flux per second. A Conditions score ranks each session against
+  the best session sharing those units (sky by setup, seeing across setups,
+  starlight per object), with a Median/Best/Mean toggle; the within-night
+  grade stays as its own block. Within a night, a brighter sky now costs a
+  frame only through added noise: the Seestar S30's sky sits 8-33 ADU over a
+  953 ADU offset, so raw-level percentages (ours and StackingWizard's) hid a
+  roughly threefold change. Stacked images filed under lights/ are skipped.
+  The Veil night (296 frames, two StackingWizard stacks skipped) reads sky
+  0.073 ADU/s/arcsec^2 and seeing 9.1" FWHM on the median. In a scratch
+  preview a moonlit night of the same object scored 50 on conditions (sky
+  4.2x the darkest) while its within-night grade stayed 97. The full source
+  suite ran 1122 passed, 5 skipped and 1 failed: the intermittent
+  test_teardown_owns_descendants_after_the_launcher_exits already recorded
+  in BUGS.md; test_browser_gate.py then ran 15 of 15 on its own. check_js
+  and the encoding guard passed.
 
 ## Unreleased
 

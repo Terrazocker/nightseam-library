@@ -95,10 +95,10 @@ def test_measure_survives_an_empty_sky():
 
 # ---------------------------------------------------------------- grading
 
-def _frame(i, size=2.9, elong=0.05, stars=150, bg=1000.0, err=0.015):
+def _frame(i, size=2.9, elong=0.05, stars=150, bg=1000.0, err=0.015, noise=6.0, **extra):
     return {"id": i, "date_obs": f"2026-08-22T{20 + i // 60:02d}:{i % 60:02d}:00",
-            "background": bg, "noise": 6.0, "stars": stars, "star_size": size, "elongation": elong,
-            "elongation_err": err}
+            "background": bg, "noise": noise, "stars": stars, "star_size": size, "elongation": elong,
+            "elongation_err": err, **extra}
 
 
 def test_steady_session_grades_high_and_every_frame_is_usable():
@@ -109,16 +109,117 @@ def test_steady_session_grades_high_and_every_frame_is_usable():
 
 def test_deteriorating_session_flags_trailed_soft_cloudy_and_bright_frames():
     frames = [_frame(i) for i in range(8)]
-    frames += [_frame(8, elong=0.55), _frame(9, size=4.2), _frame(10, stars=40), _frame(11, bg=1400)]
+    frames += [_frame(8, elong=0.55), _frame(9, size=4.2), _frame(10, stars=40),
+               _frame(11, bg=1400, noise=8.0)]
     summary = quality.session_summary(frames, 14)
     reasons = {f["id"]: f["reason"] for f in summary["frames"]}
     assert reasons[8] == "trailed stars"
     assert reasons[9] == "soft stars"
     assert reasons[10] == "cloud or haze"
-    assert reasons[11] == "bright sky"
+    assert reasons[11] == "bright, noisy sky"
     assert summary["usable"] == 8 and summary["measured"] == 12 and summary["total"] == 14
     assert summary["grade"] < quality.session_summary([_frame(i) for i in range(8)], 8)["grade"]
     assert summary["frames"][11]["sky_glow_pct"] == pytest.approx(40.0)
+
+
+def test_sky_glow_is_measured_above_the_camera_offset_and_costs_only_through_noise():
+    """A Seestar S30 sits 8-33 ADU of sky over a 953 ADU offset, read noise
+    ~42 ADU: the sky can triple while the noise barely moves."""
+    frames = [_frame(i, bg=963.0, noise=42.0, pedestal=953.0) for i in range(8)]
+    frames.append(_frame(8, bg=983.0, noise=42.5, pedestal=953.0))
+    summary = quality.session_summary(frames, 9)
+    late = summary["frames"][8]
+    assert late["sky_glow_pct"] == pytest.approx(200.0)        # 30 over 10 ADU of sky, not +2%
+    assert late["usable"] and late["score"] > 90
+
+
+# ---------------------------------------------------------------- comparing sessions
+
+SEESTAR = {"INSTRUME": "Seestar S30", "TELESCOP": "S30_9934000d", "EXPTIME": 20.0, "GAIN": 200,
+           "XPIXSZ": 2.9, "XBINNING": 1, "FOCALLEN": 150.0, "FILTER": "LP", "BIAS": 953}
+
+
+def test_frame_setup_reads_offset_scale_and_setup_from_the_header():
+    setup = quality.frame_setup(SEESTAR)
+    assert setup["exposure"] == 20.0 and setup["pedestal"] == 953
+    assert setup["pixel_scale"] == pytest.approx(3.988, abs=0.001)      # 206.265 * 2.9 / 150
+    assert setup["setup"] == "Seestar S30 | gain 200 | LP | bin 1"
+    wcs = quality.frame_setup({"CDELT1": -0.0005, "EXPTIME": 60})
+    assert wcs["pixel_scale"] == pytest.approx(1.8) and wcs["pedestal"] is None
+    measured = quality.measure_file_bytes(fits_bytes(star_field(), **SEESTAR))
+    assert measured["setup"] == "Seestar S30 | gain 200 | LP | bin 1" and measured["pedestal"] == 953
+
+
+def test_frame_rates_are_per_second_and_square_arcsecond_above_the_offset():
+    frame = {"background": 983.0, "pedestal": 953.0, "exposure": 20.0, "pixel_scale": 4.0,
+             "signal": 2000.0, "star_size": 1.1}
+    rates = quality.frame_rates(frame)
+    assert rates["sky_rate"] == pytest.approx(30 / 20 / 16)
+    assert rates["starlight_rate"] == pytest.approx(100.0)
+    assert rates["seeing"] == pytest.approx(8.8)                     # FWHM = 2 HFR, in arcsec
+
+
+def _session(sky, seeing_px=1.1, signal=2000.0, n=10, setup="S30 | gain 200 | LP | bin 1", trailed=0,
+             scale=4.0, outlier=None):
+    frames = [_frame(i, bg=953.0 + sky * 20 * scale * scale, noise=42.0, size=seeing_px, signal=signal,
+                     pedestal=953.0, exposure=20.0, pixel_scale=scale, setup=setup,
+                     elong=0.6 if i < trailed else 0.1) for i in range(n)]
+    if outlier is not None:
+        frames[-1] = {**frames[-1], "background": 953.0 + outlier * 20 * scale * scale}
+    return quality.session_summary(frames, n)
+
+
+def test_sessions_of_one_setup_are_ranked_on_a_shared_scale():
+    perfect = _session(sky=0.10)
+    full_moon = _session(sky=0.40, signal=1500.0)
+    alone = _session(sky=0.20, setup="ASI2600 | gain 100 | L | bin 1", scale=1.0)
+    quality.compare_sessions([("m31", perfect), ("m31", full_moon), ("m42", alone)])
+    good, bright = perfect["conditions"]["modes"]["median"], full_moon["conditions"]["modes"]["median"]
+    assert bright["sky_ratio"] == pytest.approx(4.0) and good["sky_ratio"] == pytest.approx(1.0)
+    assert bright["starlight_ratio"] == pytest.approx(0.75)
+    assert good["score"] > bright["score"]
+    assert (good["rank"], good["of"], bright["rank"]) == (1, 2, 2)
+    # Seeing compares across setups in arcseconds; sky and starlight never do.
+    lone = alone["conditions"]["modes"]["median"]
+    assert lone["compared"]["seeing"] == 3 and lone["compared"]["sky"] == 1
+    assert lone["seeing"] == pytest.approx(2.2)          # 2 x 1.1 px x 1.0"/px
+    assert lone["seeing_ratio"] == pytest.approx(1.0)    # the sharpest of all three
+    assert good["seeing_ratio"] == pytest.approx(4.0)    # 8.8" against 2.2"
+    assert lone["score"] == 100                          # nothing else it can be compared on
+
+
+def test_conditions_use_only_the_sessions_main_setup():
+    """A StackingWizard stack saved into lights/ has no camera offset."""
+    frames = [_frame(i, bg=963.0, noise=42.0, pedestal=953.0, exposure=20.0, pixel_scale=4.0,
+                     setup="S30 | gain 200 | LP | bin 1") for i in range(9)]
+    frames.append(_frame(9, bg=5000.0, noise=10.0, exposure=4980.0, setup="unknown camera | gain ? | LP | bin 1"))
+    conditions = quality.session_summary(frames, 10)["conditions"]
+    assert conditions["offset_known"] and conditions["frames"] == 9 and conditions["other_setups"] == 1
+    assert conditions["modes"]["mean"]["sky"] == pytest.approx(10 / 20 / 16)
+
+
+def test_a_session_with_nothing_to_compare_gets_no_conditions_score():
+    only = _session(sky=0.10)
+    quality.compare_sessions([("m31", only)])
+    assert only["conditions"]["modes"]["median"]["score"] is None
+
+
+def test_best_median_and_mean_differ_with_an_outlier():
+    clean = _session(sky=0.10)
+    spoiled = _session(sky=0.10, outlier=2.0)            # one frame under a passing car's lights
+    quality.compare_sessions([("m31", clean), ("m31", spoiled)])
+    modes = spoiled["conditions"]["modes"]
+    assert modes["median"]["sky_ratio"] == pytest.approx(1.0)
+    assert modes["best"]["sky_ratio"] == pytest.approx(1.0)
+    assert modes["mean"]["sky_ratio"] == pytest.approx(2.9)
+    assert modes["mean"]["score"] < modes["median"]["score"]
+
+
+def test_trailed_frames_lower_the_conditions_score():
+    steady, windy = _session(sky=0.10), _session(sky=0.10, trailed=5)
+    quality.compare_sessions([("m31", steady), ("m31", windy)])
+    assert windy["conditions"]["trailed_pct"] == 50.0
+    assert windy["conditions"]["modes"]["median"]["score"] < steady["conditions"]["modes"]["median"]["score"]
 
 
 def test_trailing_is_a_visible_and_significant_excess_over_the_nights_roundest():
@@ -217,6 +318,25 @@ def test_worker_measures_lights_and_skips_other_classes(library):
     assert worker.measure_one(stack) == "skipped"
     rows = db.frame_quality()
     assert set(rows) == {light} and rows[light]["status"] == "ok" and rows[light]["stars"] > 100
+
+
+def test_stacked_images_in_lights_are_skipped_not_graded(library):
+    """StackingWizard saves NCOMBINE-tagged masters; filed under lights/ they
+    must not count as frames of the night."""
+    db, _, add = library
+    single = add("single.fit", fits_bytes(star_field(), **SEESTAR))
+    stack_header = {key: value for key, value in SEESTAR.items() if key != "BIAS"}
+    stacked = add("NGC_6960_wizardstack_249f.fits", fits_bytes(star_field(seed=3), NCOMBINE=249, **stack_header))
+    worker = quality.QualityWorker(db)
+    assert worker.measure_one(single) == "ok" and worker.measure_one(stacked) == "ok"
+    rows = db.frame_quality()
+    assert rows[stacked]["status"] == "skipped" and "Stacked" in rows[stacked]["error"]
+    images = db.images()
+    objects = [{"images": images, "sessions": [{"image_ids": [single, stacked]}]}]
+    quality.attach_session_quality(objects, rows, {i["id"]: i["content_sha256"] for i in images})
+    summary = objects[0]["sessions"][0]["quality"]
+    assert summary["total"] == 1 and summary["measured"] == 1
+    assert summary["conditions"]["offset_known"]
 
 
 def test_worker_records_unreadable_and_missing_frames(library):

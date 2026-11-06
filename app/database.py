@@ -199,6 +199,10 @@ CREATE TABLE IF NOT EXISTS frame_quality (
     star_size REAL,
     elongation REAL,
     elongation_err REAL,
+    exposure REAL,
+    pedestal REAL,
+    pixel_scale REAL,
+    setup TEXT,
     error TEXT,
     measured_at TEXT NOT NULL
 );
@@ -216,6 +220,12 @@ CREATE TABLE IF NOT EXISTS advanced_objects (
     popularity INTEGER DEFAULT 0
 );
 """
+
+
+# Per-frame session-quality measures stored in frame_quality, in column order.
+FRAME_QUALITY_MEASURES = ("background", "noise", "stars", "signal", "star_size",
+                          "elongation", "elongation_err", "exposure", "pedestal",
+                          "pixel_scale", "setup")
 
 
 def normalize_session_date_obs(value) -> str | None:
@@ -331,14 +341,14 @@ class Database:
                 self.conn.execute(f"ALTER TABLE images ADD COLUMN {column} {kind}")
             except sqlite3.OperationalError:
                 pass
-        try:  # migration: session-quality prototype tables made before `signal`
-            self.conn.execute("ALTER TABLE frame_quality ADD COLUMN signal REAL")
-        except sqlite3.OperationalError:
-            pass
-        try:  # migration: ... and before `elongation_err`
-            self.conn.execute("ALTER TABLE frame_quality ADD COLUMN elongation_err REAL")
-        except sqlite3.OperationalError:
-            pass
+        # migration: session-quality prototype tables made before later measures
+        for column, kind in (("signal", "REAL"), ("elongation_err", "REAL"),
+                             ("exposure", "REAL"), ("pedestal", "REAL"),
+                             ("pixel_scale", "REAL"), ("setup", "TEXT")):
+            try:
+                self.conn.execute(f"ALTER TABLE frame_quality ADD COLUMN {column} {kind}")
+            except sqlite3.OperationalError:
+                pass
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_images_content_sha256 "
             "ON images(content_sha256)")
@@ -1018,16 +1028,18 @@ class Database:
                           version: int, metrics: dict | None, error: str | None = None):
         """Store one frame's measurement, or the reason it could not be measured."""
         metrics = metrics or {}
+        status = "error" if error else "skipped" if metrics.get("skipped") else "ok"
+        error = error or metrics.get("skipped")
+        columns = ("image_id", "content_sha256", "version", "status", *FRAME_QUALITY_MEASURES,
+                   "error", "measured_at")
+        values = (image_id, content_sha256, version, status,
+                  *(metrics.get(name) for name in FRAME_QUALITY_MEASURES), error,
+                  datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S"))
         with self.lock:
             with self.conn:
                 self.conn.execute(
-                    "INSERT OR REPLACE INTO frame_quality (image_id, content_sha256, version, "
-                    "status, background, noise, stars, signal, star_size, elongation, elongation_err, error, measured_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (image_id, content_sha256, version, "error" if error else "ok",
-                     metrics.get("background"), metrics.get("noise"), metrics.get("stars"), metrics.get("signal"),
-                     metrics.get("star_size"), metrics.get("elongation"), metrics.get("elongation_err"), error,
-                     datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")))
+                    f"INSERT OR REPLACE INTO frame_quality ({','.join(columns)}) "
+                    f"VALUES ({','.join('?' * len(columns))})", values)
 
     def image(self, img_id: int) -> dict | None:
         with self.lock:
