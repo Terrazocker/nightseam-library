@@ -1,6 +1,44 @@
 # Independent catalog release record
 
-## 0.2.2 — November 6, 2026
+## Faster same-size imports development — November 7, 2026
+
+- Duplicate checks compare leading bytes before hashing. A same-size archived
+  file whose first 64 KiB (FITS header with its capture time, then the first
+  pixels' noise) differ from the upload's cannot be a duplicate, which is
+  proven from current bytes without trusting any stored hash. Only files whose
+  leading bytes match, or cannot be read, are hashed in full, as before. With
+  400 archived Seestar-sized frames (4.1 MB, all one size), importing 96 more
+  read 120 MB of archive instead of 1.66 GB (hash cache cold) or 7.6 GB (cache
+  unavailable, as on drives without a change journal), in 3.7 s instead of
+  7.7 s or 13.0 s.
+- Upload batches overlap. The browser sends the next batch while the current
+  one is processed; the server receives and stages it meanwhile and publishes
+  it only after the current one has finished. If a batch ends with a refusal
+  or an unconfirmed or unattempted file, the next batch of that import
+  publishes nothing. 288 frames in three 96-file batches: about 10.0 s instead
+  of 11.7-12.8 s. Stage preparation also no longer lists the archive root for
+  every file.
+- Each step of a file's path measured 0.6-3.3 GB/s on its own (multipart
+  parsing, HTTP body, CNG SHA-256, writes), so no single step under Python's
+  lock limits uploads; a compiled parser or hashing processes were therefore
+  not added. A file-change watcher for drives without a change journal was not
+  added either: such drives now read 64 KiB per candidate instead of whole
+  files.
+- Validation (November 7, 2026): 11 new tests. Leading bytes: new same-size
+  exposures are never hashed and each candidate's leading bytes are read once
+  per request; true duplicates are still found and rehashed; identical leading
+  bytes with another tail are hashed and imported; an archived file rewritten
+  with its mtime restored is judged by its current bytes; unreadable leading
+  bytes fall back to hashing; turning the comparison off restores full
+  hashing. Queue (real HTTP server): the next request stages while the current
+  one publishes and publishes after it; a failed request stops the next one of
+  its import but not another import; at most one import waits ahead. Stage
+  sweep: once a minute per archive. Tests that measure the full-hash path now
+  set `_LEAD_BYTES = 0`. The full source suite ran 1134 passed and 5 skipped;
+  the queue tests passed five repeated runs. check_js and the encoding guard
+  passed. Timings come from private scratch archives on this machine with the
+  files in the OS cache: a cold disk would widen the first gain. Not yet
+  measured in a packaged build, from a real browser, or on Linux.
 
 Stacked images get their own folder, every capture session shows the Moon,
 and a first version of session quality grading arrives as a prototype.

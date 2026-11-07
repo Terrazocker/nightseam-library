@@ -11,7 +11,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections import deque
+from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import wraps
@@ -213,6 +213,51 @@ class HealthAcknowledgementIn(BaseModel):
     confirmed: Literal[True]
 
 
+class ImportQueue:
+    """Imports in arrival order: one publishes while the next may already
+    receive and stage its files.
+
+    The next import takes no ingest worker, prepares no pinned index and
+    publishes nothing until the one before it has completely finished (its
+    index closed, its lease released). Staging only writes stage files and
+    hashes the upload, so the browser's next batch arrives while the current
+    one publishes instead of after it. At most one import waits ahead.
+
+    A run (one import action's run_id) whose request ended with a refusal or
+    an unconfirmed or unattempted file is remembered as failed: its later
+    requests, already sent, publish nothing - as if the browser had stopped
+    sending, which it does after such a response.
+    """
+    WAITING_AHEAD = 1
+    REMEMBERED_RUNS = 64
+
+    def __init__(self):
+        self.slots = asyncio.Semaphore(1 + self.WAITING_AHEAD)
+        self.last_done = None
+        self.failed_runs = OrderedDict()
+
+    async def enter(self):
+        """(previous import's done event or None, this import's done event)."""
+        await self.slots.acquire()
+        previous, done = self.last_done, asyncio.Event()
+        self.last_done = done
+        return previous, done
+
+    def leave(self, done):
+        done.set()
+        self.slots.release()
+
+    def fail(self, run):
+        if run:
+            self.failed_runs[run] = True
+            self.failed_runs.move_to_end(run)
+            while len(self.failed_runs) > self.REMEMBERED_RUNS:
+                self.failed_runs.popitem(last=False)
+
+    def failed(self, run):
+        return bool(run) and run in self.failed_runs
+
+
 # ------------------------------------------------------------------ factory
 
 def create_app(db: Database, background_quality: bool = False) -> FastAPI:
@@ -236,7 +281,7 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
 
     grader = session_quality.QualityWorker(db, busy=archive_busy)
     ingest_workers =asyncio.Semaphore(max(1, min(24, os.cpu_count() or 1)))
-    ingest_admission = asyncio.Lock()
+    import_queue = ImportQueue()
     resolver_lock = threading.Lock()
     resolver_cache = None
 
@@ -529,11 +574,17 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
 
     def serialize_ingest(function):
         @wraps(function)
-        async def admitted(*args, **kwargs):
-            # Wait asynchronously before a request starts pinning archive files;
-            # queued imports must not occupy all filesystem executor workers.
-            async with ingest_admission:
-                return await function(*args, **kwargs)
+        async def admitted(request: Request):
+            # Wait asynchronously for a queue place. The request may then
+            # stage its uploads, but takes no ingest worker and pins nothing
+            # until the import before it has finished (IngestRun's gate), so
+            # queued imports never occupy the workers the current one needs.
+            previous, done = await import_queue.enter()
+            request.state.import_previous = previous
+            try:
+                return await function(request)
+            finally:
+                import_queue.leave(done)
         return admitted
 
     _INGEST_OPTIONS = frozenset(('frame', 'session', 'run_id', 'compress', 'compression_mode',
@@ -574,17 +625,41 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
         Streamed uploads and local folder files share it. Each file stages on
         its own; publication follows selection order, and a refusal or the
         first database failure stops every later file.
+
+        `previous` is the done event of the import queued before this one
+        (ImportQueue). Files may stage meanwhile, but the first ingest worker
+        slot opens only once that import has finished and this run's pinned
+        index is set up (`gate`); a failed earlier request of the same run
+        makes every file unattempted.
         """
-        def __init__(self):
+        def __init__(self, previous=None):
             self.options = self.archive = self.target = self.sess = self.run = None
             self.catalog = self.resolver = self.dedup_batch = None
             self.tasks, self.turns, self.admitted = [], [asyncio.Event()], [asyncio.Event()]
             self.turns[0].set()
-            self.admitted[0].set()
+            self.previous, self.gate = previous, None
+            self.predecessor_failed = False
             self.body_done = asyncio.Event()
             self.refused = False
             self.database_failure_index = None
             self.index_cancel = threading.Event()
+
+        async def open_gate(self):
+            if self.previous is not None:
+                await self.previous.wait()
+            if import_queue.failed(self.run):
+                self.predecessor_failed = True
+            else:
+                try:
+                    await _archive_io(self.dedup_batch.setup, db, self.archive, None, self.index_cancel,
+                                      cancel_event=self.index_cancel)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # E.g. the archive is unavailable: each file reports that
+                    # when it publishes; an unprepared index stays conservative.
+                    log.warning("ingest: could not prepare the duplicate index", exc_info=True)
+            self.admitted[0].set()
 
         def record_import(self, r, current_archive):
             # Called under finalization's archive lock, so a concurrent reindex
@@ -626,10 +701,11 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
             run = current['run_id'].strip()
             # one private grouping key for this request
             self.run = run if run and _RUN_ID_RE.match(run) else uuid.uuid4().hex
-            # Upload sizes are unknown until each part ends.
-            self.dedup_batch = await _archive_io(DedupBatch.prepare, db, self.archive, None,
-                self.index_cancel, on_cancel=lambda index: index.close(), cancel_event=self.index_cancel)
+            # Upload sizes are unknown until each part ends. The index is set
+            # up once the import before this one has finished (open_gate).
+            self.dedup_batch = DedupBatch()
             self.options = current
+            self.gate = asyncio.create_task(self.open_gate())
 
         def add(self, source):
             self.turns.append(asyncio.Event())
@@ -646,7 +722,7 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
                     await self.body_done.wait()
                 if self.refused:
                     raise Refused
-                if self.database_failure_index is not None:
+                if self.database_failure_index is not None or self.predecessor_failed:
                     raise Unattempted
             try:
                 # Local sources open here so an unreadable file fails alone.
@@ -671,8 +747,10 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
                 result = {"file": name, "ok": False, "unconfirmed": True,
                           "error": "Database error; this file's outcome is unconfirmed. Refresh the library before retrying."}
             except Unattempted:
-                result = {"file": name, "ok": False,
-                    "unattempted": True, "error": "Not imported because the database failed earlier in this request."}
+                result = {"file": name, "ok": False, "unattempted": True,
+                    "error": "Not imported because an earlier request of this import could not finish."
+                    if self.predecessor_failed else
+                    "Not imported because the database failed earlier in this request."}
             except (Refused, UploadInterrupted):
                 result = {"file": name, "ok": False, "unattempted": True,
                           "error": "Not imported because the upload request was interrupted or refused."}
@@ -695,12 +773,15 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
             self.refused = True
             self.body_done.set()
 
+        def _gate_tasks(self):
+            return [self.gate] if self.gate is not None else []
+
         async def drain(self, exc):
             if isinstance(exc, asyncio.CancelledError):
-                for task in self.tasks:
+                for task in self.tasks + self._gate_tasks():
                     task.cancel()
             # Workers drain before staging is released.
-            await asyncio.gather(*self.tasks, return_exceptions=True)
+            await asyncio.gather(*self.tasks, *self._gate_tasks(), return_exceptions=True)
             if self.dedup_batch is not None:
                 await _archive_io(self.dedup_batch.close)
 
@@ -709,11 +790,12 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
             try:
                 return await asyncio.gather(*self.tasks)
             except BaseException:
-                for task in self.tasks:
+                for task in self.tasks + self._gate_tasks():
                     task.cancel()
-                await asyncio.gather(*self.tasks, return_exceptions=True)
+                await asyncio.gather(*self.tasks, *self._gate_tasks(), return_exceptions=True)
                 raise
             finally:
+                await asyncio.gather(*self._gate_tasks(), return_exceptions=True)
                 await _archive_io(self.dedup_batch.close)
 
     @app.post("/api/images/ingest")
@@ -728,10 +810,18 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
         refused request publishes nothing. With file_count, files publish as
         soon as they are ready; a later protocol error or disconnect stops
         further publication, as an interrupted request always has.
+
+        Requests queue in arrival order (ImportQueue): the next one may stage
+        its files while this one publishes. A refusal, or an unconfirmed or
+        unattempted file, fails the run, so its next request publishes nothing.
         """
         fields = {}
-        job = IngestRun()
+        job = IngestRun(getattr(request.state, 'import_previous', None))
         parts = multipart_parts(request)
+
+        def run_id():
+            run = job.run or str(fields.get('run_id', '')).strip()
+            return run if _RUN_ID_RE.match(run) else None
         try:
             try:
                 async for kind, name, value in parts:
@@ -756,11 +846,19 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
             if job.options is None:
                 raise HTTPException(422, "No files were uploaded.")
         except BaseException as exc:
+            import_queue.fail(run_id())
             job.refuse()
             await parts.aclose()
             await job.drain(exc)
             raise
-        return {"results": await job.finish()}
+        try:
+            results = await job.finish()
+        except BaseException:
+            import_queue.fail(run_id())
+            raise
+        if any(result.get('unconfirmed') or result.get('unattempted') for result in results):
+            import_queue.fail(run_id())
+        return {"results": results}
 
     folder_dialog = {'lock': threading.Lock(), 'last': None}
 
@@ -872,7 +970,7 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
                 self.status = 'failed'
                 self.stopped('Not imported because the folder import stopped; refresh the library before retrying.')
             finally:
-                ingest_admission.release()
+                import_queue.leave(self.queue_done)
 
         def stopped(self, error):
             for source in self.sources[len(self.results):]:
@@ -899,19 +997,21 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
             raise HTTPException(400, str(exc)) from None
         fields = {name: value for name, value in body.model_dump(exclude={'folder', 'files'}).items()
                   if value is not None}
-        run = IngestRun()
-        # The job holds import admission for its whole run, as a request does.
-        await ingest_admission.acquire()
+        # The job holds its import queue place for its whole run, as a request
+        # does; it stages ahead and publishes after the import before it.
+        previous, done = await import_queue.enter()
+        run = IngestRun(previous)
         try:
             await run.start(fields)
         except BaseException as exc:
             run.refuse()
             await run.drain(exc)
-            ingest_admission.release()
+            import_queue.leave(done)
             raise
         # Every source is known up front; nothing waits for more of a body.
         run.body_done.set()
         job = FolderJob(sources)
+        job.queue_done = done
         for old in [key for key, value in folder_jobs.items() if value.status != 'running'][:-3]:
             del folder_jobs[old]
         folder_jobs[job.id] = job

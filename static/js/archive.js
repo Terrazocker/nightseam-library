@@ -272,11 +272,13 @@ async function ingestFiles(files, frame, session, sessionAnchorId, source = "fil
   const activity = startImportActivity(list.length);
   try {
     let submitted = 0;
-    const chunks = folder ? [] : importChunks(list, batchSize);
+    const chunks = folder ? [][Symbol.iterator]() : importChunks(list, batchSize);
     if (folder) await importFolderJob(folder, list, { frame: selectedFrame || "", session: session || "",
       session_anchor_id: sessionAnchorId || null, run_id: runId,
       compress, compression_mode: compressionMode }, activity, results);
-    for (const chunk of chunks) {
+    // Settles to { res } or { err }, never rejects: a batch sent ahead may
+    // fail while the one before it is still being awaited.
+    const send = (chunk) => {
       submitted += chunk.length;
       // The server streams parts as they arrive: options and the declared
       // file count must precede the files so each file can publish once ready.
@@ -289,26 +291,43 @@ async function ingestFiles(files, frame, session, sessionAnchorId, source = "fil
       fd.append("compression_mode", compressionMode);
       fd.append("file_count", String(chunk.length));
       for (const f of chunk) fd.append("files", f);
-      let res;
-      try {
-        // FITS batches can take longer than the helper's generic 30s timeout.
-        res = await api("/api/images/ingest", { method: "POST", body: fd, timeout: 0 });
+      // FITS batches can take longer than the helper's generic 30s timeout.
+      const reply = api("/api/images/ingest", { method: "POST", body: fd, timeout: 0 }).then((res) => {
         if (!Array.isArray(res.results)) throw new Error("Invalid import response");
-      } catch (err) {
+        return { res };
+      }, (err) => ({ err }));
+      return { chunk, reply: reply.catch((err) => ({ err })) };
+    };
+    // Record a batch's outcome; true when the import must stop after it.
+    const record = ({ chunk }, { res, err }) => {
+      if (err) {
         for (const f of chunk) results.push({ file: f.name, ok: false,
           error: "Import request failed; file outcome unconfirmed" });
-        activity.unconfirmed = chunk.length;
+        activity.unconfirmed += chunk.length;
         activity.update();
-        break;
+        return true;
       }
       results.push(...res.results);
       countResults(activity, res.results);
-      if (res.results.some(result => result.unconfirmed || result.unattempted)) {
+      return res.results.some(result => result.unconfirmed || result.unattempted);
+    };
+    const first = chunks.next();
+    let current = first.done ? null : send(first.value);
+    while (current) {
+      // Send the next batch now: the server receives and stages it while this
+      // one publishes, and publishes it only after this one has finished.
+      const next = chunks.next();
+      const following = next.done ? null : send(next.value);
+      if (record(current, await current.reply)) {
+        // The batch already sent ahead keeps whatever outcome the server gave
+        // it (after a failed batch, the server publishes none of it).
+        if (following) record(following, await following.reply);
         for (const file of list.slice(submitted)) results.push({
           file: file.name, ok: false, unattempted: true,
           error: "Not imported because the earlier request could not finish." });
         break;
       }
+      current = following;
     }
     renderIngestResults(results);
     S.library = null;                       // stale until refetched

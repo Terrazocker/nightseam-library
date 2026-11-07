@@ -28,6 +28,8 @@ def admission_algorithm(monkeypatch):
     # Windows cross-open versions already prevent this reuse. Disable the POSIX
     # process cache here so read-count tests isolate the request-local index.
     monkeypatch.setattr(ingest, '_FINGERPRINT_CACHE_LIMIT', 0)
+    # These tests measure the full-hash path that runs when leading bytes match.
+    monkeypatch.setattr(ingest, '_LEAD_BYTES', 0)
 
 
 def available(db):

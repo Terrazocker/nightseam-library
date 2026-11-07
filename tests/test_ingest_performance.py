@@ -192,6 +192,7 @@ def test_resolver_reused_across_chunks_and_invalidated_by_catalog_edit(tmp_path,
 
 
 def test_unavailable_file_versions_fall_back_to_current_byte_reads(tmp_path, monkeypatch):
+    monkeypatch.setattr(ingest, '_LEAD_BYTES', 0)  # measures the full-hash path
     db, archive, _ = library(tmp_path, count=0)
     @contextmanager
     def unsupported(path):
@@ -243,6 +244,7 @@ def test_known_compressed_duplicate_does_not_need_encoder(tmp_path, monkeypatch)
 
 @pytest.mark.skipif(os.name != 'nt', reason='Windows pinned negative batch index')
 def test_http_batch_checks_earlier_files_once_and_detects_next_request_edits(tmp_path, monkeypatch):
+    monkeypatch.setattr(ingest, '_LEAD_BYTES', 0)  # measures the full-hash path
     db, archive, _ = library(tmp_path, count=64)
     previous = {archive / record['file'] for record in db.images()}
     fingerprint = ingest._fingerprint_file

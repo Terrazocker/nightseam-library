@@ -919,6 +919,36 @@ def test_stale_stage_sweep_preserves_active_recent_live_and_unknown_files(tmp_pa
             ingest._remove_stage(stage)
 
 
+def test_stale_stage_sweep_runs_once_a_minute_per_archive_not_per_file(tmp_path, monkeypatch):
+    """Sweeping removes only hour-old stages, so a per-file scan of the
+    archive root (under the global stage lock) bought nothing."""
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    clock = [1000.0]
+    monkeypatch.setattr(ingest.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(ingest, "_process_alive", lambda pid: False)
+
+    def abandoned(name):
+        path = archive / f".nightseam-import-111-{name}.part"
+        path.write_bytes(b"abandoned")
+        os.utime(path, (time.time() - 7200, time.time() - 7200))
+        return path
+    first, stages = abandoned("first"), []
+    try:
+        stages.append(ingest._prepare_stage(archive))
+        assert not first.exists()
+        later = abandoned("later")
+        clock[0] += ingest._STAGE_SCAN_INTERVAL - 1
+        stages.append(ingest._prepare_stage(archive))
+        assert later.exists()                      # within the minute: no scan
+        clock[0] += 2
+        stages.append(ingest._prepare_stage(archive))
+        assert not later.exists()
+    finally:
+        for stage in stages:
+            ingest._remove_stage(stage)
+
+
 def test_rename_merge_failure_undoes_completed_moves(dedup_store, monkeypatch):
     """F-22: a mid-merge failure must UNDO the moves it already completed -
     files stay where the (unchanged) database rows point."""

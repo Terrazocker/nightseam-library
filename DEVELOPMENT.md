@@ -75,7 +75,7 @@ following links or junctions, skipping an archive inside it and refusing a
 folder inside the archive. POST /api/images/folder/jobs takes the token, all
 scanned relative paths and the upload options as JSON. It refuses any path
 outside the folder before staging anything, then runs one continuous job that
-holds import admission and keeps FOLDER_IMPORT_WINDOW (48) files staging while
+holds its import queue place and keeps FOLDER_IMPORT_WINDOW (48) files staging while
 earlier ones publish, through the same IngestRun staging, ordering and
 publication as an upload, so dedup, rollback and history behave identically.
 Batches drained that pipeline at every boundary; on a cold source the job
@@ -98,6 +98,25 @@ option, too many files, malformed body) publishes nothing. A disconnect or
 refusal stops further publication; files already published remain, as with
 any interrupted request. Worker slots are granted in file order after a file's
 bytes are staged, so later parts keep arriving while earlier files publish.
+
+Imports (upload requests and folder jobs) queue in arrival order
+(`ImportQueue` in app/server.py): one publishes while at most one more is
+admitted ahead. The one ahead receives and stages its files (writing stage
+files and hashing the upload, which never takes the archive lock) but takes
+no ingest worker, sets up no DedupBatch and publishes nothing until the
+import before it has finished, its index closed and its lease released
+(`IngestRun.open_gate`). Its files therefore cannot hold the worker slots the
+current import needs. The UI sends each next upload batch while the current
+one is still being processed (two in flight at most), so batch boundaries no
+longer drain the pipeline: 288 Seestar-sized frames in three 96-file batches
+took about 10.0 s instead of 11.7-12.8 s. A request ending in a refusal, or
+with an unconfirmed or unattempted file, marks its run (the import action's
+run_id) failed; that run's next request publishes nothing and reports every
+file as unattempted, as if the UI had stopped sending, which it also does.
+The UI records whatever outcome the server gave the batch already sent.
+Stage preparation sweeps abandoned (hour-old) stages at most once a minute per
+archive instead of listing the archive root for every file under the global
+stage lock.
 A DedupBatch scoped to one upload request or folder job pins up to 4,096
 earlier same-size files and their directory lineage, validating their negative
 hashes once per batch. Preparation captures only root identity; existing and
@@ -122,6 +141,19 @@ thread-local pins never substitute for the batch's own directory lifetime.
 Lookup first checks recorded exact hashes and conversion aliases against current
 archive bytes, avoiding unrelated same-size reads when a match is verified.
 A stale or missing hint still falls through to the complete same-size search.
+That search compares leading bytes before hashing: a same-size candidate
+whose current first 64 KiB (`_LEAD_BYTES`: the FITS header with its capture
+time, then the first pixels' sensor noise) differ from the upload's cannot
+hold the same bytes, so it is ruled out from current bytes alone, without
+trusting any stored digest. Only candidates whose leading bytes match, or
+cannot be read, are hashed in full (and pinned and remembered as before).
+A DedupBatch reads each candidate's leading bytes once per request and keeps
+their SHA-256 under its lease, as it keeps remembered digests; later lookups
+revisit only candidates whose leading bytes match the upload's. With 400
+archived 4.1 MB frames, importing 96 more read 120 MB of archive instead of
+1.66 GB (fingerprint cache cold) or 7.6 GB (cache off, as on volumes without a
+change journal) and took 3.7 s instead of 7.7 s or 13.0 s. `_LEAD_BYTES = 0`
+turns the comparison off; the tests that measure the full-hash path do so.
 Batched duplicate lookup reads
 256-row keyset pages with a fixed upper image ID, releases its cursor/DB lock
 before filesystem work and checks cancellation between candidates/pages. It

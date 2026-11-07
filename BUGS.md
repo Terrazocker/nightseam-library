@@ -118,6 +118,17 @@ longer drain the pipeline. With a cold 480 × 52 MB source the 2 GiB batches too
 26.4 seconds and the job 15.3–15.8 seconds. Remaining: uploads still go in
 batches, and write-back flush bursts are unchanged.
 
+Update, November 7, 2026: uploads now overlap batches. The browser sends the
+next batch while the current one is processed, and the server lets that
+request receive and stage its files (but take no worker, pin nothing and
+publish nothing) until the one before it has finished. 288 × 4.1 MB frames in
+three 96-file batches took about 10.0 seconds instead of 11.7–12.8 (private
+in-process server, files in the OS cache). Stage preparation also stopped
+listing the archive root for every file. Each stage of a file's path measured
+0.6–3.3 GB/s on its own (multipart parse, HTTP body, CNG SHA-256, writes), so
+no single step under Python's lock limits throughput; the remaining time is
+per-file work and thread contention. Remaining: write-back flush bursts.
+
 ## Every import request rereads the same-size archive on Windows — October 18, 2026 (mitigated)
 
 Proving an upload is not a duplicate requires current bytes of every same-size
@@ -154,6 +165,14 @@ Under WSL2, importing 144 files after a restart with 144 archived went from
 none. Remaining: Windows volumes without an active change journal still read
 the same-size population once per start, and coarse POSIX timestamps can hide
 same-tick rewrites (see the WSL2 entry above).
+
+Update, November 7, 2026: the same-size search compares each candidate's first
+64 KiB with the upload's before hashing it. Different leading bytes prove
+different files from current bytes, so new exposures no longer hash the
+archive at all, cache or no cache. 96 new frames against 400 archived read
+120 MB instead of 1.66 GB (cold cache) or 7.6 GB (no change journal) and took
+3.7 s instead of 7.7 s or 13.0 s. Remaining: one 64 KiB read per same-size
+candidate per request (each candidate once per request).
 
 ## Session compression blocked by stacked or deleted exposures — October 18, 2026 (fixed)
 
@@ -349,6 +368,12 @@ across closed Windows handle lifetimes. The packaged run took 69.023 seconds,
 but used a different Intel runner rather than the earlier AMD runner; no controlled
 timing speedup is claimed. Larger archives remain unmeasured. See the updated
 profile report for the validated implementation and audits.
+
+Update, November 7, 2026: the leading-bytes comparison (see the same-size
+archive entry) replaces the archive hashing that dominated this profile for
+new exposures: candidates whose first 64 KiB differ are never hashed or
+pinned. Candidate traversal is still linear per request, with one small read
+per candidate; matching leading bytes keep the full current-byte path.
 
 ## Windows handle sharing - October 15, 2026 (fixed)
 

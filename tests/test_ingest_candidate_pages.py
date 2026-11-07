@@ -10,6 +10,13 @@ from test_compression import exposure, library
 from test_ingest_compression import upload
 
 
+@pytest.fixture(autouse=True)
+def full_hash_path(monkeypatch):
+    # These tests measure the full-hash path that runs when leading bytes
+    # match. The leading-bytes pre-filter has its own tests.
+    monkeypatch.setattr(ingest, '_LEAD_BYTES', 0)
+
+
 def test_preparation_does_not_query_or_hash_same_size_candidates(tmp_path, monkeypatch):
     db, archive, _ = library(tmp_path, count=7)
     monkeypatch.setattr(ingest, '_WINDOWS_BATCH_PINS', True)
@@ -107,8 +114,8 @@ def test_cancelled_candidate_pages_stop_before_next_query(tmp_path, monkeypatch)
 
 def counted_candidates(index):
     streamed, original = [], index.candidates
-    def candidates(*args):
-        for record in original(*args):
+    def candidates(*args, **kwargs):
+        for record in original(*args, **kwargs):
             streamed.append(record['id'])
             yield record
     index.candidates = candidates
