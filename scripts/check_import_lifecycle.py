@@ -19,7 +19,6 @@ import select
 import shutil
 import socket
 import sqlite3
-import struct
 import sys
 import time
 import uuid
@@ -29,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tests/browser'))
 import harness
-from fits_fixtures import compressed_gate_image
+from fits_fixtures import pinned_gate_image
 from scripts.check_native_window import NativeWindows, native_catalog, wait_for
 
 
@@ -39,9 +38,9 @@ def require(condition, message):
 
 
 def image(number):
-    raw = bytearray(compressed_gate_image(False))
-    raw[2880:2888] = struct.pack('>Q', number)
-    return bytes(raw)
+    # Same size and the same leading bytes for every number, so imports pin
+    # the seed while hashing it instead of ruling it out by leading bytes.
+    return pinned_gate_image(number)
 
 
 def send(server, path, content_type, body):

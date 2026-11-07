@@ -41,6 +41,8 @@ _STAGE_LOCK = threading.RLock()
 _ACTIVE_STAGES: set[Path] = set()
 _STAGE_NAME = re.compile(r"^\.nightseam-import-(\d+)-[A-Za-z0-9_]+\.part$")
 _STALE_STAGE_SECONDS = 3600
+_STAGE_SCAN_INTERVAL = 60.0          # seconds between stale-stage scans of one archive
+_STAGE_SCANS: dict[str, float] = {}
 _FINGERPRINT_CACHE_LIMIT = 20000
 _BATCH_PIN_LIMIT = 4096
 _BATCH_HANDLE_LIMIT = 16384
@@ -49,6 +51,28 @@ _BATCH_HANDLE_LIMIT = 16384
 _BATCH_IO_HANDLES = 2
 _CANDIDATE_PAGE_SIZE = 256
 _WINDOWS_BATCH_PINS = os.name == 'nt'
+# Leading bytes compared before any same-size candidate is hashed: the FITS
+# header (capture time) and the first pixels (sensor noise) of an exposure.
+# Different leading bytes prove different files without trusting any cache.
+_LEAD_BYTES = 64 * 1024
+
+
+def _leading_bytes(path: Path) -> bytes | None:
+    """The first _LEAD_BYTES of a file's current bytes, or None if unreadable."""
+    try:
+        with path.open("rb") as source:
+            return source.read(_LEAD_BYTES)
+    except OSError:
+        return None
+
+
+def _lead_key(lead: bytes) -> bytes:
+    return hashlib.sha256(lead).digest()
+
+
+def _file_lead_key(path: Path) -> bytes | None:
+    lead = _leading_bytes(path)
+    return None if lead is None else _lead_key(lead)
 
 
 @contextmanager
@@ -79,12 +103,20 @@ class DedupBatch:
     frames share one size, so repeating it made each upload slower than the
     last. Another program rewriting such a file mid-request can only cause a
     missed duplicate, never a skipped upload.
+
+    Before any of that, a candidate's leading bytes are compared with the
+    upload's (`leads`): a difference proves the files differ, so most
+    candidates are never hashed or pinned. Each candidate's leading bytes are
+    read once per request and remembered as a digest under the same lease;
+    later lookups revisit only candidates whose leading bytes match.
     """
     def __init__(self):
         self.stack = ExitStack()
         self.entries = {}
         self.remembered = {}
         self.digests = {}
+        self.leads = {}
+        self.lead_ids = {}
         self.settled = {}
         self.unresolved = {}
         self.db = None
@@ -109,6 +141,8 @@ class DedupBatch:
                     self.entries.clear()
                     self.remembered.clear()
                     self.digests.clear()
+                    self.leads.clear()
+                    self.lead_ids.clear()
                     self.settled.clear()
                     self.unresolved.clear()
                     self.folders.clear()
@@ -125,15 +159,45 @@ class DedupBatch:
         entry = self._proof(record['id'])
         return entry is not None and entry[0] == record['file'] and entry[1] != incoming
 
-    def candidates(self, db, digest, size, cancel=None):
+    def lead_negative(self, record, lead_key):
+        """True when this request already read the candidate's leading bytes
+        and they differ from the upload's."""
+        entry = self.leads.get(record['id'])
+        return (lead_key is not None and entry is not None and entry[0] == record['file']
+                and entry[1] != lead_key)
+
+    def leading(self, db, record, path):
+        """The candidate's leading-bytes digest: read once, then remembered for
+        the request under its archive lease (as `remembered` is)."""
+        entry = self.leads.get(record['id'])
+        if entry is not None and entry[0] == record['file']:
+            return entry[1]
+        key = _file_lead_key(path)
+        if key is None:
+            return None
+        if self.db is db:
+            if not self.leased:
+                db.archive_lock.reserve(self)
+                self.leased = True
+            self.leads[record['id']] = record['file'], key
+            self.lead_ids.setdefault(key, set()).add(record['id'])
+        return key
+
+    def _settled_proof(self, id_, file):
+        return ((self._proof(id_) or (None,))[0] == file or
+                (self.leads.get(id_) or (None,))[0] == file)
+
+    def candidates(self, db, digest, size, cancel=None, lead_key=None):
         """Same-size rows, minus those this request has already proven different.
 
         While the request holds the archive lease no other operation can change
         existing rows, so a complete lookup settles every row up to its upper
         ID. Later lookups of that size read only newer rows, settled rows that
-        could not be proven, and rows whose proven bytes match this digest;
-        those still rehash. Settling happens only after the caller examined
-        every row without finding a duplicate.
+        could not be proven, and rows whose proven bytes (or leading bytes,
+        when the caller passes `lead_key`) match this upload; those still
+        rehash. Without a `lead_key` every row proven only by leading bytes is
+        revisited. Settling happens only after the caller examined every row
+        without finding a duplicate.
         """
         _check_reindex_cancelled(cancel)
         with db.lock:
@@ -143,7 +207,11 @@ class DedupBatch:
         after = self.settled.get(size) if self.leased and self.db is db else None
         seen = []
         if after is not None:
-            revisit = sorted(id_ for id_ in self.unresolved[size] | self.digests.get(digest, set())
+            # Rows proven only by leading bytes need another look when the
+            # upload's leading bytes match theirs, or when the caller has none.
+            lead_only = ({id_ for id_, _ in self.leads.items() if self._proof(id_) is None}
+                         if lead_key is None else self.lead_ids.get(lead_key, set()))
+            revisit = sorted(id_ for id_ in self.unresolved[size] | self.digests.get(digest, set()) | lead_only
                              if id_ <= after)
             for start in range(0, len(revisit), _CANDIDATE_PAGE_SIZE):
                 _check_reindex_cancelled(cancel)
@@ -171,8 +239,7 @@ class DedupBatch:
             after = records[-1]['id']
         if self.leased and self.db is db:
             self.settled[size] = upper
-            self.unresolved[size] = {id_ for id_, file in seen
-                                     if (self._proof(id_) or (None,))[0] != file}
+            self.unresolved[size] = {id_ for id_, file in seen if not self._settled_proof(id_, file)}
 
     def fingerprint(self, db, record, path, incoming, cancel=None, *, admit_only=False):
         """Measure a candidate and retain stable negative proof within this request.
@@ -256,21 +323,26 @@ class DedupBatch:
         Without Windows pins the budget is zero: every check is remembered
         under the request's lease from the first lookup.
         """
-        index = cls()
+        return cls().setup(db, archive, sizes, cancel)
+
+    def setup(self, db, archive, sizes, cancel=None):
+        """prepare() in place: a request can create its index before its turn
+        to publish and set it up only then. Until set up, an index keeps no
+        memo and every check takes the conservative individual path."""
         if sizes is not None and not sizes or not hasattr(db.archive_lock, 'reserve'):
-            return index
+            return self
         if not _WINDOWS_BATCH_PINS:
-            index.db = db
-            return index
+            self.db = db
+            return self
         try:
             with _waiting_archive_lock(db, cancel):
                 root = archive.resolve(strict=True)
                 info = root.stat()
-                index.db, index.root = db, root
-                index.identity = info.st_dev, info.st_ino
-            return index
+                self.db, self.root = db, root
+                self.identity = info.st_dev, info.st_ino
+            return self
         except BaseException:
-            index.close()
+            self.close()
             raise
 
 
@@ -333,8 +405,17 @@ def _prepare_stage(archive: Path) -> Path:
     with _STAGE_LOCK:
         # Only the PID-bearing namespace we own is eligible. Legacy or unknown
         # .part files are preserved; live imports (including other processes)
-        # and recent leftovers cannot be mistaken for abandoned stages.
-        for candidate in archive.glob(".nightseam-import-*.part"):
+        # and recent leftovers cannot be mistaken for abandoned stages. Only
+        # stages an hour old are removed, so scanning the archive root once a
+        # minute (not once per file, under this lock) finds the same ones.
+        now = time.monotonic()
+        key = os.path.normcase(str(archive))
+        if now - _STAGE_SCANS.get(key, -_STAGE_SCAN_INTERVAL) < _STAGE_SCAN_INTERVAL:
+            candidates = ()
+        else:
+            _STAGE_SCANS[key] = now
+            candidates = archive.glob(".nightseam-import-*.part")
+        for candidate in candidates:
             match = _STAGE_NAME.fullmatch(candidate.name)
             if match is None or candidate in _ACTIVE_STAGES or candidate.is_symlink():
                 continue
@@ -464,7 +545,8 @@ def _verified_image(db, record):
 
 
 def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
-                    exclude_id: int | None = None, dedup_batch=None, cancel_event=None) -> dict | None:
+                    exclude_id: int | None = None, dedup_batch=None, cancel_event=None,
+                    lead: bytes | None = None) -> dict | None:
     """Find matching local bytes, including originals from older versions.
 
     Caller holds db.archive_lock for lookup/finalization. Database methods take
@@ -472,7 +554,13 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
     mtime are hints only: a matching cached digest is always checked against
     the actual archived file before an upload is skipped. Missing originals
     therefore cannot prevent users importing a replacement.
+
+    `lead` is the upload's first _LEAD_BYTES. A same-size candidate whose
+    current leading bytes differ cannot hold the same bytes, so it is ruled
+    out without hashing; only candidates with matching (or unreadable)
+    leading bytes are hashed in full.
     """
+    lead_key = _lead_key(lead) if lead is not None else None
     # A recorded conversion retains the original complete-byte identity as an
     # alias. Check current stored bytes against that mapping before deduping.
     for rec in _alias_candidates(db, digest, size, cancel_event):
@@ -505,7 +593,7 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
             if image is not None:
                 return image
     if dedup_batch is not None:
-        candidates = dedup_batch.candidates(db, digest, size, cancel_event)
+        candidates = dedup_batch.candidates(db, digest, size, cancel_event, lead_key=lead_key)
     else:
         candidates = db.image_fingerprint_candidates(digest, size)
     for rec in candidates:
@@ -513,7 +601,7 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
         if rec["id"] == exclude_id:
             continue
         if dedup_batch is not None:
-            if dedup_batch.negative(rec, digest):
+            if dedup_batch.negative(rec, digest) or dedup_batch.lead_negative(rec, lead_key):
                 continue
         original = paths.safe_join(archive, rec["file"])
         if original is None:
@@ -524,6 +612,13 @@ def _find_duplicate(db: Database, archive: Path, digest: str, size: int,
             continue
         if stat.st_size != size or not original.is_file():
             continue
+        if lead_key is not None:
+            # Same size, different first bytes: different files, proven from
+            # current bytes. Unreadable leading bytes fall through to hashing.
+            current = (dedup_batch.leading(db, rec, original) if dedup_batch is not None else
+                       _file_lead_key(original))
+            if current is not None and current != lead_key:
+                continue
         cached = rec.get("content_sha256")
         # Restores and external tools can preserve size/mtime while replacing
         # bytes. A different cached digest must not reject a same-size original.
@@ -1215,7 +1310,8 @@ def _finalize_import(db, archive, stage, digest, name, object_id, object_name,
                             "error": "Selected session changed during import; select it again."}
             checkpoint()
             duplicate = _find_duplicate(db, archive, digest.hexdigest(), size,
-                                        dedup_batch=dedup_batch, cancel_event=cancel_event)
+                                        dedup_batch=dedup_batch, cancel_event=cancel_event,
+                                        lead=_leading_bytes(stage) if _LEAD_BYTES else None)
             if duplicate is not None:
                 return _duplicate_result(name, duplicate)
             missing = _missing_original(db, archive, digest.hexdigest(), size)

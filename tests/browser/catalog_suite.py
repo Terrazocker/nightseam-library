@@ -2,6 +2,7 @@
 
 from harness import check, tool
 from time import monotonic
+import re
 import archive_features
 
 
@@ -111,10 +112,13 @@ def desktop_catalog_rice_ingest_chunks(c):
                  body.find(b'name="file_count"') < body.find(b'name="files"'),
                  'options and the declared file count precede the streamed files')
         requests.append(count)
+        # The second chunk starts at chunk-24; overlapping chunks can reach
+        # this handler in either order.
+        position = 2 if b'filename="chunk-24.fit"' in body else 1
         c.expect(c.page.locator('#compressOnIngest').is_disabled(), 'checkbox locked during upload')
         c.expect(c.page.locator('#ingestSafeMode').is_disabled(), 'mode locked during upload')
-        results = [{'file': f'fixture-{len(requests)}-{i}.fit', 'ok': True, 'compression': 'rice'} for i in range(count)]
-        if len(requests) == 2:
+        results = [{'file': f'fixture-{position}-{i}.fit', 'ok': True, 'compression': 'rice'} for i in range(count)]
+        if position == 2:
             results[-1].update(compression='unchanged', compression_reason='Floating point FITS stored unchanged.')
         route.fulfill(json={'results': results})
     c.page.route('**/api/images/ingest', accept)
@@ -124,7 +128,7 @@ def desktop_catalog_rice_ingest_chunks(c):
     c.page.locator('#ingestSafeMode').check()
     c.page.locator('#fitFiles').set_input_files([{'name': f'chunk-{i}.fit', 'mimeType': 'application/octet-stream', 'buffer': b'SIMPLE  = T'} for i in range(26)])
     c.page.wait_for_function("() => !document.querySelector('#btnTopIngest').disabled")
-    c.expect_eq(requests, [24, 2])
+    c.expect_eq(sorted(requests), [2, 24])
     c.expect_in('25 Rice compressed', c.page.locator('#ingestSummary').inner_text())
     c.expect_in('Floating point FITS stored unchanged.', c.page.locator('#ingestResults').inner_text())
 
@@ -923,13 +927,37 @@ def _observe_pending_batches(page, pending):
     page.expose_function("__ns_pending_batches", lambda: len(pending))
 
 
-def _wait_pending_batch(page):
+def _wait_pending_batch(page, count=1):
     # evaluate awaits the exposed callback's Promise; wait_for_function treats
     # a Promise returned by its predicate as truthy before it resolves.
     deadline = monotonic() + 10
-    while page.evaluate("() => window.__ns_pending_batches()") != 1:
+    while page.evaluate("() => window.__ns_pending_batches()") != count:
         if monotonic() > deadline:
-            raise AssertionError("the intercepted import batch did not reach its route handler")
+            raise AssertionError(f"{count} intercepted import batch(es) did not reach the route handler")
+
+
+def _in_flight(files, batch=96):
+    """Batches the page keeps in flight: it sends the next batch while the
+    current one is processed, so two at a time while two or more remain."""
+    return min(2, -(-files // batch))
+
+
+def _first_file(route):
+    match = re.search(rb'filename="[^"]*?(\d+)\.fits?"', route.request.post_data_buffer or b"")
+    return int(match.group(1)) if match else -1
+
+
+def _take_batch(pending):
+    """The earliest batch of the selection still awaiting its response.
+    Overlapping batches can reach their route handlers in either order."""
+    route = min(pending, key=_first_file)
+    pending.remove(route)
+    return route
+
+
+def _wait_text(page, selector, text):
+    page.wait_for_function("([selector, text]) => document.querySelector(selector)?.textContent === text",
+                           arg=[selector, text])
 
 
 def _expect_host_owned_chrome(c, page):
@@ -973,11 +1001,20 @@ def desktop_catalog_import_progress(c):
     def select(count):
         with c.page.expect_request("**/api/images/ingest"):
             files.set_input_files(_catalog_test_files(count))
-        _wait_pending_batch(c.page)
-        c.expect_eq(len(pending), 1, "one batch should be awaiting its response")
+        _wait_pending_batch(c.page, _in_flight(count))
+        c.expect_eq(len(pending), _in_flight(count),
+                    "the next batch is sent while the first awaits its response")
+
+    def unattempted(count):
+        # What the server answers for a batch sent ahead of a failed one.
+        route = _take_batch(pending)
+        route.fulfill(json={"results": [
+            {"file": f"exposure-{i:02d}.fits", "ok": False, "unattempted": True,
+             "error": "Not imported because an earlier request of this import could not finish."}
+            for i in range(count)]})
 
     def answer(count, failed=False):
-        route = pending.pop(0)
+        route = _take_batch(pending)
         route.fulfill(json={"results": [
             {"file": f"exposure-{i:02d}.fits", "ok": not (failed and i == 0),
              "error": "Unreadable FITS header" if failed and i == 0 else ""}
@@ -1012,11 +1049,11 @@ def desktop_catalog_import_progress(c):
     c.page.evaluate("() => document.querySelector('#btnTopReindex').click()")
     c.page.locator("#toasts .toast").filter(
         has_text="Wait for the current archive operation to finish.").wait_for()
-    c.expect_eq(len(requests), 1, "repeated file selection must not overlap an import")
+    c.expect_eq(len(requests), 2, "repeated file selection must not overlap an import")
     c.expect_eq(len(reindexes), 0, "a reindex must not overlap an import")
-    with c.page.expect_request("**/api/images/ingest"):
-        answer(96)
+    answer(96)
     _wait_pending_batch(c.page)
+    _wait_text(c.page, "#ingestProgress .import-files", "96 / 98 files processed")
     c.expect_eq(progress.locator(".import-files").inner_text(),
                 "96 / 98 files processed", "confirmed response advances file progress")
     c.expect_eq(len(pending), 1, "the remaining files wait for the second response")
@@ -1026,9 +1063,9 @@ def desktop_catalog_import_progress(c):
              "completed successful import keeps the failure counter hidden")
 
     select(98)
-    with c.page.expect_request("**/api/images/ingest"):
-        answer(96, failed=True)
+    answer(96, failed=True)
     _wait_pending_batch(c.page)
+    _wait_text(c.page, "#ingestProgress .import-failed", "1 failed")
     c.expect_eq(progress.locator(".import-failed").inner_text(), "1 failed",
                 "a per-file failure has its own counter")
     c.expect(progress.locator(".import-failed").is_visible(),
@@ -1062,17 +1099,19 @@ def desktop_catalog_import_progress(c):
     select(204)
     with c.page.expect_request("**/api/images/ingest"):
         answer(96)
-    _wait_pending_batch(c.page)
-    pending.pop(0).fulfill(status=503, content_type="application/json",
-                          body='{"detail":"temporary import interruption"}')
+    _wait_pending_batch(c.page, 2)
+    _take_batch(pending).fulfill(status=503, content_type="application/json",
+                                 body='{"detail":"temporary import interruption"}')
+    # The last batch was already sent; its outcome is still recorded.
+    unattempted(12)
     finished(96, 204)
     c.expect(not progress.locator(".import-failed").is_visible(),
              "unconfirmed outcomes must not be reported as confirmed file failures")
     c.expect_eq(progress.locator(".import-pending").inner_text(), "12 not attempted",
-                "the remaining queue was never submitted")
+                "the batch sent ahead publishes nothing after the interruption")
     c.expect_in("96 file outcomes unconfirmed", progress.inner_text(),
                 "an interrupted request must distinguish unknown outcomes")
-    c.expect_eq(len(requests), 6, "the interrupted import must stop without another batch")
+    c.expect_eq(len(requests), 7, "the interrupted import must stop without another batch")
     c.expect(c.page.locator("#btnTopIngest").is_enabled() and
              c.page.locator("#btnTopExport").is_enabled(),
              "archive actions recover after an interrupted import")
@@ -1081,7 +1120,7 @@ def desktop_catalog_import_progress(c):
     # partial outcomes. It must halt the remaining browser chunks too.
     select(204)
     with c.page.expect_request("**/api/library"):
-        pending.pop(0).fulfill(json={"results": [
+        _take_batch(pending).fulfill(json={"results": [
             {"file": "exposure-00.fits", "ok": True},
             {"file": "exposure-01.fits", "ok": False, "unconfirmed": True,
              "error": "Import outcome unconfirmed after a database error."},
@@ -1089,6 +1128,7 @@ def desktop_catalog_import_progress(c):
                "unattempted": True, "error": "Not attempted after the import stopped."}
               for index in range(2, 96)],
         ]})
+        unattempted(96)
     finished(1, 204)
     c.expect_eq(progress.locator(".import-pending").inner_text(), "202 not attempted",
                 "both unattempted server files and unsent browser chunks remain pending")
@@ -1096,7 +1136,7 @@ def desktop_catalog_import_progress(c):
                 "only the exceptional file has an unknown outcome")
     c.expect(not progress.locator(".import-failed").is_visible(),
              "unattempted files and unknown outcomes are not confirmed failures")
-    c.expect_eq(len(requests), 7, "explicit partial outcomes must stop later browser chunks")
+    c.expect_eq(len(requests), 9, "explicit partial outcomes must stop later browser chunks")
     c.expect_eq(len(pending), 0, "no later chunk remains in flight after partial completion")
     c.expect(c.page.locator("#btnTopIngest").is_enabled() and
              c.page.locator("#btnTopReindex").is_enabled() and
@@ -1128,7 +1168,7 @@ def desktop_catalog_import_duplicates(c):
     def select(count):
         with c.page.expect_request("**/api/images/ingest"):
             files.set_input_files(_catalog_test_files(count))
-        _wait_pending_batch(c.page)
+        _wait_pending_batch(c.page, _in_flight(count))
 
     def finish(count):
         c.page.wait_for_function("""count =>
@@ -1139,11 +1179,11 @@ def desktop_catalog_import_duplicates(c):
     select(98)
     c.expect(not progress.locator(".import-skipped").is_visible(),
              "the already-imported counter stays hidden before a duplicate is found")
-    with c.page.expect_request("**/api/images/ingest"):
-        pending.pop(0).fulfill(json={"results": [
-            result(0, skipped=True), result(1, skipped=True),
-            *[result(i) for i in range(2, 95)], result(95, failed=True)]})
+    _take_batch(pending).fulfill(json={"results": [
+        result(0, skipped=True), result(1, skipped=True),
+        *[result(i) for i in range(2, 95)], result(95, failed=True)]})
     _wait_pending_batch(c.page)
+    _wait_text(c.page, "#ingestProgress .import-files", "96 / 98 files processed")
     c.expect_eq(progress.locator(".import-files").inner_text(), "96 / 98 files processed",
                 "duplicates are processed files, alongside new files and failures")
     c.expect_eq(progress.locator(".import-skipped").inner_text(), "2 already imported",
