@@ -442,17 +442,38 @@ def _statistic(values: list[float], mode: str, higher_is_better: bool) -> float 
     return float(np.mean(ordered[:max(1, int(np.ceil(len(ordered) * BEST_FRACTION)))]))
 
 
+UNKNOWN_CAMERA = "unknown camera"
+
+
+def setup_camera(setup: str | None) -> str | None:
+    """The camera part of a frame_setup() setup string, None when the FITS
+    headers named no instrument (such sessions are never compared: nothing
+    says two of them came from the same camera)."""
+    camera = (setup or "").split(" | ")[0].strip()
+    return None if not camera or camera == UNKNOWN_CAMERA else camera
+
+
+def camera_tag(index: int) -> str:
+    """A, B, ... Z, AA, AB, ...: the short label a camera carries in the UI."""
+    tag = ""
+    index += 1
+    while index:
+        index, rest = divmod(index - 1, 26)
+        tag = chr(65 + rest) + tag
+    return tag
+
+
 def session_conditions(frames: list[dict], graded: list[dict]) -> dict:
     """A session's conditions in units other sessions share, per statistic.
 
     For each of median, best (mean of the best BEST_FRACTION of frames) and
     mean: sky rate, seeing, starlight rate and elongation, plus the share of
     trailed frames. setup names the camera/gain/filter/binning most frames
-    used; offset_known and scale_known say whether every frame carried a
-    camera offset and a pixel scale (the sky rate is only physical when the
-    offset is known)."""
+    used and camera its instrument (None when unknown); offset_known and
+    scale_known say whether every frame carried a camera offset and a pixel
+    scale (the sky rate is only physical when the offset is known)."""
     setups = [f.get("setup") for f in frames if f.get("setup")]
-    setup = max(set(setups), key=setups.count) if setups else None
+    setup = max(sorted(set(setups)), key=setups.count) if setups else None
     # Only frames in the session's main setup share its units: a stack saved
     # into lights/ by stacking software, or a frame from a second camera,
     # would mix other exposures, offsets and scales into the session's value.
@@ -463,6 +484,7 @@ def session_conditions(frames: list[dict], graded: list[dict]) -> dict:
     trailed = sum(1 for f in same if "trailed" in (graded_by_id.get(f["id"], {}).get("reason") or ""))
     result = {
         "setup": setup,
+        "camera": setup_camera(setup),
         "frames": len(same),
         "other_setups": others,
         "offset_known": bool(same) and all(f.get("pedestal") is not None for f in same),
@@ -480,17 +502,50 @@ def session_conditions(frames: list[dict], graded: list[dict]) -> dict:
     return result
 
 
-def compare_sessions(entries: list[tuple[str, dict]]) -> None:
+def assign_camera_tags(entries: list[tuple[str, dict]]) -> list[dict]:
+    """Give every camera in the library a short tag (A, B, ...) in the order
+    it was first used, and set conditions["camera_tag"] on each session.
+
+    Returns [{"tag", "camera", "sessions"}]. Sessions whose headers named no
+    camera get no tag."""
+    first_used: dict[str, str] = {}
+    counts: dict[str, int] = {}
+    for _, quality in entries:
+        conditions = (quality or {}).get("conditions") or {}
+        camera = conditions.get("camera")
+        if not camera:
+            continue
+        times = [f.get("t") for f in quality.get("frames") or [] if f.get("t")]
+        start = min(times) if times else "~"           # undated sorts last
+        first_used[camera] = min(first_used.get(camera, start), start)
+        counts[camera] = counts.get(camera, 0) + 1
+    ordered = sorted(first_used, key=lambda camera: (first_used[camera], camera))
+    tags = {camera: camera_tag(i) for i, camera in enumerate(ordered)}
+    for _, quality in entries:
+        conditions = (quality or {}).get("conditions")
+        if conditions is not None:
+            conditions["camera_tag"] = tags.get(conditions.get("camera"))
+    return [{"tag": tags[camera], "camera": camera, "sessions": counts[camera]} for camera in ordered]
+
+
+def compare_sessions(entries: list[tuple[str, dict]]) -> list[dict]:
     """Rank sessions against each other in place: (object key, quality).
 
-    Each comparable measure is set against the best session that shares its
-    units - sky by setup (camera offset removed, per second and arcsec^2),
-    seeing in arcseconds across every setup with a known pixel scale (else by
-    setup, in pixels), starlight by object AND setup (other targets have other
-    stars). A session alone in a group is not compared on that measure. The
+    Sessions are only ever compared with sessions taken with the same camera:
+    another sensor has another pixel size, gain, response and noise, so its
+    numbers do not share units with these. Within one camera each comparable
+    measure is set against the best session that shares its units - sky by
+    setup (camera offset removed, per second and arcsec^2), seeing in
+    arcseconds across the camera's setups when the pixel scale is known (else
+    by setup, in pixels), starlight by object AND setup (other targets have
+    other stars). A session alone in a group is not compared on that measure,
+    and a session whose headers named no camera is compared with nothing. The
     conditions score combines the compared measures with the share of trailed
     frames; it stays empty until something could be compared. rank/of order
-    an object's scored sessions."""
+    an object's scored sessions of one camera.
+
+    Returns the library's cameras with their tags (assign_camera_tags)."""
+    cameras = assign_camera_tags(entries)
     for mode in CONDITION_MODES:
         groups: dict[tuple, list[dict]] = {}
         rows = []
@@ -499,10 +554,14 @@ def compare_sessions(entries: list[tuple[str, dict]]) -> None:
             if not conditions or not conditions.get("setup"):
                 continue
             values = conditions["modes"][mode]
-            row = {"object": object_key, "conditions": conditions, "values": values, "out": {}}
+            camera = conditions.get("camera")
+            row = {"object": object_key, "camera": camera, "conditions": conditions,
+                   "values": values, "out": {}}
             rows.append(row)
+            if not camera:
+                continue
             setup = conditions["setup"]
-            seeing_group = ("seeing", "arcsec") if conditions["scale_known"] else ("seeing", setup)
+            seeing_group = ("seeing", camera, "arcsec") if conditions["scale_known"] else ("seeing", setup)
             for measure, group in (("sky", ("sky", setup)), ("seeing", seeing_group),
                                    ("starlight", ("starlight", object_key, setup))):
                 if values.get(measure) is not None:
@@ -544,23 +603,25 @@ def compare_sessions(entries: list[tuple[str, dict]]) -> None:
             out["score"] = score
             conditions["modes"][mode] = out
             row["result"] = out
-        by_object: dict[str, list[dict]] = {}
+        by_object: dict[tuple, list[dict]] = {}
         for row in rows:
             if row["result"]["score"] is not None:
-                by_object.setdefault(row["object"], []).append(row["result"])
+                by_object.setdefault((row["object"], row["camera"]), []).append(row["result"])
         for scored in by_object.values():
             scored.sort(key=lambda r: -r["score"])
             for position, result in enumerate(scored, 1):
                 result["rank"], result["of"] = position, len(scored)
+    return cameras
 
 
 def attach_session_quality(objects: list[dict], measurements: dict[int, dict],
-                           digests: dict[int, str | None]) -> None:
+                           digests: dict[int, str | None]) -> list[dict]:
     """Add a `quality` summary to every session of group_library's output.
 
     `digests` maps image id to its stored content digest: the public library
     records leave digests out, and a measurement counts only for the bytes
-    it was made from. Sessions are then compared across the library."""
+    it was made from. Sessions are then compared across the library, camera
+    by camera; returns the cameras with their tags."""
     from .database import FRAME_QUALITY_MEASURES
     entries = []
     for obj in objects:
@@ -590,10 +651,14 @@ def attach_session_quality(objects: list[dict], measurements: dict[int, dict],
             session["quality"] = session_summary(measured, len(lights)) if lights else None
             if session["quality"] and session["quality"].get("conditions"):
                 entries.append((object_key, session["quality"]))
-    compare_sessions(entries)
+    return compare_sessions(entries)
 
 
 # ---------------------------------------------------------------- worker
+
+GRADE_NOW_MEMORY = 768 * 1024 * 1024   # peak bytes one measuring process may need
+PAUSED_SETTING = "quality_paused"
+
 
 def _lower_thread_priority():
     if os.name == "nt":
@@ -605,35 +670,125 @@ def _lower_thread_priority():
             pass
 
 
-class QualityWorker:
-    """Grades light frames one at a time while the archive is idle.
+def _available_memory() -> int | None:
+    """Physical memory free right now, in bytes (None when unknown)."""
+    if os.name == "nt":
+        try:
+            import ctypes
 
-    `busy()` reports archive activity (imports, reindex, health, compression,
-    recent archive requests). The worker never reads while busy, reads one
-    file's bytes under the archive lock (so no file is held open while an
-    archive operation wants it), measures with the lock released, then rests
-    `REST_FACTOR` times as long as the measurement took. Sessions are graded
-    newest first; `prioritize` moves chosen frames to the front."""
+            class MemoryStatus(ctypes.Structure):
+                _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong),
+                            ("total_phys", ctypes.c_ulonglong), ("avail_phys", ctypes.c_ulonglong),
+                            ("total_page", ctypes.c_ulonglong), ("avail_page", ctypes.c_ulonglong),
+                            ("total_virtual", ctypes.c_ulonglong), ("avail_virtual", ctypes.c_ulonglong),
+                            ("avail_extended", ctypes.c_ulonglong)]
+            status = MemoryStatus()
+            status.length = ctypes.sizeof(MemoryStatus)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return int(status.avail_phys)
+        except (AttributeError, OSError):
+            return None
+        return None
+    try:
+        return os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def grade_now_workers() -> int:
+    """Measuring processes for Grade now: every logical core, but no more
+    than free memory holds (a large frame needs several hundred MB while it
+    is measured)."""
+    workers = os.cpu_count() or 1
+    memory = _available_memory()
+    if memory:
+        workers = min(workers, memory // GRADE_NOW_MEMORY)
+    return max(1, int(workers))
+
+
+def _pool_init():
+    """Measuring processes run below normal priority: they take every core
+    nobody else wants while the window and other programs stay responsive."""
+    try:
+        if os.name == "nt":
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), 0x00004000)  # BELOW_NORMAL
+        else:
+            os.nice(5)
+    except (AttributeError, OSError):
+        pass
+
+
+def measure_in_process(raw: bytes) -> tuple[dict | None, str | None]:
+    """measure_file_bytes() for a pool process: (metrics, error)."""
+    try:
+        return measure_file_bytes(raw), None
+    except FrameUnreadable as exc:
+        return None, str(exc)
+    except MemoryError:
+        return None, "Not enough memory to measure this frame."
+
+
+def process_pool(workers: int):
+    """A pool of measuring processes. SEP and the FITS decoding hold the GIL,
+    so threads barely beat one core; separate processes scale. Spawned (not
+    forked) so no lock held by another thread is copied into a child."""
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+    return ProcessPoolExecutor(max_workers=workers, initializer=_pool_init,
+                               mp_context=multiprocessing.get_context("spawn"))
+
+
+class QualityWorker:
+    """Grades light frames in the background, or all at once on request.
+
+    Background grading measures one frame at a time on a low-priority thread
+    and only while the archive is idle: `busy()` reports archive activity
+    (imports, reindex, health, compression, recent archive requests). It
+    reads one file's bytes under the archive lock (so no file is held open
+    while an archive operation wants it), measures with the lock released,
+    then rests `REST_FACTOR` times as long as the measurement took. Sessions
+    are graded newest first; `prioritize` moves chosen frames to the front.
+
+    Grade now (`grade_now`) measures the chosen frames, or every ungraded
+    one, on a pool of processes - one per core as far as memory allows - with
+    no rests. It still reads only under a free archive lock and waits while
+    an archive job runs (`working()`), but not for the quiet period after an
+    archive request. `pause()` holds all grading (remembered across restarts)
+    until `resume()`; `stop()` ends a Grade now run and returns to background
+    grading."""
 
     IDLE_POLL = 2.0
     REST_FACTOR = 3.0
     MIN_REST = 0.5
     REFRESH = 300.0
+    RESULT_POLL = 0.25
 
-    def __init__(self, db, busy=lambda: False):
+    def __init__(self, db, busy=lambda: False, working=None, pool_factory=process_pool,
+                 workers=grade_now_workers):
         self.db = db
         self.busy = busy
+        self.working = working or busy
+        self.pool_factory = pool_factory
+        self.workers = workers
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._lock = threading.Lock()
         self._queue: list[int] = []
         self._priority: list[int] = []
         self._queued_at = 0.0
+        self._job: dict | None = None
+        try:
+            self._paused = bool(db.setting(PAUSED_SETTING, False))
+        except Exception:               # a prototype setting must never block startup
+            self._paused = False
         self.thread = None
         self.state = "starting"
         self.measured_this_run = 0
         self.current = None
         self.revision = 0
+        self.last_error = None
 
     # -- control
     def start(self):
@@ -647,20 +802,84 @@ class QualityWorker:
         if self.thread is not None:
             self.thread.join(timeout)
 
+    @staticmethod
+    def _ids(image_ids) -> list[int]:
+        return [i for i in image_ids if isinstance(i, int) and not isinstance(i, bool)]
+
     def prioritize(self, image_ids) -> int:
-        ids = [i for i in image_ids if isinstance(i, int) and not isinstance(i, bool)]
+        ids = self._ids(image_ids)
         with self._lock:
             known = set(self._priority)
             self._priority.extend(i for i in ids if i not in known)
         self._wake.set()
         return len(ids)
 
+    def grade_now(self, image_ids=None) -> int:
+        """Grade these frames (None: every ungraded frame) at full speed.
+        A run already going takes the new frames on. Resumes a paused grader:
+        asking for a grade is the clearest sign grading is wanted. Returns
+        how many frames were added."""
+        ids = self._plan() if image_ids is None else self._ids(image_ids)
+        rows = self.db.frame_quality()
+        images = {im["id"]: im for im in self.db.images()}
+        ids = [i for i in dict.fromkeys(ids) if i in images and is_gradable(images[i])
+               and not fresh(images[i], rows.get(i))]
+        with self._lock:
+            job = self._job
+            if job is None or job.get("stopping"):
+                job = {"ids": [], "known": set(), "total": 0, "done": 0, "failed": 0,
+                       "workers": 0, "started": time.time()}
+            added = [i for i in ids if i not in job["known"]]
+            job["ids"].extend(added)
+            job["known"].update(added)
+            job["total"] += len(added)
+            if job["ids"] or job["workers"]:
+                self._job = job
+            self.last_error = None
+        self.resume()
+        return len(added)
+
+    def stop(self) -> bool:
+        """End a Grade now run; frames being measured finish and are kept."""
+        with self._lock:
+            job = self._job
+            if job is None:
+                return False
+            job["ids"].clear()
+            job["stopping"] = True
+            if not job["workers"]:
+                self._job = None
+        self._wake.set()
+        return True
+
+    def pause(self):
+        self._set_paused(True)
+
+    def resume(self):
+        self._set_paused(False)
+
+    def _set_paused(self, paused: bool):
+        changed = self._paused != paused
+        self._paused = paused
+        if changed:
+            try:
+                self.db.set_setting(PAUSED_SETTING, paused)
+            except Exception:
+                log.exception("could not remember the grading pause")
+        self._wake.set()
+
     def snapshot(self) -> dict:
         with self._lock:
             pending = len(self._queue) + len(self._priority)
-            return {"state": self.state, "pending": pending, "priority": len(self._priority),
+            job = self._job
+            job_view = None if job is None else {
+                "total": job["total"], "done": job["done"], "failed": job["failed"],
+                "remaining": job["total"] - job["done"], "workers": job["workers"],
+                "stopping": bool(job.get("stopping"))}
+            return {"state": self.state, "paused": self._paused, "pending": pending,
+                    "priority": len(self._priority), "job": job_view,
                     "measured": self.measured_this_run, "current": self.current,
-                    "revision": self.revision}
+                    "revision": self.revision, "error": self.last_error}
 
     # -- work
     def _plan(self) -> list[int]:
@@ -679,15 +898,18 @@ class QualityWorker:
             ordered.extend(sorted(members, key=lambda im: im.get("date_obs") or ""))
         return [im["id"] for im in ordered]
 
-    def _next(self) -> int | None:
-        with self._lock:
-            if self._priority:
-                return self._priority.pop(0)
-        if not self._queue or time.monotonic() - self._queued_at > self.REFRESH:
+    def _refresh_plan(self, force=False):
+        if force or not self._queue or time.monotonic() - self._queued_at > self.REFRESH:
             plan = self._plan()
             with self._lock:
                 self._queue = plan
                 self._queued_at = time.monotonic()
+
+    def _next(self) -> int | None:
+        with self._lock:
+            if self._priority:
+                return self._priority.pop(0)
+        self._refresh_plan()
         with self._lock:
             return self._queue.pop(0) if self._queue else None
 
@@ -703,73 +925,199 @@ class QualityWorker:
         finally:
             lock.release()
 
-    def measure_one(self, image_id: int) -> str:
-        """Measure one frame now (no idle check). Returns ok/skipped/error/busy."""
+    def _prepare(self, image_id: int):
+        """(image, bytes) of a frame to measure, or the outcome without
+        measuring: skipped (nothing to do), error (recorded) or busy."""
         image = self.db.image(image_id)
         if image is None or not is_gradable(image):
             return "skipped"
         if fresh(image, self.db.frame_quality().get(image_id)):
             return "skipped"
-        archive = Path(self.db.image_dir())
         try:
-            raw = self._read(image, archive)
+            raw = self._read(image, Path(self.db.image_dir()))
         except OSError as exc:
             self.db.set_frame_quality(image_id, image.get("content_sha256"), VERSION, None,
                                       f"File could not be read: {exc}")
             return "error"
         if raw is None:
             return "busy"
-        try:
-            metrics = measure_file_bytes(raw)
-            error = None
-        except FrameUnreadable as exc:
-            metrics, error = None, str(exc)
-        except MemoryError:
-            metrics, error = None, "Not enough memory to measure this frame."
-        del raw
-        current = self.db.image(image_id)
+        return image, raw
+
+    def _record(self, image: dict, metrics: dict | None, error: str | None) -> str:
+        current = self.db.image(image["id"])
         if current is None or current.get("content_sha256") != image.get("content_sha256"):
             return "skipped"           # changed while measuring; the next plan picks it up
-        self.db.set_frame_quality(image_id, image.get("content_sha256"), VERSION, metrics, error)
+        self.db.set_frame_quality(image["id"], image.get("content_sha256"), VERSION, metrics, error)
         return "error" if error else "ok"
+
+    def measure_one(self, image_id: int) -> str:
+        """Measure one frame now (no idle check). Returns ok/skipped/error/busy."""
+        prepared = self._prepare(image_id)
+        if isinstance(prepared, str):
+            return prepared
+        image, raw = prepared
+        del prepared
+        metrics, error = measure_in_process(raw)
+        del raw
+        return self._record(image, metrics, error)
+
+    def _counted(self, outcome: str, job: dict | None = None):
+        with self._lock:
+            if job is not None:
+                job["done"] += 1
+                job["failed"] += outcome == "error"
+            if outcome in ("ok", "error"):
+                self.measured_this_run += 1
+                self.revision += 1
+
+    def _sleep(self, seconds: float):
+        """Wait, but wake for a pause, resume, Grade now or shutdown."""
+        self._wake.wait(seconds)
+        self._wake.clear()
 
     def _run(self):
         _lower_thread_priority()
         while not self._stop.is_set():
             try:
-                if self.busy():
-                    self.state = "waiting"
-                    self._wake.wait(self.IDLE_POLL)
-                    self._wake.clear()
+                if self._paused:
+                    self.state, self.current = "paused", None
+                    self._refresh_plan()      # keep the count of frames left honest
+                    self._sleep(self.IDLE_POLL * 5)
                     continue
-                image_id = self._next()
-                if image_id is None:
-                    self.state = "done"
-                    self.current = None
-                    self._wake.wait(30.0)
-                    self._wake.clear()
-                    with self._lock:
-                        self._queued_at = 0.0     # replan after new imports
+                if self._job is not None:
+                    self._run_job()
                     continue
-                self.state = "working"
-                self.current = image_id
-                started = time.monotonic()
-                outcome = self.measure_one(image_id)
-                elapsed = time.monotonic() - started
-                if outcome == "busy":
-                    with self._lock:
-                        self._priority.insert(0, image_id)
-                    self.state = "waiting"
-                    self._wake.wait(self.IDLE_POLL)
-                    self._wake.clear()
-                    continue
-                if outcome in ("ok", "error"):
-                    self.measured_this_run += 1
-                    self.revision += 1
-                rest = max(self.MIN_REST, self.REST_FACTOR * elapsed) if outcome != "skipped" else 0
-                if rest:
-                    self._stop.wait(rest)
+                self._background_step()
             except Exception:              # a prototype must never take the app down
                 log.exception("session quality worker step failed")
                 self._stop.wait(10.0)
         self.state = "stopped"
+
+    def _background_step(self):
+        if self.busy():
+            self.state = "waiting"
+            self._sleep(self.IDLE_POLL)
+            return
+        image_id = self._next()
+        if image_id is None:
+            self.state = "done"
+            self.current = None
+            self._sleep(30.0)
+            with self._lock:
+                self._queued_at = 0.0     # replan after new imports
+            return
+        self.state = "working"
+        self.current = image_id
+        started = time.monotonic()
+        outcome = self.measure_one(image_id)
+        elapsed = time.monotonic() - started
+        if outcome == "busy":
+            with self._lock:
+                self._priority.insert(0, image_id)
+            self.state = "waiting"
+            self._sleep(self.IDLE_POLL)
+            return
+        self._counted(outcome)
+        if outcome != "skipped":
+            self._sleep(max(self.MIN_REST, self.REST_FACTOR * elapsed))
+
+    def _take(self, job: dict) -> int | None:
+        with self._lock:
+            return job["ids"].pop(0) if job["ids"] else None
+
+    def _give_back(self, job: dict, image_id: int):
+        with self._lock:
+            if not job.get("stopping"):
+                job["ids"].insert(0, image_id)
+
+    def _run_job(self):
+        """One Grade now run on a process pool, until its frames are done, it
+        is stopped or paused, or the app shuts down."""
+        from concurrent.futures import FIRST_COMPLETED, wait
+        from concurrent.futures.process import BrokenProcessPool
+
+        with self._lock:
+            job = self._job
+            if job is None or job.get("stopping"):
+                return                              # stopped before it began
+            workers = max(1, min(self.workers(), len(job["ids"]) or 1))
+            job["workers"] = workers
+        self.state, self.current = "now", None
+        in_flight: dict = {}
+        broken = None
+        pool = None
+        try:
+            pool = self.pool_factory(workers)
+            while not self._stop.is_set() and not self._paused and not job.get("stopping"):
+                # Keep every process busy, with one file read ahead for each.
+                waiting = False
+                while len(in_flight) < 2 * workers and not self._paused:
+                    image_id = self._take(job)
+                    if image_id is None:
+                        break
+                    prepared = "busy" if self.working() else self._prepare(image_id)
+                    if prepared == "busy":
+                        self._give_back(job, image_id)
+                        waiting = True
+                        break
+                    if isinstance(prepared, str):
+                        self._counted(prepared, job)
+                        continue
+                    image, raw = prepared
+                    del prepared
+                    in_flight[pool.submit(measure_in_process, raw)] = image
+                    del raw
+                if not in_flight:
+                    with self._lock:
+                        left = bool(job["ids"])
+                    if not left:
+                        break                       # the run is complete
+                    self.state = "waiting"          # an archive job holds the files
+                    self._sleep(self.IDLE_POLL)
+                    continue
+                self.state = "waiting" if waiting else "now"
+                finished, _ = wait(list(in_flight), timeout=self.RESULT_POLL,
+                                   return_when=FIRST_COMPLETED)
+                for future in finished:
+                    image = in_flight.pop(future)
+                    try:
+                        metrics, error = future.result()
+                    except BrokenProcessPool as exc:
+                        broken = exc
+                        self._give_back(job, image["id"])
+                        continue
+                    self._counted(self._record(image, metrics, error), job)
+                if broken is not None:
+                    break
+        except BrokenProcessPool as exc:
+            broken = exc
+        finally:
+            self._drain(pool, in_flight, job, broken)
+        with self._lock:
+            job["workers"] = 0
+            if broken is not None:
+                self.last_error = ("Grade now stopped: a measuring process failed "
+                                   "(possibly out of memory). Background grading continues.")
+                log.warning("grade now pool failed: %s", broken)
+            ended = broken is not None or job.get("stopping") or not job["ids"]
+            if ended and self._job is job:
+                self._job = None
+        if ended and not self._stop.is_set():
+            self._refresh_plan(force=True)          # the run measured part of the background plan
+
+    def _drain(self, pool, in_flight: dict, job: dict, broken):
+        """Hand back frames not yet started; keep the ones already measured."""
+        for future, image in list(in_flight.items()):
+            if future.cancel():
+                self._give_back(job, image["id"])
+                continue
+            if self._stop.is_set() or broken is not None:
+                continue
+            try:
+                metrics, error = future.result()
+            except Exception:                       # the pool broke while draining
+                self._give_back(job, image["id"])
+                continue
+            self._counted(self._record(image, metrics, error), job)
+        if pool is not None:
+            pool.shutdown(wait=not self._stop.is_set(), cancel_futures=True)

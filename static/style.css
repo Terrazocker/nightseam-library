@@ -323,6 +323,43 @@ progress::-moz-progress-bar { border-radius: 3px; background: var(--accent); }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* Session grading in the header: shape tells the state, the label says it. */
+.busy-slot { align-items: center; gap: var(--sp-2); }
+.grading-anchor:not([hidden]) { display: inline-flex; flex: 0 1 auto; min-width: 0; }
+.grading-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.grading-button:hover { background: var(--hover); }
+.grading-button .chevron { flex: none; width: 14px; height: 14px; fill: none; stroke: var(--dim);
+  stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.grading-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.grading-count { color: var(--dim); }
+.grading-mark { flex: none; box-sizing: border-box; width: 10px; height: 10px; border-radius: 50%; background: var(--dim); }
+.grading-button[data-state="now"] .grading-mark { width: 14px; height: 14px; border: 2px solid var(--accent-soft);
+  border-top-color: var(--accent); background: none; animation: spin .8s linear infinite; }
+.grading-button[data-state="waiting"] .grading-mark { border: 2px solid var(--dim); background: none; }
+.grading-button[data-state="paused"] .grading-mark { border-radius: 0; border-right: 3px solid var(--dim);
+  border-left: 3px solid var(--dim); background: none; }
+.grading-menu:not([hidden]) { display: flex; flex-direction: column; }
+.grading-summary { padding: 0 var(--sp-2) var(--sp-2); color: var(--text); font-size: var(--fs-sm); line-height: var(--lh); }
+.grading-progress { display: block; height: 4px; margin: 0 var(--sp-2) var(--sp-2); overflow: hidden;
+  border-radius: 2px; background: var(--border); }
+.grading-progress[hidden] { display: none; }
+.grading-progress > span { display: block; width: 0; height: 100%; background: var(--good); }
+
 .image-catalog-tools { display: flex; flex: none; align-items: center; gap: var(--sp-2); }
 .image-catalog-tools .button { min-height: var(--control-h); }
 .image-catalog-tools .chevron { width: 14px; height: 14px; margin-left: -2px; }
@@ -596,6 +633,13 @@ main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-
 .quality-mode { flex: none; height: 24px; }
 .quality-mode button { padding: 0 var(--sp-2); font-size: var(--fs-xs); }
 .quality-facts { margin-top: var(--sp-2); }
+/* The camera a session was compared within: a letter, the name beside it. */
+.camera-tag { display: inline-block; min-width: 18px; margin-right: var(--sp-1); padding: 0 3px;
+  border: 1px solid var(--border-strong); border-radius: 3px; color: var(--dim);
+  font: 600 var(--fs-xs) / 14px var(--font-mono); text-align: center; vertical-align: 1px; }
+.quality-camera { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--sp-2);
+  margin-bottom: var(--sp-1); font-size: var(--fs-sm); }
+.quality-camera .camera-tag { margin-right: 0; }
 .quality-facts dd .hint { margin-left: var(--sp-1); font-family: var(--font-ui); font-weight: 400; }
 .session-moon-fact { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--sp-1); }
 .library-folder-link {
@@ -990,6 +1034,7 @@ main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-
   .app-nav .tab svg { display: none; }
   .app-nav .tab { padding: 0 var(--sp-2); }
   #busy .busy-action { display: none; }
+  .grading-count { display: none; }
 }
 
 /* Single column: compact object navigation above the sessions. */

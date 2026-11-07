@@ -366,23 +366,47 @@ second per arcsec^2, seeing = 2 x HFR x pixel scale (arcsec FWHM), starlight
 XBINNING and FOCALLEN, or a WCS. Only frames in a session's main setup
 (instrument, gain, filter, binning) count. Per session each measure is
 summarised as median, best (mean of the best tenth) or mean, and
-`compare_sessions` sets it against the best session sharing its units: sky
-by setup, seeing across all setups with a known scale, starlight by object
-and setup. The conditions score weighs sky 0.35, seeing 0.30, starlight
+`compare_sessions` sets it against the best session sharing its units.
+Sessions are only ever compared with sessions of the same camera (the
+setup's instrument, INSTRUME or else TELESCOP): sky by setup, seeing in
+arcseconds across that camera's setups with a known scale (else by setup),
+starlight by object and setup. A session whose headers name no camera is
+compared with nothing. Rank and "of" count an object's scored sessions of one
+camera. `assign_camera_tags` letters the library's cameras A, B, ... in the
+order of their first measured frame; `/api/library` and the JSON export carry
+them as `quality_cameras` and each session's conditions as `camera` and
+`camera_tag`. The conditions score weighs sky 0.35, seeing 0.30, starlight
 0.20 and the share of trailed frames 0.15 over the measures that had another
 session to compare with; a session with none has no score. Without a BIAS
 card the sky still ranks within a setup but its ratios read low.
 
 `QualityWorker` runs only in the application (`create_app(...,
-background_quality=True)` from main.py; tests never start it). It measures
-one frame at a time on a low-priority thread and only while the archive is
-idle: the archive lock is free, no health, compression or folder job runs and
-no archive request arrived in the last 20 s. It reads a file's bytes under the
-archive lock (never holding a file open while an archive operation needs it),
-measures with the lock released and rests three times the measurement time.
-Newest sessions go first; `POST /api/library/quality/grade` moves a session to
-the front. `GET /api/library/quality/status` reports progress, and
-`/api/library` sessions carry a `quality` summary with per-frame scores.
+background_quality=True)` from main.py; tests start it only with their own
+pools). Background grading measures one frame at a time on a low-priority
+thread and only while the archive is idle: the archive lock is free, no
+health, compression or folder job runs and no archive request arrived in the
+last 20 s. It reads a file's bytes under the archive lock (never holding a
+file open while an archive operation needs it), measures with the lock
+released and rests three times the measurement time. Newest sessions go
+first; `POST /api/library/quality/grade` moves frames to the front.
+
+Grade now (`POST /api/library/quality/now`, chosen `image_ids` or every
+ungraded frame) measures on a spawned process pool: SEP and the FITS decoding
+hold the GIL, so threads measured 1.2x on 12 logical cores while 4 processes
+measured 3.2x. One process per logical core, capped by free physical memory
+at 768 MB each, all below normal priority; each process gets the file bytes
+read under the archive lock, at most two files per process in flight. It
+skips the 20 s quiet period but waits while an archive job runs or the lock
+is held. A failed pool hands its frames back to background grading instead
+of recording them as errors. `POST /api/library/quality/control` pauses or
+resumes all grading (the pause is kept in the `quality_paused` setting) or
+stops a Grade now run; frames already measuring finish and are kept, and a
+new Grade now resumes a paused grader. main.py calls
+`multiprocessing.freeze_support()` so the frozen executable's children become
+workers. `GET /api/library/quality/status` reports state (working, waiting,
+done, paused, now), the background count left, the Grade now run (total,
+done, failed, workers) and the last pool error; `/api/library` sessions carry
+a `quality` summary with per-frame scores.
 
 ## Independent build
 
