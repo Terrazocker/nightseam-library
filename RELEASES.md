@@ -38,7 +38,46 @@
   the queue tests passed five repeated runs. check_js and the encoding guard
   passed. Timings come from private scratch archives on this machine with the
   files in the OS cache: a cold disk would widen the first gain. Not yet
-  measured in a packaged build, from a real browser, or on Linux.
+  measured in a packaged build, from a real browser, or on Linux. After
+  merging the camera-scoped grading work from main, the full source suite ran
+  1145 passed and 5 skipped and check_js passed.
+
+## Camera-scoped grading and Grade now development — November 7, 2026
+
+- Sessions are compared only with sessions taken with the same camera. Sky,
+  seeing and starlight are set against the best session of that camera, and
+  the Quality column ranks an object's sessions per camera: three Andromeda
+  nights on camera A rank among themselves, two on camera B among
+  themselves. Seeing no longer compares across cameras in arcseconds. Each
+  camera gets a letter (A, B, ... in the order it was first used), shown
+  beside the score when the library has more than one camera and, with the
+  camera's name, in the session details. A session whose headers name no
+  camera is not compared.
+- Grading is visible and controllable: a Grading button in the header shows
+  whether it runs in the background, waits for the archive, runs Grade now
+  or is paused, with the frames left. Its menu pauses and resumes grading
+  (the pause survives a restart), stops a Grade now run and offers Grade all
+  now.
+- Grade now in the session details measures that session at once on every
+  core (as many processes as free memory allows, below normal priority)
+  instead of moving it up the slow background queue. Threads measured 1.2x
+  on 12 logical cores because SEP and the FITS decoding hold the GIL;
+  processes measured 3.2x on 4.
+- Validation (November 7, 2026): 11 new session-quality tests (camera
+  grouping, tags, unknown cameras, Grade now on a stand-in pool and on real
+  spawned processes, waiting for archive jobs, stop, pause kept across a
+  restart, a failed pool handing frames back, the worker count's memory cap,
+  the new routes); the test that compared seeing across two cameras now
+  expects no comparison. The first full source run had 2 failures: the JSON
+  export lacked the new `quality_cameras` list that the Library route
+  carries. With the export fixed, the full source suite ran 1134 passed and
+  5 skipped. A guard for a Stop arriving just before a run starts was added
+  afterwards; test_session_quality.py then ran 50 of 50. check_js and the
+  encoding guard passed. A source preview on a private scratch library (5
+  synthetic M31 nights, 3 on a Seestar S30, 2 on a ZWO ASI2600MC) showed the
+  camera letters, per-camera ranks, the header states and Grade now on 8
+  processes; it was removed afterwards. Not yet checked in a packaged build
+  (the frozen executable's spawned workers) or on Linux.
 
 Stacked images get their own folder, every capture session shows the Moon,
 and a first version of session quality grading arrives as a prototype.

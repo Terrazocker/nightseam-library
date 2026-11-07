@@ -179,13 +179,63 @@ def test_sessions_of_one_setup_are_ranked_on_a_shared_scale():
     assert bright["starlight_ratio"] == pytest.approx(0.75)
     assert good["score"] > bright["score"]
     assert (good["rank"], good["of"], bright["rank"]) == (1, 2, 2)
-    # Seeing compares across setups in arcseconds; sky and starlight never do.
+    # Another camera is compared with nothing, not even seeing in arcseconds.
     lone = alone["conditions"]["modes"]["median"]
-    assert lone["compared"]["seeing"] == 3 and lone["compared"]["sky"] == 1
+    assert lone["compared"]["seeing"] == 1 and lone["compared"]["sky"] == 1
     assert lone["seeing"] == pytest.approx(2.2)          # 2 x 1.1 px x 1.0"/px
-    assert lone["seeing_ratio"] == pytest.approx(1.0)    # the sharpest of all three
-    assert good["seeing_ratio"] == pytest.approx(4.0)    # 8.8" against 2.2"
-    assert lone["score"] == 100                          # nothing else it can be compared on
+    assert good["seeing_ratio"] == pytest.approx(1.0)    # 8.8" against its own camera's 8.8"
+    assert lone["score"] is None
+
+
+def test_sessions_are_compared_only_with_sessions_of_the_same_camera():
+    """Camera A: three nights on M31; camera B: two. A ranks among A, B among B."""
+    a = [_session(sky=s, seeing_px=p) for s, p in ((0.10, 1.0), (0.20, 1.2), (0.40, 1.5))]
+    b = [_session(sky=s, seeing_px=p, setup="ASI2600 | gain 100 | L | bin 1", scale=1.0)
+         for s, p in ((0.01, 0.5), (0.02, 0.6))]
+    for i, session in enumerate(a + b):        # A was used first
+        session["frames"][0]["t"] = f"2026-0{1 + i}-01T21:00:00"
+    cameras = quality.compare_sessions([("m31", q) for q in a + b])
+    assert cameras == [{"tag": "A", "camera": "S30", "sessions": 3},
+                       {"tag": "B", "camera": "ASI2600", "sessions": 2}]
+    median = lambda q: q["conditions"]["modes"]["median"]
+    assert [q["conditions"]["camera_tag"] for q in a + b] == ["A", "A", "A", "B", "B"]
+    assert [(median(q)["rank"], median(q)["of"]) for q in a] == [(1, 3), (2, 3), (3, 3)]
+    assert [(median(q)["rank"], median(q)["of"]) for q in b] == [(1, 2), (2, 2)]
+    # B's far darker, sharper numbers never become A's reference.
+    assert median(a[0])["sky_ratio"] == pytest.approx(1.0)
+    assert median(a[0])["seeing_ratio"] == pytest.approx(1.0)
+    assert all(median(q)["compared"] == {"sky": 3, "seeing": 3, "starlight": 3} for q in a)
+    assert all(median(q)["compared"] == {"sky": 2, "seeing": 2, "starlight": 2} for q in b)
+    assert median(a[0])["score"] == median(b[0])["score"] == 100
+
+
+def test_one_camera_compares_seeing_across_its_own_setups():
+    low, high = _session(sky=0.10, seeing_px=1.0), _session(sky=0.10, seeing_px=1.5,
+                                                            setup="S30 | gain 80 | LP | bin 1")
+    quality.compare_sessions([("m31", low), ("m31", high)])
+    assert high["conditions"]["modes"]["median"]["compared"]["seeing"] == 2
+    assert high["conditions"]["modes"]["median"]["seeing_ratio"] == pytest.approx(1.5)
+    assert high["conditions"]["modes"]["median"]["compared"]["sky"] == 1     # other gain
+
+
+def test_sessions_without_a_camera_name_are_never_compared():
+    unknown = "unknown camera | gain ? | no filter | bin 1"
+    first, second = _session(sky=0.10, setup=unknown), _session(sky=0.40, setup=unknown)
+    cameras = quality.compare_sessions([("m31", first), ("m31", second)])
+    assert cameras == []
+    for session in (first, second):
+        conditions = session["conditions"]
+        assert conditions["camera"] is None and conditions["camera_tag"] is None
+        assert conditions["modes"]["median"]["score"] is None
+        assert conditions["modes"]["median"]["compared"] == {}
+
+
+def test_camera_tags_run_past_z():
+    assert [quality.camera_tag(i) for i in (0, 1, 25, 26, 27, 701, 702)] == \
+        ["A", "B", "Z", "AA", "AB", "ZZ", "AAA"]
+    assert quality.setup_camera("Seestar S30 | gain 80 | LP | bin 1") == "Seestar S30"
+    assert quality.setup_camera("unknown camera | gain ? | LP | bin 1") is None
+    assert quality.setup_camera(None) is None
 
 
 def test_conditions_use_only_the_sessions_main_setup():
@@ -408,6 +458,146 @@ def test_prioritized_frames_go_first(library):
     assert worker._next() == first
 
 
+def _thread_pool(workers):
+    """Stands in for the process pool where only the scheduling is tested."""
+    from concurrent.futures import ThreadPoolExecutor
+    return ThreadPoolExecutor(workers)
+
+
+def _wait_for(condition, worker, seconds=30):
+    deadline = time.monotonic() + seconds
+    while not condition():
+        assert time.monotonic() < deadline, worker.snapshot()
+        time.sleep(0.05)
+
+
+def test_grade_now_measures_the_chosen_frames_without_resting(library):
+    db, _, add = library
+    ids = [add(f"{i}.fit", fits_bytes(star_field(seed=20 + i)), date=f"2026-08-22T21:0{i}:00")
+           for i in range(4)]
+    other = add("other.fit", fits_bytes(star_field(seed=30)), date="2026-07-01T21:00:00")
+    busy = threading.Event()
+    busy.set()                                 # background grading would never start
+    worker = quality.QualityWorker(db, busy=busy.is_set, working=lambda: False,
+                                   pool_factory=_thread_pool, workers=lambda: 3)
+    worker.REST_FACTOR = 100.0                 # Grade now must not rest at all
+    assert worker.grade_now(ids + [ids[0], True]) == 4
+    assert worker.grade_now(ids) == 0          # already part of the run
+    worker.start()
+    try:
+        _wait_for(lambda: worker.snapshot()["job"] is None, worker)
+        assert set(db.frame_quality()) == set(ids)
+        assert worker.snapshot()["measured"] == 4 and other not in db.frame_quality()
+        assert worker.grade_now(ids) == 0      # nothing left to grade there
+        assert worker.snapshot()["job"] is None
+    finally:
+        worker.shutdown()
+
+
+def test_grade_now_of_everything_uses_real_processes(library):
+    db, _, add = library
+    ids = [add(f"{i}.fit", fits_bytes(star_field(seed=40 + i)), date=f"2026-08-22T21:0{i}:00")
+           for i in range(3)]
+    worker = quality.QualityWorker(db, busy=lambda: True, working=lambda: False,
+                                   workers=lambda: 2)
+    assert worker.grade_now() == 3
+    worker.start()
+    try:
+        _wait_for(lambda: worker.snapshot()["job"] is None, worker, seconds=120)
+        rows = db.frame_quality()
+        assert set(rows) == set(ids) and all(rows[i]["status"] == "ok" for i in ids)
+        assert all(rows[i]["stars"] > 100 for i in ids)
+    finally:
+        worker.shutdown()
+
+
+def test_grade_now_waits_while_an_archive_job_runs(library):
+    db, _, add = library
+    light = add("a.fit", fits_bytes(star_field()))
+    working = threading.Event()
+    working.set()
+    worker = quality.QualityWorker(db, busy=lambda: True, working=working.is_set,
+                                   pool_factory=_thread_pool, workers=lambda: 2)
+    worker.IDLE_POLL = 0.05
+    worker.grade_now([light])
+    worker.start()
+    try:
+        _wait_for(lambda: worker.snapshot()["state"] == "waiting", worker)
+        assert db.frame_quality() == {}
+        working.clear()
+        _wait_for(lambda: light in db.frame_quality(), worker)
+    finally:
+        worker.shutdown()
+
+
+def test_stop_ends_a_grade_now_run_and_pause_holds_all_grading(library):
+    db, _, add = library
+    ids = [add(f"{i}.fit", fits_bytes(star_field(seed=50 + i)), date=f"2026-08-22T21:0{i}:00")
+           for i in range(3)]
+    worker = quality.QualityWorker(db, busy=lambda: False, pool_factory=_thread_pool,
+                                   workers=lambda: 1)
+    worker.grade_now(ids)
+    assert worker.stop() is True               # before the thread ever ran it
+    assert worker.snapshot()["job"] is None and worker.stop() is False
+    worker.pause()
+    assert worker.snapshot()["paused"] is True
+    worker.IDLE_POLL = worker.MIN_REST = 0.05
+    worker.start()
+    try:
+        _wait_for(lambda: worker.snapshot()["state"] == "paused", worker)
+        time.sleep(0.3)
+        assert db.frame_quality() == {}        # paused: not even background grading
+        assert worker.snapshot()["pending"] == 3
+    finally:
+        worker.shutdown()
+    # The pause is remembered across restarts until resumed.
+    again = quality.QualityWorker(db, pool_factory=_thread_pool, workers=lambda: 1)
+    assert again.snapshot()["paused"] is True
+    assert again.grade_now([ids[0]]) == 1      # asking for a grade resumes
+    assert again.snapshot()["paused"] is False
+    assert quality.QualityWorker(db).snapshot()["paused"] is False
+
+
+def test_a_broken_pool_hands_its_frames_back_to_background_grading(library):
+    from concurrent.futures.process import BrokenProcessPool
+
+    class Broken:
+        def __init__(self, workers):
+            pass
+
+        def submit(self, *args):
+            from concurrent.futures import Future
+            future = Future()
+            future.set_exception(BrokenProcessPool("a worker died"))
+            return future
+
+        def shutdown(self, **kwargs):
+            pass
+
+    db, _, add = library
+    light = add("a.fit", fits_bytes(star_field()))
+    worker = quality.QualityWorker(db, busy=lambda: True, working=lambda: False,
+                                   pool_factory=Broken, workers=lambda: 2)
+    worker.grade_now([light])
+    worker.start()
+    try:
+        _wait_for(lambda: worker.snapshot()["job"] is None, worker)
+        assert "measuring process failed" in worker.snapshot()["error"]
+        assert db.frame_quality() == {}        # no frame was marked as failed
+    finally:
+        worker.shutdown()
+
+
+def test_grade_now_workers_stay_within_cores_and_memory(monkeypatch):
+    monkeypatch.setattr(quality.os, "cpu_count", lambda: 16)
+    monkeypatch.setattr(quality, "_available_memory", lambda: 4 * quality.GRADE_NOW_MEMORY + 1)
+    assert quality.grade_now_workers() == 4
+    monkeypatch.setattr(quality, "_available_memory", lambda: None)
+    assert quality.grade_now_workers() == 16
+    monkeypatch.setattr(quality, "_available_memory", lambda: 10)
+    assert quality.grade_now_workers() == 1
+
+
 # ---------------------------------------------------------------- API
 
 @pytest.fixture
@@ -437,3 +627,26 @@ def test_quality_status_and_grade_routes(client):
     graded = client.post("/api/library/quality/grade", json={"image_ids": [light]}).json()
     assert graded["queued"] == 1 and graded["priority"] == 1
     assert client.post("/api/library/quality/grade", json={"image_ids": "x"}).status_code == 422
+
+
+def test_quality_now_and_control_routes(client):
+    light = client.add("a.fit", fits_bytes(star_field()))
+    client.add("b.fit", fits_bytes(star_field(seed=9)), date="2026-08-22T20:05:00")
+    now = client.post("/api/library/quality/now", json={"image_ids": [light]}).json()
+    assert now["queued"] == 1 and now["job"]["total"] == 1 and now["paused"] is False
+    everything = client.post("/api/library/quality/now", json={}).json()
+    assert everything["queued"] == 1 and everything["job"]["total"] == 2
+    stopped = client.post("/api/library/quality/control", json={"action": "stop"}).json()
+    assert stopped["job"] is None
+    assert client.post("/api/library/quality/control", json={"action": "pause"}).json()["paused"] is True
+    assert client.db.setting("quality_paused") is True
+    assert client.post("/api/library/quality/control", json={"action": "resume"}).json()["paused"] is False
+    assert client.post("/api/library/quality/control", json={"action": "delete"}).status_code == 422
+    # Grading controls are no archive work: they never hold background grading off.
+    from app import server
+    server._state["last_archive_request"] = -1e9
+    client.post("/api/library/quality/control", json={"action": "pause"})
+    client.post("/api/library/quality/now", json={"image_ids": [light]})
+    assert server._state["last_archive_request"] == -1e9
+    payload = client.get("/api/library").json()
+    assert payload["quality_cameras"] == []    # nothing measured yet

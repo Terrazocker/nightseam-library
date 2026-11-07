@@ -170,6 +170,14 @@ class QualityGradeIn(BaseModel):
     image_ids: list[int] = Field(max_length=100000)
 
 
+class QualityNowIn(BaseModel):
+    image_ids: Optional[list[int]] = Field(default=None, max_length=100000)  # None: every ungraded frame
+
+
+class QualityControlIn(BaseModel):
+    action: Literal["pause", "resume", "stop"]
+
+
 class StacksFolderIn(BaseModel):
     slug: str = Field(max_length=200)  # the target's archive folder name
 
@@ -265,10 +273,8 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
     health = ArchiveHealthManager(db)
     compression = CompressionManager(db)
 
-    def archive_busy() -> bool:
-        """True while any archive work runs or ran in the last 20 seconds."""
-        if time.monotonic() - _state.get('last_archive_request', -1e9) < 20.0:
-            return True
+    def archive_working() -> bool:
+        """True while an archive job runs or the archive lock is held."""
         if any(manager.thread is not None and manager.thread.is_alive()
                for manager in (health, compression)):
             return True
@@ -279,7 +285,13 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
         db.archive_lock.release()
         return False
 
-    grader = session_quality.QualityWorker(db, busy=archive_busy)
+    def archive_busy() -> bool:
+        """True while any archive work runs or ran in the last 20 seconds."""
+        if time.monotonic() - _state.get('last_archive_request', -1e9) < 20.0:
+            return True
+        return archive_working()
+
+    grader = session_quality.QualityWorker(db, busy=archive_busy, working=archive_working)
     ingest_workers =asyncio.Semaphore(max(1, min(24, os.cpu_count() or 1)))
     import_queue = ImportQueue()
     resolver_lock = threading.Lock()
@@ -1086,25 +1098,40 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
             raise HTTPException(500, f"cannot open stacks folder: {exc}")
         return {"ok": True, "rel": f"{slug}/{STACK_DIR}"}
 
+    def quality_status() -> dict:
+        snapshot = grader.snapshot()
+        snapshot["enabled"] = grader.thread is not None
+        return snapshot
+
     @app.get("/api/library/quality/status")
     def api_quality_status():
         """The session grader's progress (prototype)."""
-        snapshot = grader.snapshot()
-        snapshot["enabled"] = grader.thread is not None
-        return JSONResponse(snapshot, headers={"Cache-Control": "no-store"})
+        return JSONResponse(quality_status(), headers={"Cache-Control": "no-store"})
 
     @app.post("/api/library/quality/grade")
     def api_quality_grade(body: QualityGradeIn):
         """Grade these frames next, still only while the archive is idle."""
         queued = grader.prioritize(body.image_ids)
-        return {"queued": queued, **grader.snapshot(), "enabled": grader.thread is not None}
+        return {"queued": queued, **quality_status()}
+
+    @app.post("/api/library/quality/now")
+    def api_quality_now(body: QualityNowIn):
+        """Grade these frames (or every ungraded one) now on every core."""
+        queued = grader.grade_now(body.image_ids)
+        return {"queued": queued, **quality_status()}
+
+    @app.post("/api/library/quality/control")
+    def api_quality_control(body: QualityControlIn):
+        """Pause or resume all grading, or stop a Grade now run."""
+        {"pause": grader.pause, "resume": grader.resume, "stop": grader.stop}[body.action]()
+        return quality_status()
 
     @app.get("/api/library")
     def api_library():
         from . import imglib
         imgs = db.images()
         objs = imglib.group_library(imgs, db.all_objects(advanced=True))
-        session_quality.attach_session_quality(
+        cameras = session_quality.attach_session_quality(
             objs, db.frame_quality(), {i["id"]: i.get("content_sha256") for i in imgs})
         # Construct/render in this worker: returning a dict makes FastAPI walk
         # and encode the complete library on the ASGI event loop afterwards.
@@ -1114,6 +1141,7 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
             "total_exposure": round(
                 sum(float(i.get("exposure") or 0.0) for i in imgs), 1),
             "objects": objs,
+            "quality_cameras": cameras,
         }))
 
     @app.post("/api/library/edit")
@@ -1255,7 +1283,7 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
             if objs is None:
                 objs = imglib.group_library(imgs, db.all_objects(advanced=True))
             # The export mirrors the Library, session quality included.
-            session_quality.attach_session_quality(
+            cameras = session_quality.attach_session_quality(
                 objs, db.frame_quality(), {i["id"]: i.get("content_sha256") for i in imgs})
             return Response(
                 content=json.dumps({
@@ -1264,6 +1292,7 @@ def create_app(db: Database, background_quality: bool = False) -> FastAPI:
                     "total_exposure": round(sum(
                         float(i.get("exposure") or 0.0) for i in imgs), 1),
                     "objects": objs,
+                    "quality_cameras": cameras,
                 }, indent=1).encode("utf-8"),
                 media_type="application/json",
                 headers={"Content-Disposition":
