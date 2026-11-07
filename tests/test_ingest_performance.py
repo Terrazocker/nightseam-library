@@ -131,10 +131,11 @@ def test_negative_candidates_use_safe_versions_and_edits_invalidate(tmp_path, mo
     monkeypatch.setattr(ingest, '_fingerprint_file', measured)
     results = [upload(db, archive, exposure(index), name=f'{index}.fit') for index in range(12)]
     assert all(result['ok'] for result in results)
-    # Published bytes seed the cache, so durable versions need no negative
-    # reads. Without one (no change journal), Windows rehashes between
-    # unpinned requests; timestamps alone can collide.
-    assert len(reads) == (0 if durable_versions(tmp_path) or os.name != 'nt' else 66)
+    # Every earlier file differs in its leading bytes, which rules it out
+    # from current bytes: no negative is hashed, with or without a durable
+    # version (before the comparison, a volume without a change journal
+    # rehashed 66 times here).
+    assert reads == []
     path = archive / results[0]['stored']
     info = path.stat()
     actual = exposure(40)
@@ -226,7 +227,9 @@ def test_bounded_negative_cache_and_conservative_reads_above_capacity(tmp_path, 
     # persisted versions cover the rest.
     durable = durable_versions(tmp_path)
     assert len(db._ingest_fingerprints) == (3 if durable else 0)
-    assert len(reads) == (0 if durable or os.name != 'nt' else 28)
+    # Leading bytes rule every earlier file out, so capacity never forces a
+    # read (before the comparison: 28 without durable versions).
+    assert reads == []
 
 
 def test_known_compressed_duplicate_does_not_need_encoder(tmp_path, monkeypatch):
