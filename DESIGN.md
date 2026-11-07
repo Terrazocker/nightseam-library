@@ -93,8 +93,14 @@ and the same page.
 ## Header
 
 One 48px bar: the quiet application name (no logo), the view tabs
-(Library, Import, Sky Map), the busy indicator, the primary **Import** action
-and the **Tools** menu. Tools groups the archive actions (Reindex folders,
+(Library, Import, Sky Map), the Grading menu button and the busy indicator,
+the primary **Import** action and the **Tools** menu. **Grading** appears
+only while grading has frames left, is paused or runs Grade now. Its mark
+tells the state by shape (filled dot: background, ring: waiting for the
+archive, spinner: Grade now, two bars: paused) beside a label and the count
+left (the count drops first at narrow widths). Its menu states what grading
+is doing, shows Grade now progress as a bar, and offers Grade all now,
+Pause or Resume grading, and Stop Grade now. Tools groups the archive actions (Reindex folders,
 Archive health), backup and export (Export library, Copy library) and the
 support report, and shows the version. At narrow widths tab icons drop first,
 then action labels (icons keep accessible names), then the application name;
@@ -125,11 +131,16 @@ workspace and the session inspector.
   sites. It uses `--dim` and always carries the name in its accessible label.
   Undated sessions show none.
 - **Session quality (prototype):** the Quality column holds the session's
-  conditions score 0–100 against the user's other sessions, as a number
-  (`--good` from 75, `--warn` below 50, plain text between; `*` while only
-  part of the session is graded, `…` before any grading, `—` with nothing to
-  compare yet). The inspector's Quality section has two blocks. Conditions:
-  the score with its rank among the object's sessions, a Median/Best/Mean
+  conditions score 0–100 against the user's other sessions taken with the
+  same camera, as a number (`--good` from 75, `--warn` below 50, plain text
+  between; `*` while only part of the session is graded, `…` before any
+  grading, `—` with nothing to compare yet). When the library holds more than
+  one camera, a small outlined letter (A, B, …, in the order the cameras were
+  first used) precedes the number and names the camera in its accessible
+  label. The inspector's Quality section has two blocks. Conditions: the
+  camera's letter and name ("compared only with this camera's sessions"),
+  the score with its rank among the object's sessions with that camera, a
+  Median/Best/Mean
   segmented toggle (remembered per viewer) and four facts in shared units —
   sky (ADU/s/″², times the darkest comparable session), seeing (″ FWHM,
   times the sharpest), starlight (percent of the clearest session of the
@@ -137,7 +148,7 @@ workspace and the session inspector.
   within-session grade, usable frames, a one-line trend ("Steady", "Got
   worse toward the end", "Improved") and a frame-score line from first to
   last frame with unusable frames as `--warn` dots, plus Grade now while
-  frames are left.
+  frames are left (it measures the session at once on all cores).
 - **Inspector:** session date, storage, session window, moon and exposure totals;
   frames per type; filters as chips; every archive folder as a link. Actions
   sit at the bottom: Open session folder, Add calibration frames (+ Darks,

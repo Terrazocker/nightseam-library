@@ -182,6 +182,53 @@ export function setBusy(on, label) {
 
 /* ------------------------------------------------------------------ a11y */
 
+/* WAI-ARIA menu button: arrows move between enabled, visible items, Escape
+   returns focus to the button, Tab or an outside pointer closes the menu.
+   Returns setOpen(open) for callers that close the menu themselves. */
+export function bindMenuButton(button, menu) {
+  const items = () => [...menu.querySelectorAll('[role="menuitem"]')].filter(item => !item.disabled && !item.hidden);
+  const setOpen = (open, focus = null) => {
+    menu.hidden = !open;
+    button.setAttribute("aria-expanded", String(open));
+    if (!open) return;
+    const list = items();
+    (focus === "last" ? list.at(-1) : list[0])?.focus();
+  };
+  button.addEventListener("click", () => setOpen(menu.hidden));
+  button.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    setOpen(true, event.key === "ArrowUp" ? "last" : "first");
+  });
+  menu.addEventListener("keydown", (event) => {
+    const list = items();
+    const index = list.indexOf(document.activeElement);
+    const moves = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: list.length - 1 };
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      button.focus();
+    } else if (event.key in moves && list.length) {
+      event.preventDefault();
+      list[(moves[event.key] + list.length) % list.length].focus();
+    } else if (event.key === "Tab") {
+      setOpen(false);
+    }
+  });
+  // Item handlers run first; an action that opened a dialog keeps its focus.
+  menu.addEventListener("click", (event) => {
+    if (!event.target.closest('[role="menuitem"]')) return;
+    const focusInside = menu.contains(document.activeElement);
+    setOpen(false);
+    if (focusInside) button.focus();
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!menu.hidden && !menu.contains(event.target) && !button.contains(event.target)) setOpen(false);
+  });
+  return setOpen;
+}
+
 /* Wrap Tab focus inside the first open [role=dialog] so keyboard users
    cannot tab behind a modal. One delegated listener covers every modal. */
 export function initFocusTrap() {

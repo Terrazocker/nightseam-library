@@ -1,6 +1,6 @@
 /* Image Archive mode: mode switching, FITS import, library table */
 
-import { $, esc, api, toast, setBusy, fmtSize, fmtDT, TYPE_LABEL } from "./util.js";
+import { $, esc, api, toast, setBusy, fmtSize, fmtDT, TYPE_LABEL, bindMenuButton } from "./util.js";
 import { S } from "./state.js";
 import { renderSkyMap } from "./skymap.js";
 import { catalogIcon } from "./catalog_icons.js";
@@ -764,6 +764,7 @@ function sessionMoon(object, session) {
 /* ---------------- session quality (prototype) ---------------- */
 
 const QUALITY_POLL_MS = 5000;
+const QUALITY_FAST_POLL_MS = 1500;
 const QUALITY_RELOAD_MS = 15000;
 let _qualityStatus = null;
 let _qualityTimer = null;
@@ -796,21 +797,44 @@ function sessionConditions(quality) {
   return quality?.conditions?.modes?.[_qualityMode] || null;
 }
 
+/* Sessions are only compared with sessions of the same camera; each camera
+   carries a letter (A, B, ...) in the order it was first used. */
+function qualityCameras() {
+  return Array.isArray(S.library?.quality_cameras) ? S.library.quality_cameras : [];
+}
+
+function cameraTag(conditions, { always = false } = {}) {
+  const tag = conditions?.camera_tag;
+  if (!tag || (!always && qualityCameras().length < 2)) return "";
+  const label = `Camera ${tag}: ${conditions.camera}`;
+  return `<span class="camera-tag" role="img" aria-label="${esc(label)}" title="${esc(label)}">${esc(tag)}</span>`;
+}
+
+function cameraName(conditions) {
+  return conditions?.camera_tag ? `camera ${conditions.camera_tag}` : "this camera";
+}
+
 /* The session list shows conditions: this night against the user's other
-   nights, in shared units. A night with nothing to compare shows a dash. */
+   nights with the same camera, in shared units. A night with nothing to
+   compare shows a dash. */
 function qualityCell(quality) {
   if (!quality) return '<span class="zero" title="No light frames to grade">—</span>';
   if (!quality.measured) return '<span class="zero" title="Not graded yet">…</span>';
   const partial = quality.measured < quality.total;
+  const meta = quality.conditions;
   const conditions = sessionConditions(quality);
   const progress = partial ? ` · ${quality.measured} of ${quality.total} frames graded so far` : "";
+  const tag = cameraTag(meta);
   if (conditions?.score == null) {
-    return `<span class="zero" title="${esc(`Nothing to compare with yet: needs another session with this camera, or a known pixel scale${progress}`)}">—</span>`;
+    const why = meta && !meta.camera
+      ? "Not compared: the FITS headers name no camera"
+      : `Nothing to compare with yet: needs another session with ${cameraName(meta)}`;
+    return `${tag}<span class="zero" title="${esc(why + progress)}">—</span>`;
   }
   const title = `Conditions ${conditions.score} (${QUALITY_MODES[_qualityMode].toLowerCase()}) · ` +
-    (conditions.of > 1 ? `${ordinal(conditions.rank)} of ${conditions.of} sessions of this object` : "compared with your other sessions") +
+    (conditions.of > 1 ? `${ordinal(conditions.rank)} of ${conditions.of} sessions of this object with ${cameraName(meta)}` : `compared with your other sessions with ${cameraName(meta)}`) +
     ` · within the night ${quality.grade}` + progress;
-  return `<span class="quality-grade" data-band="${qualityBand(conditions.score)}"${partial ? " data-partial" : ""} title="${esc(title)}">${conditions.score}${partial ? "*" : ""}</span>`;
+  return `${tag}<span class="quality-grade" data-band="${qualityBand(conditions.score)}"${partial ? " data-partial" : ""} title="${esc(title)}">${conditions.score}${partial ? "*" : ""}</span>`;
 }
 
 function ordinal(n) {
@@ -856,14 +880,20 @@ function qualityStatusLine(quality) {
   const status = _qualityStatus;
   if (!quality || quality.measured >= quality.total) return "";
   if (!status?.enabled) return "Grading runs in the background of the desktop app.";
+  if (status.paused) return "Grading is paused. Resume it from Grading in the header, or use Grade now.";
+  if (status.job) {
+    const job = status.job;
+    if (status.state === "waiting") return "Grade now waits for the archive job to finish.";
+    return "Grading now on all cores. Progress shows under Grading in the header.";
+  }
   if (status.state === "waiting") return "Waiting for the archive to be idle before grading.";
   if (status.state === "working") return `Grading in the background · ${status.pending.toLocaleString()} frames to go`;
   return "Queued for grading.";
 }
 
 /* Conditions: the session's measures in shared units, each set against the
-   best comparable session (sky and starlight: same camera setup; seeing: in
-   arcseconds across setups). */
+   best comparable session of the same camera (sky and starlight: same
+   setup; seeing: in arcseconds across that camera's setups). */
 function conditionsMarkup(quality) {
   const meta = quality.conditions;
   const c = sessionConditions(quality);
@@ -884,12 +914,16 @@ function conditionsMarkup(quality) {
     ["Trailed frames", meta.trailed_pct == null ? "—" : `${significant(meta.trailed_pct, 2)}%`, ""],
   ];
   const score = c.score == null
-    ? '<span class="hint">Needs another session to compare with</span>'
-    : `<span><span class="quality-grade" data-band="${qualityBand(c.score)}">${c.score}</span> <span class="hint">/ 100${c.of > 1 ? ` · ${ordinal(c.rank)} of ${c.of} sessions of this object` : ""}</span></span>`;
+    ? `<span class="hint">${meta.camera ? `Needs another session with ${esc(cameraName(meta))} to compare with` : "Not compared: the FITS headers name no camera"}</span>`
+    : `<span><span class="quality-grade" data-band="${qualityBand(c.score)}">${c.score}</span> <span class="hint">/ 100${c.of > 1 ? ` · ${ordinal(c.rank)} of ${c.of} sessions of this object with ${esc(cameraName(meta))}` : ""}</span></span>`;
+  const camera = meta.camera
+    ? `<div class="quality-camera">${cameraTag(meta, { always: true })}<span>${esc(meta.camera)}</span><span class="hint">compared only with this camera's sessions</span></div>`
+    : '<div class="quality-camera"><span class="hint">Camera unknown: no INSTRUME or TELESCOP card</span></div>';
   const modes = Object.entries(QUALITY_MODES).map(([mode, label]) =>
     `<button type="button" data-quality-mode="${mode}" aria-pressed="${mode === _qualityMode}" title="${esc(QUALITY_MODE_HELP[mode])}">${label}</button>`).join("");
   return `<div class="quality-block"><div class="quality-block-head"><h4>Conditions</h4>
       <div class="segmented quality-mode" role="group" aria-label="Session statistic">${modes}</div></div>
+    ${camera}
     <div class="quality-summary">${score}</div>
     <dl class="library-session-facts quality-facts">${rows.map(([label, value, note]) =>
       `<div><dt>${esc(label)}</dt><dd>${esc(value)}${note ? ` ${note}` : ""}</dd></div>`).join("")}</dl>
@@ -904,7 +938,7 @@ function qualitySectionMarkup(object, session) {
     .map((image) => image.id).filter((id) => Number.isSafeInteger(id));
   const complete = quality.measured >= quality.total;
   const button = complete ? "" :
-    `<button class="button small" type="button" data-quality-grade="${lights.join(",")}">Grade now</button>`;
+    `<button class="button small" type="button" data-quality-grade="${lights.join(",")}" title="Measure this session's ungraded frames now, on all cores">Grade now</button>`;
   const status = qualityStatusLine(quality);
   if (!quality.measured) {
     return `<section class="library-quality"><h3 class="section-label">Quality <span class="hint">prototype</span></h3>
@@ -925,16 +959,113 @@ function qualitySectionMarkup(object, session) {
     ${status ? `<p class="quality-status">${esc(status)}</p>` : ""}</div></section>`;
 }
 
-async function gradeSessionNow(ids) {
+/* Grade now: the chosen frames (or, without ids, every ungraded frame) are
+   measured at once on all cores instead of slowly in the background. */
+async function gradeNow(ids = null) {
   try {
-    const status = await api("/api/library/quality/grade", {
+    const status = await api("/api/library/quality/now", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image_ids: ids }) });
-    _qualityStatus = status;
-    toast(status.enabled ? "This session is graded next, as soon as the archive is idle."
-      : "Grading runs in the background of the desktop app.", "info", 4000);
-    scheduleQualityPoll(1000);
+      body: JSON.stringify(ids ? { image_ids: ids } : {}) });
+    if (applyQualityStatus(status)) renderLibrary();
+    if (!status.enabled) toast("Grading runs in the desktop app.", "info", 4000);
+    else if (!status.queued && !status.job) toast("Every frame there is already graded.", "info", 4000);
+    scheduleQualityPoll(QUALITY_FAST_POLL_MS);
   } catch (err) { /* api() already toasted */ }
+}
+
+async function controlGrading(action) {
+  try {
+    const status = await api("/api/library/quality/control", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }) });
+    if (applyQualityStatus(status)) renderLibrary();
+    scheduleQualityPoll(QUALITY_FAST_POLL_MS);
+  } catch (err) { /* api() already toasted */ }
+}
+
+/* The header's Grading button: visible while grading has work, is paused or
+   runs Grade now; its menu pauses, resumes, stops Grade now or grades all. */
+function gradingView(status) {
+  if (!status?.enabled) return null;
+  const view = gradingState(status);
+  if (view && status.error && !status.job) view.summary = `${status.error} ${view.summary}`;
+  return view;
+}
+
+function gradingState(status) {
+  const job = status.job;
+  const left = job ? job.remaining : status.pending;
+  if (status.paused) {
+    return { state: "paused", text: "Grading paused", count: left ? `· ${left.toLocaleString()} left` : "",
+      summary: left ? `Paused with ${plural(left, "frame")} left to grade.` : "Paused. New imports wait until you resume.", left, job };
+  }
+  if (job) {
+    const cores = plural(job.workers || 1, "core");
+    if (status.state === "waiting") {
+      return { state: "waiting", text: "Grade now waits", count: `· ${job.done.toLocaleString()}/${job.total.toLocaleString()}`,
+        summary: `Waiting for the archive job to finish · ${job.done.toLocaleString()} of ${plural(job.total, "frame")} graded.`, left, job };
+    }
+    return { state: "now", text: "Grading now", count: `· ${job.done.toLocaleString()}/${job.total.toLocaleString()}`,
+      summary: `${job.workers ? `Grading on ${cores}` : "Starting the measuring processes"} · ${job.done.toLocaleString()} of ${plural(job.total, "frame")}` +
+        (job.failed ? ` · ${job.failed.toLocaleString()} unreadable` : "") + (job.stopping ? " · stopping" : ""), left, job };
+  }
+  if (!left) return null;
+  if (status.state === "waiting") {
+    return { state: "waiting", text: "Grading waits", count: `· ${left.toLocaleString()} left`,
+      summary: `Background grading waits for the archive to be idle · ${plural(left, "frame")} left.`, left };
+  }
+  return { state: "background", text: "Grading", count: `· ${left.toLocaleString()} left`,
+    summary: `Grading slowly in the background, one frame at a time · ${plural(left, "frame")} left.`, left };
+}
+
+function renderGradingIndicator(status) {
+  const anchor = $("#gradingAnchor");
+  if (!anchor) return;
+  const view = gradingView(status);
+  const menuOpen = !$("#gradingMenu").hidden;
+  anchor.hidden = !view && !menuOpen;
+  if (!view) return;
+  const button = $("#btnGrading");
+  button.dataset.state = view.state;
+  button.querySelector(".grading-action").textContent = view.text;
+  button.querySelector(".grading-count").textContent = view.count;
+  button.title = view.summary;
+  const summary = $("#gradingSummary");
+  if (summary.textContent !== view.summary) summary.textContent = view.summary;
+  const bar = $("#gradingProgressBar");
+  bar.parentElement.hidden = !view.job;
+  if (view.job) bar.style.width = `${Math.round(100 * view.job.done / Math.max(1, view.job.total))}%`;
+  $("#gradingNow").hidden = Boolean(view.job) && !status.paused;
+  $("#gradingNow").disabled = !view.left;
+  $("#gradingPause").hidden = Boolean(status.paused);
+  $("#gradingResume").hidden = !status.paused;
+  $("#gradingStop").hidden = !view.job;
+}
+
+/* What the inspector's grading line depends on; it re-renders when this changes. */
+function gradingPhase(status) {
+  if (!status) return "";
+  return [status.enabled, status.paused, Boolean(status.job), status.state].join("|");
+}
+
+function applyQualityStatus(status) {
+  const phaseChanged = gradingPhase(status) !== gradingPhase(_qualityStatus);
+  _qualityStatus = status;
+  renderGradingIndicator(status);
+  return phaseChanged;
+}
+
+function bindGradingMenu() {
+  const button = $("#btnGrading"), menu = $("#gradingMenu");
+  if (!button || !menu) return;
+  bindMenuButton(button, menu);
+  menu.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-grading-action]");
+    if (!item || item.disabled) return;
+    const action = item.dataset.gradingAction;
+    if (action === "now") gradeNow();
+    else controlGrading(action);
+  });
 }
 
 function scheduleQualityPoll(delay = QUALITY_POLL_MS) {
@@ -943,24 +1074,26 @@ function scheduleQualityPoll(delay = QUALITY_POLL_MS) {
 }
 
 /* Poll the grader while it has work; reload the library now and then so new
-   grades appear without a reload storm. */
+   grades appear without a reload storm, and once more when Grade now ends. */
 async function pollQuality() {
   if (document.hidden || !$("#libraryObjectList")) { scheduleQualityPoll(); return; }
   let status;
   try { status = await api("/api/library/quality/status", { silent: true }); }
   catch (err) { scheduleQualityPoll(QUALITY_POLL_MS * 4); return; }
   const changed = _qualityRevisionShown !== null && status.revision !== _qualityRevisionShown;
-  _qualityStatus = status;
-  if (changed && Date.now() - _qualityReloadedAt >= QUALITY_RELOAD_MS && !_archiveOperation) {
+  const jobEnded = Boolean(_qualityStatus?.job) && !status.job;
+  const phaseChanged = applyQualityStatus(status);
+  if (changed && (jobEnded || Date.now() - _qualityReloadedAt >= QUALITY_RELOAD_MS) && !_archiveOperation) {
     _qualityReloadedAt = Date.now();
     _qualityRevisionShown = status.revision;
     try { S.library = await api("/api/library", { silent: true }); } catch (err) { /* keep the old view */ }
     renderLibrary();
-  } else if (_qualityRevisionShown === null) {
-    _qualityRevisionShown = status.revision;
+  } else {
+    if (_qualityRevisionShown === null) _qualityRevisionShown = status.revision;
+    if (phaseChanged) renderLibrary();
   }
-  const idle = status.state === "done" && !status.pending;
-  scheduleQualityPoll(idle ? QUALITY_POLL_MS * 6 : QUALITY_POLL_MS);
+  const idle = !status.job && (status.paused || (status.state === "done" && !status.pending));
+  scheduleQualityPoll(status.job ? QUALITY_FAST_POLL_MS : idle ? QUALITY_POLL_MS * 6 : QUALITY_POLL_MS);
 }
 
 function moonBadge(moon) {
@@ -1204,6 +1337,7 @@ export function bindArchive() {
   });
   syncFrameSelector();
   renderIngestResults([]);
+  bindGradingMenu();
   scheduleQualityPoll(2000);
 
   const mode = $("#ingestSafeMode"), modeGroup = $("#ingestCompressionMode");
@@ -1482,7 +1616,7 @@ export function bindArchive() {
     const gradeButton = e.target.closest("[data-quality-grade]");
     if (gradeButton) {
       const ids = gradeButton.dataset.qualityGrade.split(",").map(Number).filter(Number.isSafeInteger);
-      if (ids.length) gradeSessionNow(ids);
+      if (ids.length) gradeNow(ids);
       return;
     }
     const folderButton = e.target.closest("[data-open-library-folder]");

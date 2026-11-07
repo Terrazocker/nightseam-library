@@ -415,4 +415,8 @@ def _last_request_ts() -> float:
 
 
 if __name__ == "__main__":
+    # Grade now measures on spawned processes; in the frozen executable each
+    # one starts this program again and must become a worker, not a window.
+    import multiprocessing
+    multiprocessing.freeze_support()
     raise SystemExit(main())

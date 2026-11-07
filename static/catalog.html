@@ -24,7 +24,36 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15m6-12v15"/></svg><span>Sky Map</span>
     </button>
   </nav>
-  <span class="busy-slot"><span id="busy" class="hidden" role="status" aria-atomic="true" title="Working"><span class="busy-dot" aria-hidden="true"></span><span class="busy-txt"></span></span></span>
+  <span class="busy-slot">
+    <span id="gradingAnchor" class="menu-anchor grading-anchor" hidden>
+      <button id="btnGrading" class="grading-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="gradingMenu" aria-describedby="gradingButtonText">
+        <span class="grading-mark" aria-hidden="true"></span><span id="gradingButtonText" class="grading-text"><span class="grading-action">Grading</span> <span class="grading-count"></span></span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+      </button>
+      <span id="gradingMenu" class="menu grading-menu" role="menu" aria-labelledby="btnGrading" hidden>
+        <span class="menu-label" role="presentation">Session grading</span>
+        <span id="gradingSummary" class="grading-summary" role="status" aria-live="polite"></span>
+        <span class="grading-progress" aria-hidden="true"><span id="gradingProgressBar"></span></span>
+        <span class="menu-separator" role="separator"></span>
+        <button id="gradingNow" class="menu-item" type="button" role="menuitem" data-grading-action="now" aria-describedby="gradingNowDesc">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3 5 13h6l-1 8 8-10h-6z"/></svg>
+          <span class="menu-text"><span class="menu-title">Grade all now</span><span class="menu-desc" id="gradingNowDesc">Measure every ungraded frame on all cores</span></span>
+        </button>
+        <button id="gradingPause" class="menu-item" type="button" role="menuitem" data-grading-action="pause" aria-describedby="gradingPauseDesc">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>
+          <span class="menu-text"><span class="menu-title">Pause grading</span><span class="menu-desc" id="gradingPauseDesc">Hold all grading until you resume, also after a restart</span></span>
+        </button>
+        <button id="gradingResume" class="menu-item" type="button" role="menuitem" data-grading-action="resume" aria-describedby="gradingResumeDesc" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+          <span class="menu-text"><span class="menu-title">Resume grading</span><span class="menu-desc" id="gradingResumeDesc">Continue where grading left off</span></span>
+        </button>
+        <button id="gradingStop" class="menu-item" type="button" role="menuitem" data-grading-action="stop" aria-describedby="gradingStopDesc" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+          <span class="menu-text"><span class="menu-title">Stop Grade now</span><span class="menu-desc" id="gradingStopDesc">Finish the frames in hand, then grade slowly in the background</span></span>
+        </button>
+      </span>
+    </span>
+    <span id="busy" class="hidden" role="status" aria-atomic="true" title="Working"><span class="busy-dot" aria-hidden="true"></span><span class="busy-txt"></span></span>
+  </span>
   <div id="imageCatalogTools" class="image-catalog-tools" role="group" aria-label="Catalog actions">
     <button id="btnTopIngest" class="button primary import-action" type="button" aria-label="Import" title="Import FITS exposures into the archive">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg><span>Import</span>
@@ -100,7 +129,7 @@
           <header class="panel-heading library-sessions-heading"><h2 id="librarySessionsHeading">Capture sessions</h2><span id="librarySessionCount" class="panel-count">0 sessions</span></header>
           <div class="tablewrap library-session-table-wrap">
             <table id="librarySessionTable" class="library-session-table">
-              <thead><tr><th scope="col">Date</th><th scope="col" title="Moon phase at the middle of the session">Moon</th><th scope="col" class="num" title="Session quality 0-100 from star size, trailing, star count and sky glow (prototype)">Quality</th><th scope="col" class="num">Lights</th><th scope="col" class="num">Darks</th><th scope="col" class="num">Flats</th><th scope="col" class="num">Bias</th><th scope="col" class="num">Integration</th><th scope="col">Filters</th><th scope="col">Folder</th></tr></thead>
+              <thead><tr><th scope="col">Date</th><th scope="col" title="Moon phase at the middle of the session">Moon</th><th scope="col" class="num" title="Session conditions 0-100 against your other sessions taken with the same camera (prototype); the letter names the camera">Quality</th><th scope="col" class="num">Lights</th><th scope="col" class="num">Darks</th><th scope="col" class="num">Flats</th><th scope="col" class="num">Bias</th><th scope="col" class="num">Integration</th><th scope="col">Filters</th><th scope="col">Folder</th></tr></thead>
               <tbody id="librarySessions"><tr><td colspan="10"></td></tr></tbody>
             </table>
           </div>
